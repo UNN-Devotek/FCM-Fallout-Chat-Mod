@@ -1,3 +1,4 @@
+import { resolveInternalActorId } from '../utils/resolveActorId';
 import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
@@ -102,6 +103,7 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
     return next(createError(400, 'All messageIds must be valid UUIDs'));
 
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const result = await runRequiredMutation('moderation', '66956d734bcc5e4517f04af1', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE messages SET content = '[REDACTED]' WHERE id = ANY(${messageIds}::uuid[]) AND content != '[REDACTED]'`, undefined, undefined, isRowCountNoChange);
 
@@ -109,7 +111,7 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
 
     await runRequiredMutation('audit', '4fa658293fd3b9d89a7daa4a', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'scrub_messages',
         targetType: 'message',
         metadata: { count, messageIds },
@@ -131,6 +133,7 @@ async function deleteMessage(req: Request, res: Response, next: NextFunction): P
   return runRequiredBundle('moderation', 'messagesController:da98359c2286', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid message ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Raw query required — Message has a composite PK.
     const result = await runRequiredMutation('moderation', 'bf5dd370c55bb78bfb7e591e', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
@@ -138,7 +141,7 @@ async function deleteMessage(req: Request, res: Response, next: NextFunction): P
     if (result === 0) return next(createError(404, 'Message not found'));
     await runRequiredMutation('audit', 'dfaab758ebec568e87cd224a', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'delete_message',
         targetId: paramStr(req, 'id'),
         targetType: 'message',

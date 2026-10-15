@@ -1,5 +1,37 @@
 # Jobs and Queues
 
+Administrator WebSocket chat persists `source: "web"` with the generated canonical
+UUID and original timestamp. Both the post-push patch and the manual idempotent
+migration admit it alongside every previously supported source. This does not
+turn the live-only REST admin publication into a queued history write.
+
+`src/recovery/retainedMessagePlan.ts` is a private pure classifier for protected
+legacy job snapshots. It performs no queue, SQL, network or filesystem operation
+and has no public route or ordinary producer. All results explicitly carry
+`executionAuthorized: false`. A candidate preserves the original job ID, exact
+payload bytes/digest, options, Redis hash/state and original canonical UUID/time;
+it is only an input to a separately reviewed private recovery permit (Task2B).
+Even independently proved merge mappings do not authorize replay or change the
+original evidence. No candidate rebroadcasts chat or sends Discord messages.
+
+Classification requires independent author/merge, channel, governance, complete
+canonical-row and external-link evidence. Missing authors, unknown links or
+partial reads block; absence of a deletion audit is not governance clearance.
+The only classifications are `candidate`, `blocked` and `already-preserved`.
+Moderation, retention and deletion tombstones remain terminal `blocked` results
+with their reason and evidence reference. An existing exact canonical row is
+`already-preserved`; a conflicting payload or original timestamp blocks rather
+than inventing another UUID/time. Keep original protected jobs and
+evidence-linked dispositions after any future authorized resolution. Operator
+reports must contain only job/evidence identifiers, digests and fixed reasons,
+never the protected payload or Redis hash contents.
+
+The supplied retained-set inventory contains 24 failed jobs. All remain protected:
+13 existing-author jobs are candidates for independent review, not automatic
+repair; 11 missing-author jobs remain blocked pending independent provenance or
+an explicit user disposition. This source change does not inspect, replay,
+delete, recreate authors for, or claim recovery of those production jobs.
+
 ---
 
 ## Failure tracking + escalation (`makeJobTracker`)

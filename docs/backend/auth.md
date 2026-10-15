@@ -2,6 +2,22 @@
 
 The backend has distinct auth flows for the dashboard, desktop overlay, HUD linking, and device sessions.
 
+Audited user, channel, message and moderation changes resolve the authenticated actor before
+their first primary mutation. `audit_logs.actor_id` references an internal `users.id`, not a
+Discord snowflake. Existing internal UUIDs and linked Discord identities resolve to that user;
+the authenticated `api-key` identity and a confirmed unlinked Discord account use SQL `NULL`.
+Malformed/missing identities, nonexistent internal UUIDs, and failed lookups are distinct
+`ACTOR_IDENTITY_INVALID`, `ACTOR_INTERNAL_USER_MISSING`, and `ACTOR_LOOKUP_UNAVAILABLE`
+errors. They return HTTP 503 before the controller changes data, rather than silently
+recording an anonymous actor. These checks do not change authentication, role, ban or session
+admission. Self-deletion records a nullable actor FK plus the verified `deletedActorId` in
+audit metadata. AutoMod audits target the actual rule UUID.
+
+Required audit failures after a primary commit keep their existing response policy: routes
+that already preserve availability can still respond successfully, while their required
+failure prevents a clean maintenance drain. A zero-row primary result does not waive a
+required audit. See [runtime maintenance](runtime-maintenance.md).
+
 Background Discord admin verification distinguishes authoritative role changes from transient
 member-read failures. Failed role writes, session revocation, cache changes or revocation audits
 retain private runtime failure evidence and prevent a clean maintenance drain, including after

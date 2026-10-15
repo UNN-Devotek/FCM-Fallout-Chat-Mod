@@ -55,7 +55,7 @@ async function probe(label,prepare,relative,invoke){
  }
  for(const count of [0,1])for(const mode of ['refused','success'])results.push(await probe(`scrub-${count}-${mode}`,facts=>{
   prisma={$executeRaw:async()=>count,auditLog:{create:async()=>{facts.auditAttempted=true;if(mode==='refused')throw {code:'P2003',message:'private SQL body secret'};return {id:'fixture-audit'};}}};
- },'controllers/messagesController.ts',async(controller,res,next)=>controller.scrubMessages({body:{messageIds:['10000000-0000-0000-0000-000000000001']},adminUser:{id:'fixture-actor'}},res,next)));
+ },'controllers/messagesController.ts',async(controller,res,next)=>controller.scrubMessages({body:{messageIds:['10000000-0000-0000-0000-000000000001']},adminUser:{id:'api-key'}},res,next)));
  for(const count of [0,1])for(const operation of ['deleteUser','wipeUser'])for(const mode of ['client-unknown','scan-unknown','session-read-unknown','success'])results.push(await probe(`${operation}-${count}-${mode}`,facts=>{
   const deleter={deleteMany:async()=>({count})};
   prisma={message:deleter,report:deleter,session:{...deleter,findMany:async()=>{if(mode==='session-read-unknown')throw new Error('private-session-discovery');return [{token:'private-session-key'}];}},
@@ -63,6 +63,6 @@ async function probe(label,prepare,relative,invoke){
   redis={keys:async()=>{if(mode==='scan-unknown')throw new Error('private-session-discovery');return ['session:private-session-key'];},get:async()=>{if(mode==='session-read-unknown')throw new Error('private-session-response');return '10000000-0000-0000-0000-000000000001';},del:async()=>1};
   if(mode==='client-unknown')redisError=new Error('private-redis-client-discovery');
   if(operation==='wipeUser'&&mode==='scan-unknown')prisma.session.findMany=async()=>{throw new Error('private-session-row-discovery');};
- },'controllers/usersController.ts',async(controller,res,next)=>controller[operation]({params:{id:'10000000-0000-0000-0000-000000000001'},body:{},query:{},adminUser:{id:'fixture-actor'}},res,next)));
+ },'controllers/usersController.ts',async(controller,res,next)=>controller[operation]({params:{id:'10000000-0000-0000-0000-000000000001'},body:{},query:{},adminUser:{id:'api-key'}},res,next)));
  console.log(JSON.stringify({results}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

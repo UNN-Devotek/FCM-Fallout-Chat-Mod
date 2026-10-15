@@ -1,3 +1,4 @@
+import { resolveInternalActorId } from '../utils/resolveActorId';
 import { bindRequiredTransactionClient, createRequiredAudit, isPrismaAtomicRefusal, isPrismaNotFound, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
@@ -801,13 +802,14 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
   const muteExpiresAt = new Date(Date.now() + duration * 60 * 1000);
 
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await runRequiredMutation('identity', '9498707a4fb888f9cff53268', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isMuted: true, muteExpiresAt },
     }), isPrismaAtomicRefusal, undefined, undefined);
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'mute',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -830,6 +832,7 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
   return runRequiredBundle('identity', 'usersController:bb4eaa3bab81', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await runRequiredMutation('identity', 'ce8b838f6799746efaa1aa36', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isMuted: false, muteExpiresAt: null },
@@ -838,7 +841,7 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
     await setSpamImmunity(paramStr(req, 'id'));
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'unmute',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -860,6 +863,7 @@ async function kickUser(req: Request, res: Response, next: NextFunction): Promis
   return runRequiredBundle('session', 'usersController:47c269e6cfe9', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Invalidate all active Redis sessions for this user
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
@@ -870,7 +874,7 @@ async function kickUser(req: Request, res: Response, next: NextFunction): Promis
     await runRequiredMutation('session', '65ada479590ef0000959ac84', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'kick',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -892,6 +896,7 @@ async function banUser(req: Request, res: Response, next: NextFunction): Promise
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { reason } = req.body;
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await runRequiredMutation('identity', '2cd3def01499b57e8d1b0fdc', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isBanned: true, banReason: reason },
@@ -906,7 +911,7 @@ async function banUser(req: Request, res: Response, next: NextFunction): Promise
     await runRequiredMutation('session', '54c9c946fcbc862e23365c7f', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'ban',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -928,13 +933,14 @@ async function unbanUser(req: Request, res: Response, next: NextFunction): Promi
   return runRequiredBundle('identity', 'usersController:d62826d17498', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await runRequiredMutation('identity', '21d198fa263251e418ac6bb0', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isBanned: false, banReason: null },
     }), isPrismaAtomicRefusal, undefined, undefined);
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'unban',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -956,6 +962,7 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
   return runRequiredBundle('session', 'usersController:bb2b8623a589', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Use raw query for gen_random_uuid() in the update
     await runRequiredMutation('identity', 'ad07403b99b54aeee4d82c9d', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE users
@@ -978,7 +985,7 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
 
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'wipe',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -998,6 +1005,7 @@ async function deleteUser(req: Request, res: Response, next: NextFunction): Prom
   try {
     const { id } = paramsOf(req);
     if (!validateUuid(id)) { next(createError(400, 'Invalid user ID')); return; }
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
 
     // Delete all related data first (messages, reports, sessions)
     await runRequiredMutation('identity', 'e20b8c4fe5e9b363cc80a71c', { stage: 'primary-write-unconfirmed', userId: id }, () => prisma.message.deleteMany({ where: { userId: id } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
@@ -1024,11 +1032,11 @@ async function deleteUser(req: Request, res: Response, next: NextFunction): Prom
     // Audit log
     await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || 'api-key',
+        actorId: actorId === id ? null : actorId,
         action: 'user_deleted',
         targetId: id,
         targetType: 'user',
-        metadata: { username: deleted.username },
+        metadata: { username: deleted.username, ...(actorId === id ? { deletedActorId: actorId } : {}) },
       },
     }).catch(() => {});
 

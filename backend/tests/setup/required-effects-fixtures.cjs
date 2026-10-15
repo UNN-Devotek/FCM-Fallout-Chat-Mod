@@ -204,7 +204,7 @@ const unknown=()=>new Error('fixture required mutation response unknown');
  for(const mode of ['unknown','absent','audit']) results.push(await scenario('account-delete-'+mode,async facts=>{
   prisma={message:{deleteMany:async()=>{facts.messagesDeleted=true;}},report:{deleteMany:async()=>{facts.reportsDeleted=true;}},session:{deleteMany:async()=>{facts.sessionsDeleted=true;}},user:{delete:async()=>{facts.accountDeleteAttempted=true;if(mode!=='audit')throw mode==='absent'?Object.assign(new Error('already absent'),{code:'P2025'}):unknown();facts.accountDeleted=true;return{username:'SyntheticFixture'};}},auditLog:{create:async()=>{facts.auditAttempted=true;throw unknown();}}};
   overrides['../config/redis']={getRedisClient:async()=>({keys:async()=>[]})};
-  await vmFull('controllers/usersController.ts').deleteUser({params:{id:fixtureId}},response(facts),error=>{facts.returnedStatus=error.status;});return facts;
+  await vmFull('controllers/usersController.ts').deleteUser({params:{id:fixtureId},adminUser:{id:'api-key'}},response(facts),error=>{facts.returnedStatus=error.status;});return facts;
  }));
  results.push(await scenario('overlay-logout-already-absent',async facts=>{
   prisma={session:{delete:async()=>{facts.sessionDeleteAttempted=true;throw Object.assign(new Error('already absent'),{code:'P2025'});}}};overrides['../config/redis']={getRedisClient:async()=>({del:async()=>0})};

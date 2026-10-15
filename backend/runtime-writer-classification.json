@@ -1,6 +1,6 @@
 {
   "format": "fcm-runtime-writer-classification-v1",
-  "policy": "Explicit required/delegated/optional classification of current application/startup/script writers and installed SDK command candidates. Lexical receiver/operation aliases, nested types/imports, callback/dynamic dispatch and whole owning catch/module fingerprints supplement behavior proofs; every delegated entry binds concrete current owner/funnel provenance. SDK reads/pipeline builders/display-only state are explicitly classified. Passing policy comparison does not establish completeness for future new provider APIs or production readiness. Round7 adds explicit filesystem API/constructor/callback and actual multipart configurations, installed disk-storage required provenance, private fence/journal/checkpoint and canonical receipt contracts. Memory-only multipart/read and best-effort startup-template paths are separately reviewed. V13 uses the lockfile installed pipeline result for success and aborted/error output. Stream close and confirmed cleanup cannot bypass a pending result callback. Real per-instance callback holds and lockfile dependency provenance run in required Node22 CI. V14 narrowly isolates proven buffered native fetch request-body tee initiation while every caller still awaits real headers/body/disposition and rejected response reads. Every native caller and helper is bound into required CI. V14 retains actual embed request/response end or cancellation close including redirects/rejection/deadlines; required deletion payload interpretation and actual registered ticket follow-on prevention; all seven modal SDK dispatches explicitly delegate to the bound required REST instance. Real server-side close and held asynchronous middleware/terminal completion run in required Node22 CI. V15 owns actual MCP request/response terminal reads across rejection and cancellation, requires endpoint-specific REST confirmation, and binds exact native helper imports dynamically to their current source fixtures. Whole-stdout CI checks and all earlier required/optional/delegated obligations remain intact. V16 accepts legitimate case-insensitive GitHub label identity while retaining required status, identity, membership and failure outcomes. All prior disposition obligations and proof identities remain unchanged. V17 keeps native producer handles and explicit idempotent cancellation with per-timer unregister ownership. Canceled schedules disappear before freeze; actually live schedules and admitted callback descendants remain accounted. Native deadline/consumer/accepted timers and cron policies are unchanged. Required CI binds every current caller cancellation and initialized transaction-fixture cleanup; all prior writer disposition obligations remain intact. V18 preserves all prior writer dispositions and uses an awaited admitted-owner native Web response cancellation for unused status/MIME refusals and the public-auth status-only membership success. Native/default/lexical fetch aliases and each actual response owner are audited and source-bound separately from Discord SDK fetch. Already consumed bodies, HEAD, SSRF/MIME/redirect/size/auth/retry/fallback policies and proven buffered initiation isolation retain their contracts. Cancellation/descendants/unknown required effects remain accounted; no promise IDs or histories are cleared. V19 repairs only required-effects fixture isolation/result transport. Exact current helper/current coordinator bindings cover module, VM and preserved inline callback loaders; guarded pre-instance access, genuine native source/compiled lifetimes and removed-binding negatives remain required CI. Explicit artifacts and real child status retain diagnostics and reject missing/malformed/duplicate/unexpected/incomplete results. Every existing writer identity, disposition, funnel, shell binding and production lifecycle remains unchanged. V20 retains required discovery failures after committed progress before local HTTP/log catches. Nested compound owners share confirmed progress and retain completion errors before their callers consume them. Explicit required lookup boundaries add no committed stages and preserve prewrite, no-change, optional and rolled-back behavior. V23 declares both local delivery and client acquisition prerequisites after validated native publication input selection, including no-new-commit recovery and receipt replay. Successful prerequisite completion does not fabricate a committed stage. V24 owns required local-delivery completion in all five shared relay control helpers so initiating and accepted remote receive paths retain failures before catches. Existing target refusal, initiating publication ownership, nested mutation stages and optional cursor policy are unchanged.",
+  "policy": "Explicit required/delegated/optional classification of current application/startup/script writers and installed SDK command candidates. Lexical receiver/operation aliases, nested types/imports, callback/dynamic dispatch and whole owning catch/module fingerprints supplement behavior proofs; every delegated entry binds concrete current owner/funnel provenance. SDK reads/pipeline builders/display-only state are explicitly classified. Passing policy comparison does not establish completeness for future new provider APIs or production readiness. Round7 adds explicit filesystem API/constructor/callback and actual multipart configurations, installed disk-storage required provenance, private fence/journal/checkpoint and canonical receipt contracts. Memory-only multipart/read and best-effort startup-template paths are separately reviewed. V13 uses the lockfile installed pipeline result for success and aborted/error output. Stream close and confirmed cleanup cannot bypass a pending result callback. Real per-instance callback holds and lockfile dependency provenance run in required Node22 CI. V14 narrowly isolates proven buffered native fetch request-body tee initiation while every caller still awaits real headers/body/disposition and rejected response reads. Every native caller and helper is bound into required CI. V14 retains actual embed request/response end or cancellation close including redirects/rejection/deadlines; required deletion payload interpretation and actual registered ticket follow-on prevention; all seven modal SDK dispatches explicitly delegate to the bound required REST instance. Real server-side close and held asynchronous middleware/terminal completion run in required Node22 CI. V15 owns actual MCP request/response terminal reads across rejection and cancellation, requires endpoint-specific REST confirmation, and binds exact native helper imports dynamically to their current source fixtures. Whole-stdout CI checks and all earlier required/optional/delegated obligations remain intact. V16 accepts legitimate case-insensitive GitHub label identity while retaining required status, identity, membership and failure outcomes. All prior disposition obligations and proof identities remain unchanged. V17 keeps native producer handles and explicit idempotent cancellation with per-timer unregister ownership. Canceled schedules disappear before freeze; actually live schedules and admitted callback descendants remain accounted. Native deadline/consumer/accepted timers and cron policies are unchanged. Required CI binds every current caller cancellation and initialized transaction-fixture cleanup; all prior writer disposition obligations remain intact. V18 preserves all prior writer dispositions and uses an awaited admitted-owner native Web response cancellation for unused status/MIME refusals and the public-auth status-only membership success. Native/default/lexical fetch aliases and each actual response owner are audited and source-bound separately from Discord SDK fetch. Already consumed bodies, HEAD, SSRF/MIME/redirect/size/auth/retry/fallback policies and proven buffered initiation isolation retain their contracts. Cancellation/descendants/unknown required effects remain accounted; no promise IDs or histories are cleared. V19 repairs only required-effects fixture isolation/result transport. Exact current helper/current coordinator bindings cover module, VM and preserved inline callback loaders; guarded pre-instance access, genuine native source/compiled lifetimes and removed-binding negatives remain required CI. Explicit artifacts and real child status retain diagnostics and reject missing/malformed/duplicate/unexpected/incomplete results. Every existing writer identity, disposition, funnel, shell binding and production lifecycle remains unchanged. V20 retains required discovery failures after committed progress before local HTTP/log catches. Nested compound owners share confirmed progress and retain completion errors before their callers consume them. Explicit required lookup boundaries add no committed stages and preserve prewrite, no-change, optional and rolled-back behavior. V23 declares both local delivery and client acquisition prerequisites after validated native publication input selection, including no-new-commit recovery and receipt replay. Successful prerequisite completion does not fabricate a committed stage. V24 owns required local-delivery completion in all five shared relay control helpers so initiating and accepted remote receive paths retain failures before catches. Existing target refusal, initiating publication ownership, nested mutation stages and optional cursor policy are unchanged. Task2A preserves every prior writer identity and disposition while resolving verified internal audit actors before primary mutations, retaining nullable confirmed actors/self-delete evidence and required audit failures. Web acceptance and private read-only retained classification are source-bound; real PG/Redis authenticated endpoint and migration tests run in required backend CI. Task2A preserves every prior writer identity and disposition while resolving verified internal audit actors before primary mutations, retaining nullable confirmed actors/self-delete evidence and required audit failures. Web acceptance and private read-only retained classification are source-bound; real PG/Redis authenticated endpoint and migration tests run in required backend CI.",
   "rows": [
     {
       "writerId": "24e05e00e24c926a9dadc282",
@@ -687,7 +687,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "b8f2191a81b06f25d0b3737062f2d742c110fa556369c45e936674387489cf75",
-      "ownerFingerprint": "bc2842b405a2c4a5b40d4508640f8dc3d53362aebc0392b1378d216a536138b8",
+      "ownerFingerprint": "d5ad97346d7aed84ebe9ea8fc915d207a798240773a8cd61bfaa91c243e762c7",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -718,11 +718,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "dd19d162ae06c7fc7ae4c0905b29542db5e945e8a7b617ec0067a20d93d820b5",
-      "ownerFingerprint": "bec709ae7b7ec675d567927df2b81dce47b739a9fabdc005641261941ed90bb3",
+      "ownerFingerprint": "1298e99c72836abb978a87ccb02be2de9a6bc52ad65827f10b817bf22a9e5fd9",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 182,
+      "originalLine": 183,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateAutoModRule",
@@ -749,11 +749,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "863a1d42145382a66c945518e3ca51ac33d6947efe9a27361508110d44e11b25",
-      "ownerFingerprint": "b1134c643b1bd333f2cc50fb15aa70a2f664bf71dd94252d6a1d6bdcdb6a5ac6",
+      "ownerFingerprint": "93d4201d93c1c2ef5567f621110a9b85c08b3ccf16d71bcde56e2f3140bd17ab",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 209,
+      "originalLine": 210,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteAutoModRule",
@@ -780,11 +780,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "919e08b08bb4e0a195235fb476b3b3f9ebb58379576b3bee79f7104625f15037",
-      "ownerFingerprint": "012db786f1fce219af5707327bb23af3d34cc5585a41b6bbca865b6762efe420",
+      "ownerFingerprint": "5f3a6e767ca51ada33fa38c12713aa9d17d93ccb3e1dc23e34cdfb78ff019088",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 236,
+      "originalLine": 237,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "toggleAutoModRule",
@@ -829,11 +829,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "cc2b7b1ad50ba715aa07f3fbe02d22151890fe13aa60eca3f159689c1f1c76d6",
-      "ownerFingerprint": "2f320c698937df28d8dadbda628b5e2e8e89055ccf2fc8c583a0efda3b5ed81f",
+      "ownerFingerprint": "3b4501bbc6355c61c96303d951cce7039121641044bb6e1beeedde81418ae35a",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 54,
+      "originalLine": 56,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "createChannel",
@@ -859,12 +859,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "18fc5688f7b89f0b63bf329d6570896b20476215ac0c613e5e512b27d3ab5cc2",
-      "ownerFingerprint": "2f320c698937df28d8dadbda628b5e2e8e89055ccf2fc8c583a0efda3b5ed81f",
+      "operationFingerprint": "fd7e748f2e3d3b32a5af52cf1c9f3339dbba823fcbec8223ee76ced8fffe1031",
+      "ownerFingerprint": "3b4501bbc6355c61c96303d951cce7039121641044bb6e1beeedde81418ae35a",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 66,
+      "originalLine": 68,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "createChannel",
@@ -895,7 +895,7 @@
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 106,
+      "originalLine": 108,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateChannel",
@@ -922,11 +922,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "cc76e71c7f9ab27e6e820196cce8c64baf4a5aa98786af0ff04ae14f169fa8a5",
-      "ownerFingerprint": "4144c14599a8a66a9e8c62eda552c00d6d1e4fbacd410f0b1dd75435fc24d7b7",
+      "ownerFingerprint": "cf1eda11c674987125ab677db4432c8cd29e0f4845b7ba0d00a6eb67afc93627",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 132,
+      "originalLine": 135,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "archiveChannel",
@@ -953,11 +953,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "9bc5a3a515bb5ee533bc9d742c9786f1557e02ba99082668589a37e56e1b8318",
-      "ownerFingerprint": "4144c14599a8a66a9e8c62eda552c00d6d1e4fbacd410f0b1dd75435fc24d7b7",
+      "ownerFingerprint": "cf1eda11c674987125ab677db4432c8cd29e0f4845b7ba0d00a6eb67afc93627",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 138,
+      "originalLine": 141,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "archiveChannel",
@@ -983,12 +983,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "ba661696c45d33f4e3a039849b3ba1fa34c3db91030eacc6ec5a076ae71d705e",
-      "ownerFingerprint": "4144c14599a8a66a9e8c62eda552c00d6d1e4fbacd410f0b1dd75435fc24d7b7",
+      "operationFingerprint": "537a86f6d7ec4b2fcff6e4ce88c2e10f16a096de4302e770b6ca72bde8b4884d",
+      "ownerFingerprint": "cf1eda11c674987125ab677db4432c8cd29e0f4845b7ba0d00a6eb67afc93627",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 142,
+      "originalLine": 145,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "archiveChannel",
@@ -1015,11 +1015,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "bd44a238bf4585653690007fba916384f71a30ef241a45b1254d3ff1eccbf888",
-      "ownerFingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+      "ownerFingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
       "boundaries": [
         "runRequiredTransaction"
       ],
-      "originalLine": 181,
+      "originalLine": 185,
       "disposition": "delegated",
       "reason": "Awaited outer SQL transaction owns lazy PrismaPromise statements or identity merge; actual callback client binding and rollback/commit semantics are guarded.",
       "transactionOwner": "prisma.$transaction",
@@ -1030,7 +1030,7 @@
             "file": "backend/src/controllers/channelsController.ts",
             "owner": "deleteChannelPermanently"
           },
-          "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+          "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
           "contract": "retained-required-disposition",
           "requiredCalls": [
             "runRequiredTransaction"
@@ -1048,7 +1048,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "deleteChannelPermanently"
             },
-            "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+            "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
             "calls": [
               "runRequiredTransaction"
             ]
@@ -1058,7 +1058,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "495921f94467969ba7845c80a533d9eb2fadefdf9c5a2cfbc0dd04f0076a0f8f",
+            "fingerprint": "48963e5ee14c2838422cba9cbd379a40bc8054ee757a0b25fc70b53d9f2c3fc6",
             "calls": []
           }
         ]
@@ -1074,11 +1074,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "c9971cee0a65165d59a6f8a6ee3a8887644d4e8778c995e7a06b3fa3771e4991",
-      "ownerFingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+      "ownerFingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
       "boundaries": [
         "runRequiredTransaction"
       ],
-      "originalLine": 183,
+      "originalLine": 187,
       "disposition": "delegated",
       "reason": "Awaited outer SQL transaction owns lazy PrismaPromise statements or identity merge; actual callback client binding and rollback/commit semantics are guarded.",
       "transactionOwner": "prisma.$transaction",
@@ -1089,7 +1089,7 @@
             "file": "backend/src/controllers/channelsController.ts",
             "owner": "deleteChannelPermanently"
           },
-          "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+          "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
           "contract": "retained-required-disposition",
           "requiredCalls": [
             "runRequiredTransaction"
@@ -1107,7 +1107,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "deleteChannelPermanently"
             },
-            "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+            "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
             "calls": [
               "runRequiredTransaction"
             ]
@@ -1117,7 +1117,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "495921f94467969ba7845c80a533d9eb2fadefdf9c5a2cfbc0dd04f0076a0f8f",
+            "fingerprint": "48963e5ee14c2838422cba9cbd379a40bc8054ee757a0b25fc70b53d9f2c3fc6",
             "calls": []
           }
         ]
@@ -1133,11 +1133,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "0a377b40cb293b0a54043db384586055034b55eedb37e6b2b739d25ace679caf",
-      "ownerFingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+      "ownerFingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
       "boundaries": [
         "runRequiredTransaction"
       ],
-      "originalLine": 185,
+      "originalLine": 189,
       "disposition": "delegated",
       "reason": "Awaited outer SQL transaction owns lazy PrismaPromise statements or identity merge; actual callback client binding and rollback/commit semantics are guarded.",
       "transactionOwner": "prisma.$transaction",
@@ -1148,7 +1148,7 @@
             "file": "backend/src/controllers/channelsController.ts",
             "owner": "deleteChannelPermanently"
           },
-          "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+          "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
           "contract": "retained-required-disposition",
           "requiredCalls": [
             "runRequiredTransaction"
@@ -1166,7 +1166,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "deleteChannelPermanently"
             },
-            "fingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+            "fingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
             "calls": [
               "runRequiredTransaction"
             ]
@@ -1176,7 +1176,7 @@
               "file": "backend/src/controllers/channelsController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "495921f94467969ba7845c80a533d9eb2fadefdf9c5a2cfbc0dd04f0076a0f8f",
+            "fingerprint": "48963e5ee14c2838422cba9cbd379a40bc8054ee757a0b25fc70b53d9f2c3fc6",
             "calls": []
           }
         ]
@@ -1191,12 +1191,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "c02cb677b53c668bf6155e51579e396c8ceb0fc2462cb5c0258317e0a8036d86",
-      "ownerFingerprint": "1034bf74349de3c27033d95aed90ea830091d8ff7ed39a88f8ce42c2077110e2",
+      "operationFingerprint": "329fb199ec4ef92d3ea7797166bd775f62834a2f65cad6b0815734ce3aef6693",
+      "ownerFingerprint": "07c5ac4c48928fcc2423e9c1cd21e7c60c0d79b07f5c73426e5fdbf0bf6dd8a1",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 188,
+      "originalLine": 192,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteChannelPermanently",
@@ -2010,11 +2010,11 @@
       },
       "family": "prisma-tagged-mutation",
       "operationFingerprint": "091b3674429cc2ae6369655def863771830b9a4a177bfedf247530804ef7081c",
-      "ownerFingerprint": "cdaf91e7376d18299aef31238d211ed8f77c5602d61ce2a94d0625e05e548fc4",
+      "ownerFingerprint": "986b4dd7a5c5f50e4ea3d4dc6a98d6c22d077484adafd27a526fc2d6a2dcfe64",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 105,
+      "originalLine": 107,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "scrubMessages",
@@ -2039,12 +2039,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "908c03af21da15762e78c0e1feb99c8f68dfeba5e4be35f5186eef1b8a17d4a9",
-      "ownerFingerprint": "cdaf91e7376d18299aef31238d211ed8f77c5602d61ce2a94d0625e05e548fc4",
+      "operationFingerprint": "689223d1c180c26f19eae58d2e718e34989cbf56dd46b8281817555650c64954",
+      "ownerFingerprint": "986b4dd7a5c5f50e4ea3d4dc6a98d6c22d077484adafd27a526fc2d6a2dcfe64",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 110,
+      "originalLine": 112,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "scrubMessages",
@@ -2071,11 +2071,11 @@
       },
       "family": "prisma-tagged-mutation",
       "operationFingerprint": "364a0dfa5f4339b847fd6c1ff1ede324d409d70182e25aa30e0751b67facd04e",
-      "ownerFingerprint": "d198c46754efb3d199df41998cb0172298859c6ec45eff1e8b041c0afaa06c4d",
+      "ownerFingerprint": "4469f3cbbf1c772522df8a017642ed11946aeb962d77801a29114b6c766db003",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 135,
+      "originalLine": 138,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteMessage",
@@ -2100,12 +2100,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "a54d3f6dee349ca20e729a2f8ab651da1549a29d7b011b0b48161fc67557dd50",
-      "ownerFingerprint": "d198c46754efb3d199df41998cb0172298859c6ec45eff1e8b041c0afaa06c4d",
+      "operationFingerprint": "6722e057412d8098467232ba06ba0bbce184d2a9a9e547e5ca40e313ca46c9d3",
+      "ownerFingerprint": "4469f3cbbf1c772522df8a017642ed11946aeb962d77801a29114b6c766db003",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 139,
+      "originalLine": 142,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteMessage",
@@ -2390,11 +2390,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "ecb4a9edd3e5ba5a21dd34afbd19eebf68a0d07c05dcce85db0b54235a86d9fa",
-      "ownerFingerprint": "9b975e2534bfaa555a196697c69436055789cbb5ae21bd11e6aae46191c2bbbc",
+      "ownerFingerprint": "14a3644b450537c0ccdca28ab72aff0f06062fe801858f046f56d1932f4e99d0",
       "boundaries": [
         "runRequiredTransaction"
       ],
-      "originalLine": 205,
+      "originalLine": 206,
       "disposition": "delegated",
       "reason": "Awaited outer SQL transaction owns lazy PrismaPromise statements or identity merge; actual callback client binding and rollback/commit semantics are guarded.",
       "caller": "updateVoiceSettings",
@@ -2414,7 +2414,7 @@
             "file": "backend/src/controllers/moderationController.ts",
             "owner": "updateVoiceSettings"
           },
-          "fingerprint": "9b975e2534bfaa555a196697c69436055789cbb5ae21bd11e6aae46191c2bbbc",
+          "fingerprint": "14a3644b450537c0ccdca28ab72aff0f06062fe801858f046f56d1932f4e99d0",
           "contract": "retained-required-disposition",
           "requiredCalls": [
             "runRequiredTransaction"
@@ -2432,7 +2432,7 @@
               "file": "backend/src/controllers/moderationController.ts",
               "owner": "updateVoiceSettings"
             },
-            "fingerprint": "9b975e2534bfaa555a196697c69436055789cbb5ae21bd11e6aae46191c2bbbc",
+            "fingerprint": "14a3644b450537c0ccdca28ab72aff0f06062fe801858f046f56d1932f4e99d0",
             "calls": [
               "runRequiredTransaction"
             ]
@@ -2442,7 +2442,7 @@
               "file": "backend/src/controllers/moderationController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "0194b4998463f817faea3b057bcb799543b75553812bae9942cb9f1207a98423",
+            "fingerprint": "655e2b71d8a5a9ffea99865f1564c9dc45d71f39ddbc7f6310b30a28112f5fb9",
             "calls": []
           }
         ]
@@ -2458,11 +2458,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "fb348d3b8cda486ed24ceabbe376f2f095e6198c85de7cba196d6ddd120cb5c5",
-      "ownerFingerprint": "3900a0247eea8e4b19bd1d58441658b8234fe7c76ee02a703338add40bf749d5",
+      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 291,
+      "originalLine": 293,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -2489,11 +2489,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "fb348d3b8cda486ed24ceabbe376f2f095e6198c85de7cba196d6ddd120cb5c5",
-      "ownerFingerprint": "3900a0247eea8e4b19bd1d58441658b8234fe7c76ee02a703338add40bf749d5",
+      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 328,
+      "originalLine": 331,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -2520,11 +2520,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "8780494da354b1484c29382a70889a03c8c5d28524ec4503912dedf9532ccd87",
-      "ownerFingerprint": "3900a0247eea8e4b19bd1d58441658b8234fe7c76ee02a703338add40bf749d5",
+      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 355,
+      "originalLine": 359,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -2551,11 +2551,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "882c875cb5a8306e5d9db017bc4da696456cedf5dc3d18b30e95fb8699c17ea1",
-      "ownerFingerprint": "c9376eea3579b5d9cd6ece31d35959691ce9323ef0a1d0afeb29f81d7218af93",
+      "ownerFingerprint": "a0e2e86725f5e1c88f5ed5a3d18c175f882f5f2c98a0cbf2bb557605eddd67e0",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 411,
+      "originalLine": 416,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateWordFilter",
@@ -2582,11 +2582,11 @@
       },
       "family": "pg-sql-mutation",
       "operationFingerprint": "bc9f5b8a29e202fdccfede31f4627e041d138d6695b6f27ec30aabd00962702c",
-      "ownerFingerprint": "847446c9d6a523c2eac100ba70de944893fb885749de54f9ef5b4bd096a4e60b",
+      "ownerFingerprint": "69e6282169ec4d928cfc971b9fbbb5891648d89e367f0046b60ab50c402ac8fe",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 456,
+      "originalLine": 462,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "bulkImportWordFilters",
@@ -4310,7 +4310,7 @@
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 198,
+      "originalLine": 199,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4341,7 +4341,7 @@
       "boundaries": [
         "runRequiredTransaction"
       ],
-      "originalLine": 313,
+      "originalLine": 314,
       "disposition": "delegated",
       "reason": "Awaited outer SQL transaction owns lazy PrismaPromise statements or identity merge; actual callback client binding and rollback/commit semantics are guarded.",
       "ownerProofs": [
@@ -4378,7 +4378,7 @@
               "file": "backend/src/controllers/usersController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "0e2aacb4a987a91eabb0bc7c4a9f0e77b47cde2ddf5f5b74cce564af54d65cef",
+            "fingerprint": "196e70298d9a0d0fc2ef38fd7c3af62e34d46626d0fd68878a8cc451044cdb4f",
             "calls": []
           }
         ]
@@ -4399,7 +4399,7 @@
         "runRequiredMutation",
         "runRequiredTransaction"
       ],
-      "originalLine": 315,
+      "originalLine": 316,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4431,7 +4431,7 @@
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 465,
+      "originalLine": 466,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4462,7 +4462,7 @@
       "boundaries": [
         "runRequiredEffect"
       ],
-      "originalLine": 497,
+      "originalLine": 498,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4482,7 +4482,7 @@
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 599,
+      "originalLine": 600,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4513,7 +4513,7 @@
       "boundaries": [
         "runtime.required"
       ],
-      "originalLine": 602,
+      "originalLine": 603,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "register",
@@ -4534,7 +4534,7 @@
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 662,
+      "originalLine": 663,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteSession",
@@ -4565,7 +4565,7 @@
       "boundaries": [
         "runRequiredEffect"
       ],
-      "originalLine": 663,
+      "originalLine": 664,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteSession",
@@ -4582,11 +4582,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "3e6cff7b61fe0b718cfa9c1d06e777751212be5358509d6ad5be72f620d5f7e6",
-      "ownerFingerprint": "b4712d94b4cfd1837c69d1fcc53426deddc401067e5c9db71e9fd66cbeb0c84b",
+      "ownerFingerprint": "4886e134430977d80a75408bcdce8e6d592aa5886387fc510774b0d339a318fc",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 804,
+      "originalLine": 806,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "muteUser",
@@ -4613,11 +4613,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "71b33df5139296ccab0d12cb4aa94b7f915a38986fb835101be55bf6cc3c508c",
-      "ownerFingerprint": "8e8782e503fcd2c54e64f87beb68bbd8bb699f7b684dcc911412aa7101557b47",
+      "ownerFingerprint": "428f8160dedf7daf77e1fd257869b7e1954ed6b55f419017d09786c299dab4c8",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 833,
+      "originalLine": 836,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "unmuteUser",
@@ -4644,11 +4644,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "d9070828996edb3a02743ef3b42d61e95a00a34f04c4b73a529c3672bd45b58f",
-      "ownerFingerprint": "e6e9af79d30dd1bca93bd5a3b345f758f659f8ba33cc8d20d5f0617d360fdb9e",
+      "ownerFingerprint": "686278c64005acb82af353461af44b1f09e5e9012b951e66b8ae3adb3d24c74c",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 869,
+      "originalLine": 873,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "kickUser",
@@ -4675,11 +4675,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "40187ed87bf97226b76af3e9ff54b380fec1a37402a52fd978387aa48bfb2114",
-      "ownerFingerprint": "e6e9af79d30dd1bca93bd5a3b345f758f659f8ba33cc8d20d5f0617d360fdb9e",
+      "ownerFingerprint": "686278c64005acb82af353461af44b1f09e5e9012b951e66b8ae3adb3d24c74c",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 870,
+      "originalLine": 874,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "kickUser",
@@ -4706,11 +4706,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "b2f23eb2826302077eb20c225f1e4c20280a4f882fdbcdd3dbb132ef47af661b",
-      "ownerFingerprint": "d64b9847583b03708504f7b57a31b29bb2823d937b17fb33fb0d2a372654cfd9",
+      "ownerFingerprint": "5faea64d31e9d4d381d01546d02e3603bc3561537fbc5dcb1470cac852d681cd",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 895,
+      "originalLine": 900,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "banUser",
@@ -4737,11 +4737,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "55edfdf0c84f19c08317c0b4aca8d057c3e6c8185d5bffd118524662c5f31294",
-      "ownerFingerprint": "d64b9847583b03708504f7b57a31b29bb2823d937b17fb33fb0d2a372654cfd9",
+      "ownerFingerprint": "5faea64d31e9d4d381d01546d02e3603bc3561537fbc5dcb1470cac852d681cd",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 905,
+      "originalLine": 910,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "banUser",
@@ -4768,11 +4768,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "40187ed87bf97226b76af3e9ff54b380fec1a37402a52fd978387aa48bfb2114",
-      "ownerFingerprint": "d64b9847583b03708504f7b57a31b29bb2823d937b17fb33fb0d2a372654cfd9",
+      "ownerFingerprint": "5faea64d31e9d4d381d01546d02e3603bc3561537fbc5dcb1470cac852d681cd",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 906,
+      "originalLine": 911,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "banUser",
@@ -4799,11 +4799,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "ce1627a6610db347da70bd6a133357d2e4ac2717171da749f5e8260db2c28f8c",
-      "ownerFingerprint": "6092c84e7c7b9c3bad4d0f3f059a043d28bac88c1c6b4eccc21c59ebbc130a9c",
+      "ownerFingerprint": "b60830dc418b06a7006167cf672b02718880964dfaae049ded02d01ea99d1636",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 931,
+      "originalLine": 937,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "unbanUser",
@@ -4830,11 +4830,11 @@
       },
       "family": "prisma-tagged-mutation",
       "operationFingerprint": "93ee963ad0ecc952687790bdb2b3506a9e55f3b3ddbc8b205e826ed6ba4ed8e9",
-      "ownerFingerprint": "4da661cd66697100978dd748038329d29c6b13b8536b7ee0728f00380e7fddd6",
+      "ownerFingerprint": "9fc1a162bbdfb7192e471ace113efbf76e2da2a86e4f0cb124ef9fff722188a7",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 960,
+      "originalLine": 967,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "wipeUser",
@@ -4860,11 +4860,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "2ff9fad0ff2c4b5ee57e28d34df45e5a2c7ed724a31d4f06ee1b1f26fb052da5",
-      "ownerFingerprint": "4da661cd66697100978dd748038329d29c6b13b8536b7ee0728f00380e7fddd6",
+      "ownerFingerprint": "9fc1a162bbdfb7192e471ace113efbf76e2da2a86e4f0cb124ef9fff722188a7",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 976,
+      "originalLine": 983,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "wipeUser",
@@ -4891,11 +4891,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "40187ed87bf97226b76af3e9ff54b380fec1a37402a52fd978387aa48bfb2114",
-      "ownerFingerprint": "4da661cd66697100978dd748038329d29c6b13b8536b7ee0728f00380e7fddd6",
+      "ownerFingerprint": "9fc1a162bbdfb7192e471ace113efbf76e2da2a86e4f0cb124ef9fff722188a7",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 977,
+      "originalLine": 984,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "wipeUser",
@@ -4922,11 +4922,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "385cde99538b0ccc3175b06eeaad4df25f6cc29d15f29fe566d9d708dc0167e6",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1003,
+      "originalLine": 1011,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteUser",
@@ -4953,11 +4953,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "1c86d34df90b73ace674a096cc977644f9bd4947f9f5e1b983d37dcdb569951e",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1004,
+      "originalLine": 1012,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteUser",
@@ -4984,11 +4984,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "8f07296561433d70ea53d8091c8108fde40a88c127c96d671da26e647c5dc1b1",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1005,
+      "originalLine": 1013,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteUser",
@@ -5015,11 +5015,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "10235e75e0127e432fd8ef10a0bac5b33ffe90620e7241272a9155d728158528",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1013,
+      "originalLine": 1021,
       "sdkReference": "@redis:getRedisClient().keys",
       "disposition": "required",
       "reason": "Actual accepted command/audit or coupled session cleanup discovery has its own retained required disposition before its caller catch; completed read/no-row outcomes do not invent committed stages.",
@@ -5035,11 +5035,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "b6e0ef16bb92c8c4ecd956f3b2f8c95a802f6f423b6ecf77e062e31f9dac9b66",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1017,
+      "originalLine": 1025,
       "sdkReference": "@redis:getRedisClient().get",
       "disposition": "required",
       "reason": "Actual accepted command/audit or coupled session cleanup discovery has its own retained required disposition before its caller catch; completed read/no-row outcomes do not invent committed stages.",
@@ -5055,11 +5055,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "8310c8fdda087856c4aefa90d50b2f6681ebc90580ce043f5f2cb14267561ca7",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1018,
+      "originalLine": 1026,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteUser",
@@ -5086,11 +5086,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "b413807b585575ba306e23c14924f155765df21a2024b0ef58a788ac2f40ac69",
-      "ownerFingerprint": "600443d2d859383a05a9aa3fb35cbed3cd0a006284ea354bcb721da77f89d979",
+      "ownerFingerprint": "b1ce3710ead458fa428305400171f37259be56934e41c478ed7b2531a0b747ad",
       "boundaries": [
         "runRequiredEffect"
       ],
-      "originalLine": 1021,
+      "originalLine": 1029,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "deleteUser",
@@ -9512,9 +9512,9 @@
       },
       "family": "prisma-raw-mutation",
       "operationFingerprint": "c6fea5a7fe627ade0b00cfa8332d22806d2766c952b02bda57c60ae3ad650109",
-      "ownerFingerprint": "5861e716941285384720f47e383bd432eb90bba4d3d32ff93bfbb418f20e987f",
+      "ownerFingerprint": "4a6c628a6a287f1dc708160608275ae082d9d6f104767a22e3b5a1c287959442",
       "boundaries": [],
-      "originalLine": 194,
+      "originalLine": 196,
       "disposition": "delegated",
       "reason": "Live compatibility patches run under startActive runtime.required. Standalone CLI awaits every patch and exits nonzero; the pre-baseline process fence and set -eu shell retain an incomplete startup. No runtime singleton is imported into this CLI.",
       "caller": "applyPostPushPatches",
@@ -9537,7 +9537,7 @@
             "file": "backend/src/scripts/applyPostPushPatches.ts",
             "owner": "<module>"
           },
-          "fingerprint": "b0bb1a8b7f5a58fc9b18ed162fa50917dd8f8ee6e02b1feae4119ef656fe5c12",
+          "fingerprint": "c57ce8d67130da404970aaded6122d41fe13dbcc0a63e9dba2daebf133cb3990",
           "contract": "fenced-startup-cli-fatal"
         }
       ],
@@ -9560,7 +9560,7 @@
               "file": "backend/src/scripts/applyPostPushPatches.ts",
               "owner": "<module>"
             },
-            "fingerprint": "b0bb1a8b7f5a58fc9b18ed162fa50917dd8f8ee6e02b1feae4119ef656fe5c12",
+            "fingerprint": "c57ce8d67130da404970aaded6122d41fe13dbcc0a63e9dba2daebf133cb3990",
             "calls": []
           },
           {
@@ -9568,7 +9568,7 @@
               "file": "backend/src/scripts/applyPostPushPatches.ts",
               "owner": "<module>"
             },
-            "fingerprint": "b0bb1a8b7f5a58fc9b18ed162fa50917dd8f8ee6e02b1feae4119ef656fe5c12",
+            "fingerprint": "c57ce8d67130da404970aaded6122d41fe13dbcc0a63e9dba2daebf133cb3990",
             "calls": []
           }
         ]
@@ -34491,7 +34491,7 @@
         "file": "backend/src/controllers/autoModRulesController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "243c02b62942f977d41f89cf02e43362cc89e29baafc1358f0e034392ba98aea",
+      "fingerprint": "a318c8831189c9206466e08cdd1e673b9d23f2c1bc8b6d179171e17f5b257ff6",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -34507,7 +34507,7 @@
         "file": "backend/src/controllers/channelsController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "495921f94467969ba7845c80a533d9eb2fadefdf9c5a2cfbc0dd04f0076a0f8f",
+      "fingerprint": "48963e5ee14c2838422cba9cbd379a40bc8054ee757a0b25fc70b53d9f2c3fc6",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -34555,7 +34555,7 @@
         "file": "backend/src/controllers/messagesController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "620cc39c94d19228e8a23c1a80cf041c4717b50ad59d1fcbece97507893c8c8a",
+      "fingerprint": "83f17cf15bce8f87e3b179d990b495cc5dec9b1b02abacf5ddf95b1f65a30d82",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -34579,7 +34579,7 @@
         "file": "backend/src/controllers/moderationController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "0194b4998463f817faea3b057bcb799543b75553812bae9942cb9f1207a98423",
+      "fingerprint": "655e2b71d8a5a9ffea99865f1564c9dc45d71f39ddbc7f6310b30a28112f5fb9",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -34643,7 +34643,7 @@
         "file": "backend/src/controllers/usersController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "0e2aacb4a987a91eabb0bc7c4a9f0e77b47cde2ddf5f5b74cce564af54d65cef",
+      "fingerprint": "196e70298d9a0d0fc2ef38fd7c3af62e34d46626d0fd68878a8cc451044cdb4f",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -34867,7 +34867,7 @@
         "file": "backend/src/scripts/applyPostPushPatches.ts",
         "owner": "<module>"
       },
-      "fingerprint": "b0bb1a8b7f5a58fc9b18ed162fa50917dd8f8ee6e02b1feae4119ef656fe5c12",
+      "fingerprint": "c57ce8d67130da404970aaded6122d41fe13dbcc0a63e9dba2daebf133cb3990",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -35934,7 +35934,7 @@
         "owner": "<module>"
       },
       "contract": "reviewed-shared-source",
-      "fingerprint": "6b6542a7929e527473336ca0d1bd948ca170080fe71521ed7c27781c96e4f074",
+      "fingerprint": "317b9b2676729e51ffa28fa04602c121dd5949b24263d1db5e515d428f04b3c0",
       "reason": "V19 required-effects fixture retains all original effect/audit/privacy assertions. Both module and VM loaders bind the exact native helper to the guarded current coordinator. Actual source/compiled POST, held body/callback, before-instance and removed-binding controls accompany strict child status and complete explicit artifact validation without stdout filtering, quiet mode or helper stubbing."
     },
     {
@@ -35979,6 +35979,70 @@
       },
       "fingerprint": "328e567e4af34ed88e106e4c475e96feeca3db35e6e570bc8260cab682af8fe2",
       "contract": "Actual source and compiled Redis subscription adapter, relay control receiver and shared local delivery effects; synthetic store/socket boundaries. Mandatory acquisition, applied cursor response loss, later delivery and pairing discovery failures retain checkpoint/journal/restart-fence disposition; healthy/frozen/self-origin/no-target controls and receiver no-republication remain asserted."
+    },
+    {
+      "identity": {
+        "file": "backend/src/utils/resolveActorId.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "9ccb34e04bc75fd177a68e78af152c48d916018b7cf0024ed4ea83e2b6c6d103",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/src/recovery/retainedMessagePlan.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "369cda864673ed768aae6ff312c1836b4b43fa25ba00b42cc4c90d5a36ce90b9",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/src/recovery/__tests__/retainedMessagePlan.test.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "7d4229a531db7d3a55f5fcf02334a6f37cd5c48aa182cd4c02939bef8a9ff793",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/src/scripts/__tests__/applyPostPushPatches.test.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "be961adf6ba3dc9eebb3b5322d69bbbf17663cbe3aa606d9d04319eedb7073d5",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/tests/resolveActorId.test.js",
+        "owner": "<module>"
+      },
+      "fingerprint": "127897821f758f4babe86849c80aae3e8a0e21c251549a31021e6b6ee33272f1",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/tests/recoveryActorEndpointsReal.test.js",
+        "owner": "<module>"
+      },
+      "fingerprint": "6827085fd1d91fa7a196efe2b9ea89e478c67a03a89ad0844005982e14ea6d9d",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/tests/recoveryMessageCompatibilityReal.test.js",
+        "owner": "<module>"
+      },
+      "fingerprint": "685a12bdc7c01c3a248f1ea5d751ad3e4f01820217363698c6aece95a7b0fa6a",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/tests/setup/recovery-real-database.cjs",
+        "owner": "<module>"
+      },
+      "fingerprint": "ed0c5bc68d45bf27d50c6e54a41bcea284e0e62f9c7fa0b36fdba396a2f7348c",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
     }
   ],
   "scriptBindings": [

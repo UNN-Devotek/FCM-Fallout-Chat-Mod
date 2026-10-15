@@ -167,6 +167,14 @@ mutation stage, and known no-op deletion remains successful. Accepted required a
 refused outcomes independently of the primary row count; verified whole-transaction rollback
 contracts remain separate.
 
+Audited user/channel/message/moderation controllers resolve the authenticated actor before
+their primary mutation. Existing internal users and linked Discord accounts supply a verified
+UUID; API-key and confirmed unlinked Discord actors supply null. Wrong identity types,
+nonexistent internal UUIDs and lookup outages are separate attribution errors, not anonymous
+success. Self-deletion explicitly uses a null audit FK and retains the verified deleted actor
+UUID in metadata. Required audit failure accounting and existing response catches remain in
+place after primary commits, including zero-row writes. See [authentication](auth.md).
+
 Private operator output contains fixed failure descriptions, allowlisted error classes/codes,
 trusted IDs and fixed stages. SDK messages, SQL, chat content, bearer tokens, session keys and
 URLs are excluded. Discord interaction/webhook routes retain a template and numeric IDs; the

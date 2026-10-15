@@ -118,9 +118,15 @@ Uses `channelsLimiter` (500 req/15min) instead of `apiLimiter`.
 | GET | `/api/messages/public` | public | Recent messages (public read-only mode) |
 | GET | `/api/messages/search` | requireDiscordRole(owner/admin/mod) | Full-text message search |
 | GET | `/api/messages` | requireAuth | Message history (authenticated) |
-| POST | `/api/messages` | requireDiscordRole(owner/admin/mod) | Create a message (admin-injected) |
-| POST | `/api/messages/scrub` | requireDiscordRole(owner/admin) | Bulk-delete messages matching criteria |
+| POST | `/api/messages` | requireDiscordRole(owner/admin/mod) | Publish an admin message live and relay to Discord; no history row |
+| POST | `/api/messages/scrub` | requireDiscordRole(owner/admin) | Replace content of the supplied message UUIDs with `[REDACTED]` |
 | DELETE | `/api/messages/:id` | requireDiscordRole(owner/admin/mod) | Delete a message |
+
+Authenticated administrator WebSocket chat is a separate persisted path using
+`source: "web"`. Its ACK UUID and broadcast timestamp are retained through Bull
+and the composite `(id, created_at)` SQL key. The REST publication above remains
+live-only. Audited mutations resolve the internal actor before changing data;
+unconfirmed attribution returns HTTP 503 under the [audit attribution rules](auth.md).
 
 ---
 

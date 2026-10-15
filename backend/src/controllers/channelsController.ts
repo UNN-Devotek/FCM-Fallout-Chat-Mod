@@ -1,3 +1,4 @@
+import { resolveInternalActorId } from '../utils/resolveActorId';
 import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
@@ -43,6 +44,7 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
   return runRequiredBundle('domain', 'channelsController:e85eb1f13035', async () => {
   const { name, color, parentId, sortOrder, discordRelay, discordChannelId, allowGifs, allowEmojis } = req.body;
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Validate parentId exists if provided
     if (parentId) {
       if (!UUID_RE.test(parentId)) return next(createError(400, 'Invalid parentId format'));
@@ -65,7 +67,7 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
     }), isPrismaAtomicRefusal, undefined, undefined);
     await runRequiredMutation('audit', '1487cd7b5abc26b480afd1a2', { stage: 'primary-write-unconfirmed', targetId: channel.id }, () => prisma.auditLog.create({
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'create_channel',
         targetId: channel.id,
         targetType: 'channel',
@@ -129,6 +131,7 @@ async function archiveChannel(req: Request, res: Response, next: NextFunction): 
   return runRequiredBundle('domain', 'channelsController:d3f7499688d0', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const result = await runRequiredMutation('domain', 'd699e491a2e4e4cc9a957d80', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.updateMany({
       where: { id: paramStr(req, 'id'), isArchived: false },
       data: { isArchived: true },
@@ -141,7 +144,7 @@ async function archiveChannel(req: Request, res: Response, next: NextFunction): 
     }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     await runRequiredMutation('audit', '97e81050be6489c8dcbc3b64', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'archive_channel',
         targetId: paramStr(req, 'id'),
         targetType: 'channel',
@@ -166,6 +169,7 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
   return runRequiredBundle('domain', 'channelsController:b1e9ddfc1309', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const channel = await prisma.channel.findUnique({ where: { id: paramStr(req, 'id') } });
     if (!channel) return next(createError(404, 'Channel not found'));
 
@@ -187,7 +191,7 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
 
     await runRequiredMutation('audit', '5b1044e7acf29c95d4642c8f', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'delete_channel',
         targetId: paramStr(req, 'id'),
         targetType: 'channel',

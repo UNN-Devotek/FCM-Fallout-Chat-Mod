@@ -27,11 +27,12 @@ function loader(root) {
   const compiled = !fs.existsSync(path.join(root, 'runtime/coordinator.ts')), cache = new Map(), hashes = {};
   const file = relative => path.join(root, relative + (compiled ? '.js' : '.ts'));
   const code = filename => { const content = fs.readFileSync(filename, 'utf8'); hashes[path.relative(root, filename)] = sha(content); return compiled ? content : esbuild.transformSync(content, { loader: 'ts', format: 'cjs', target: 'node22' }).code; };
-  let runtime;
+  let runtime, fixturePrisma;
   function load(relative) {
     const filename = file(relative); if (cache.has(filename)) return cache.get(filename).exports;
     const module = { exports: {} }; cache.set(filename, module);
     const localRequire = name => {
+      if (relative === 'utils/resolveActorId' && name === '../config/prisma') return { __esModule: true, default: fixturePrisma };
       if (relative === 'lib/requiredEffects' && name === '../runtime') { if (!runtime) throw Error('Missing current contract runtime'); return { runtime }; }
       if (name.startsWith('.')) return load(path.relative(root, path.resolve(path.dirname(filename), name)).replace(/\.[jt]s$/, ''));
       return br(name);
@@ -54,7 +55,7 @@ function loader(root) {
     const transformed = compiled ? expression : esbuild.transformSync(expression, { loader: 'ts', format: 'cjs', target: 'node22', supported: { 'dynamic-import': false } }).code;
     return vm.runInNewContext(transformed, { module: { exports: {} }, exports: {}, console, Buffer, URL, URLSearchParams, setTimeout, clearTimeout, ...bindings }, { filename });
   }
-  return { load, selected, compiled, hashes, bind: value => { runtime = value; } };
+  return { load, selected, compiled, hashes, bindPrisma: value => { fixturePrisma = value; }, bind: value => { runtime = value; } };
 }
 async function execute(root, spec) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fcm-discovery-')), modules = loader(root);
@@ -66,7 +67,7 @@ async function execute(root, spec) {
   const fail = stage => { calls.push(stage); if (spec.mode === stage) throw fault(); };
   const logger = Object.fromEntries(['info', 'warn', 'error', 'debug'].map(level => [level, (...args) => { logs.push(level); }]));
   const prisma = {
-    user: { update: async () => { fail('primary-refusal'); state.primary = true; state.identity = false; return { id: userId }; }, findUnique: async () => ({ discordId: spec.mode === 'absent' ? null : spec.group === 'steam' ? (spec.mode === 'remaining-provider' ? '100000000000000001' : null) : '100000000000000001', steamId: spec.mode === 'absent' ? null : '76561198000000000', installToken: 'synthetic-token' }) },
+    user: { update: async () => { fail('primary-refusal'); state.primary = true; state.identity = false; return { id: userId }; }, findUnique: async () => ({ id: userId, discordId: spec.mode === 'absent' ? null : spec.group === 'steam' ? (spec.mode === 'remaining-provider' ? '100000000000000001' : null) : '100000000000000001', steamId: spec.mode === 'absent' ? null : '76561198000000000', installToken: 'synthetic-token' }) },
     session: { findMany: async () => { fail('row-discovery'); return [{ token: 'synthetic-token' }]; }, deleteMany: async () => { fail('db-delete'); state.sessions = 0; return { count: 1 }; }, delete: async () => { fail('db-delete'); state.sessions = 0; return {}; } },
     auditLog: { create: async () => { fail('audit'); state.audits++; return { id: 'fixture-audit' }; } },
     partyMember: { findFirst: async ({ where }) => { if (where.userId) return spec.mode === 'absent' ? null : { id: userId, role: ['owner', 'owner-discovery', 'owner-fallback'].includes(spec.mode) ? 'owner' : 'member' }; if (where.role) { fail('owner-discovery'); return spec.mode === 'owner-fallback' ? null : { id: partyId, userId: partyId }; } fail('owner-fallback'); return { id: partyId, userId: partyId }; }, delete: async () => { state.member = false; state.primary = true; return {}; }, count: async () => { fail('count'); return ['owner', 'owner-discovery', 'owner-fallback', 'optional-notify'].includes(spec.mode) ? 1 : 0; }, update: async () => { state.owner = 'new'; return {}; }, findMany: async () => { fail('optional-notify'); return []; } },
@@ -83,7 +84,9 @@ async function execute(root, spec) {
     if (spec.mode === 'held') await new Promise(resolve => { release = resolve; });
     return redis;
   };
-  const common = { ...effects, runtime, prisma, getRedisClient, logger, ...params,
+  modules.bindPrisma(prisma);
+  const actorIds = modules.load('utils/resolveActorId');
+  const common = { ...effects, runtime, prisma, getRedisClient, logger, ...params, ...actorIds, resolveActorId_1: actorIds,
     requiredEffects_1: effects, prisma_1: { default: prisma }, redis_1: { getRedisClient }, logger_1: { default: logger }, reqParams_1: params,
     runtime_1: { runtime }, createError: (status, message) => Object.assign(new Error(message), { status }), UUID_RE: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     PARTIES_ENABLED: true, features_1: { PARTIES_ENABLED: true },

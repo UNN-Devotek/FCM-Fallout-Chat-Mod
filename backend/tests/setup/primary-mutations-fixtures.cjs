@@ -188,7 +188,7 @@ const unknown=()=>new Error('fixture required mutation response unknown');
  }));
  results.push(await scenario('account-session-cleanup-after-confirmed-message-report-deletes',async facts=>{
   prisma={message:{deleteMany:async()=>{facts.messagesDeleted=true;return{count:1};}},report:{deleteMany:async()=>{facts.reportsDeleted=true;return{count:1};}},session:{deleteMany:async()=>{facts.sessionDeleteAttempted=true;throw unknown();}},user:{delete:async()=>{facts.userDeleteAttempted=true;return{};}}};
-  await vmFull('controllers/usersController.ts').deleteUser({params:{id:'10000000-0000-0000-0000-000000000001'},adminUser:{id:'fixture-admin'}},response(facts),error=>{facts.problemResponse500=true;});return{status:500};
+  await vmFull('controllers/usersController.ts').deleteUser({params:{id:'10000000-0000-0000-0000-000000000001'},adminUser:{id:'api-key'}},response(facts),error=>{facts.problemResponse500=true;});return{status:500};
  }));
  for(const kind of ['update','delete']) results.push(await scenario('admin-'+kind+'-primary-authority-unknown',async facts=>{
   prisma={adminUser:{[kind]:async()=>{facts.authorityMutationAttempted=true;throw unknown();}},auditLog:{create:async()=>({})}};

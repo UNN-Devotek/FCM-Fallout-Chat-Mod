@@ -139,7 +139,7 @@ export async function createAutoModRule(req: Request, res: Response, next: NextF
         actorId,
         action: 'automod_rule_create',
         targetType: 'automod_rule',
-        targetId: actorId,
+        targetId: rule.id,
         reason: `Created rule "${rule.name}" (${rule.triggerType})`,
         metadata: { ruleId: rule.id, triggerType: rule.triggerType },
       },
@@ -167,6 +167,7 @@ export async function updateAutoModRule(req: Request, res: Response, next: NextF
   }
 
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const existing = await prisma.autoModRule.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Rule not found'));
 
@@ -181,13 +182,12 @@ export async function updateAutoModRule(req: Request, res: Response, next: NextF
 
     const rule = await runRequiredMutation('moderation', '978e53fbbb48c9a78bf3a8a2', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.autoModRule.update({ where: { id }, data: data as any }), isPrismaAtomicRefusal, undefined, undefined);
     invalidateRulesCache();
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await createRequiredAudit(prisma.auditLog, {
       data: {
         actorId,
         action: 'automod_rule_update',
         targetType: 'automod_rule',
-        targetId: actorId,
+        targetId: rule.id,
         reason: `Updated rule "${rule.name}"`,
         metadata: { ruleId: rule.id, changes: Object.keys(data) },
       },
@@ -204,17 +204,17 @@ export async function deleteAutoModRule(req: Request, res: Response, next: NextF
   const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const existing = await prisma.autoModRule.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Rule not found'));
     await runRequiredMutation('moderation', 'af19fb372514d286d76c6ba0', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.autoModRule.delete({ where: { id } }), isPrismaAtomicRefusal, undefined, undefined);
     invalidateRulesCache();
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await createRequiredAudit(prisma.auditLog, {
       data: {
         actorId,
         action: 'automod_rule_delete',
         targetType: 'automod_rule',
-        targetId: actorId,
+        targetId: id,
         reason: `Deleted rule "${existing.name}" (${existing.triggerType})`,
         metadata: { ruleId: id },
       },
@@ -233,15 +233,15 @@ export async function toggleAutoModRule(req: Request, res: Response, next: NextF
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return next(createError(422, 'enabled must be a boolean'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const rule = await runRequiredMutation('moderation', 'e27126660e6b65db0e5c738f', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.autoModRule.update({ where: { id }, data: { enabled }, select: { id: true, enabled: true, name: true } }), isPrismaAtomicRefusal, undefined, undefined);
     invalidateRulesCache();
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await createRequiredAudit(prisma.auditLog, {
       data: {
         actorId,
         action: enabled ? 'automod_rule_enable' : 'automod_rule_disable',
         targetType: 'automod_rule',
-        targetId: actorId,
+        targetId: rule.id,
         reason: `${enabled ? 'Enabled' : 'Disabled'} rule "${rule.name}"`,
         metadata: { ruleId: id },
       },

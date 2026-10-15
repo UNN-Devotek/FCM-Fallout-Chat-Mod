@@ -1,9 +1,10 @@
 # Return production from Hostinger to Mothership
 
-**Version:** 0.6 — 2026-10-15 UTC
+**Version:** 0.7 — 2026-10-15 UTC
 
-**Status:** Preparation and integration authorized; runtime quality correction, outage recovery,
-final CI/promotion and timed rehearsal remain open. Hostinger remains authoritative.
+**Status:** Preparation and integration authorized; Task 1 runtime qualification passes at
+`ab0bedcd`. Task 2 outage recovery, final integrated acceptance/promotion and timed rehearsal
+remain open. Hostinger remains authoritative.
 
 **Sequence:** Integrate code → accept Dev → accept the promoted version on Hostinger → rehearse → transfer that same version and final state to Mothership → hold Hostinger for 48 hours.
 
@@ -54,7 +55,8 @@ rollback and timing. This waiver does not authorize a new client/HUD release.
 
 ## 2. Gaps found in the implementation
 
-These are source findings, not features already implemented by this plan.
+These findings began with the initial source review. Later resolutions and remaining
+acceptance gaps are recorded in §5 and the execution ledger.
 
 | Finding | Required resolution and evidence |
 | --- | --- |
@@ -166,13 +168,15 @@ documentation work; the implementation and rehearsal gates remain separate work.
 
 ## 5. Freeze, drain and external recovery contract
 
-**Blocking acceptance gap:** the private runtime implementation exists, but has
-not passed its final quality gate. The frozen v23 candidate passes all fourteen
-specification requirements and its local verification groups; quality review
-confirmed that five remote relay-control receivers can log a required delivery
-failure and still persist a clean close. The v24 correction moves ownership into
-their shared delivery helpers. Complete that correction, its tests, fresh reviews
-and final CI before accepting G6. Operator control remains private; use the
+**Runtime qualification complete; recovery acceptance still blocked:** frozen v24
+at `ab0bedcd` passes fresh independent specification and quality reviews across
+all fourteen runtime requirements, all fourteen hosted CI jobs, and eight exact-image
+application checks. The shared-helper correction retains required failures on both
+initiating and remote relay-control delivery paths; v23's failed quality record remains
+preserved. This accepts the Task 1 runtime checkpoint, not G6 or production readiness.
+Task 2 still needs verified legacy acceptance, source compatibility/audit attribution,
+expected external effects, outage history/current-state and due-work recovery, and the
+complete forward/reverse application rehearsal. Operator control remains private; use the
 [documented local commands](../backend/runtime-maintenance.md), not a public
 maintenance URL.
 
@@ -1105,3 +1109,39 @@ remains authoritative while these checks are open.
   complete review, external MCP transport proof, Full key provenance and actual
   timed forward/reverse rehearsal remain open. No execution grant or cutover
   readiness follows from these results.
+- **Task 1 qualified, 2026-10-15 UTC:** commit `ab0bedcd` corrects the five
+  shared delivery helpers. Fresh independent specification and quality reviews
+  pass all fourteen runtime requirements. The maintained receiver matrix retains
+  32 required failures and 44 clean controls, with zero false clean closes or
+  receiver republishing. All 960 writer identities/dispositions remain intact.
+  Required [CI run 38679701888](https://github.com/UNN-Devotek/FCM-Fallout-Chat-Mod/actions/runs/38679701888)
+  passes all fourteen jobs, including CI Summary and the complete Ruffle harness:
+  189 Jest suites / 2,879 passes / nine existing wiki placeholders, and 445
+  TypeScript passes with zero failed, cancelled or skipped tests. The tested
+  merge and reviewed head have the identical complete Git tree. The exact image
+  passes eight application checks; six final backends are independently stopped
+  and removed. Public source and synthetic evidence are preserved in
+  `runtime-rehearsal/v24-task1-qualified/`, unsigned catalog SHA256
+  `1b60a237ac410d88fbded33a56949e7a51ec84dc0e5600da197c1b718844f360`.
+  This supersedes the earlier pending Task 1 status, while preserving its failed
+  versions. It does not accept Task 2, promotion, G6, timing or the live boundary.
+- Transfer generation 004 is frozen at `public-checkpoint-001`: 54 source files,
+  116 verified catalog members, 199 Python tests with zero skips, nine Full mock
+  scenarios retaining all forty operations, and thirteen SMALL mock scenarios.
+  Catalog SHA256 is
+  `8d7bb428d5f97b4fcbf762af5cdd4532a5700584ad699c29b26cad1a540aa61f`.
+  Preauthority verifier custody and a nested budget watcher remain confirmed
+  blocking code gaps. The actual owned MCP controller-loss/tunnel/both-port
+  proof and private authority provenance also remain unresolved. Current test
+  inputs are complete; five earlier test-file revisions retain their captured
+  hashes and raw results without recoverable historical bytes. No real transfer
+  or new execution grant is accepted from this checkpoint.
+- Task 2A source work is released against the qualified runtime baseline:
+  correct `web` source acceptance, resolve valid audit attribution before
+  mutation, and classify retained jobs privately without replay. Its real-store
+  tests use a separate synthetic local database and Redis instance. The known
+  24 retained failed jobs remain protected; thirteen existing-author jobs are
+  candidates for verification, and eleven missing-author jobs remain blocked
+  pending provenance or explicit disposition. No production repair is authorized
+  by implementing or testing the classifier. Final Task 2A review and integrated
+  CI remain pending; Hostinger and hosted Dev authority are unchanged.
