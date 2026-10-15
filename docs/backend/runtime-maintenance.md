@@ -370,6 +370,15 @@ reports expose safe identifiers, digests and counts; relay rejection and outer l
 diagnostics. Preserve the whole control directory, including unresolved protected inputs, in
 encrypted forward/reverse handoff state. Do not delete it to obtain readiness.
 
+Startup completely parses the bounded journal once. The owning instance then retains an
+immutable semantic index and compares every historical byte before each transition, together
+with file identity, size, private mode and ownership checks. Unchanged timestamps never bypass
+that comparison. Unexpected append, replacement, truncation or same-size prefix edits refuse
+further work; a new instance must validate the whole file. Only successful file and directory
+syncs advance the cached append/index. A failed append or protected-input cleanup leaves a
+sticky unresolved inspection and refuses later relay transitions, including a repeated call
+after failed cleanup. This cache creates no additional persistent path or repair capability.
+
 If the initial protected-input write itself fails, no Discord create is attempted and the
 failure/restart fence prevents a clean boundary. The existing live-only REST broadcast/HTTP 201
 policy is preserved, so its original body may be unavailable after a crash in that failed-write
@@ -528,6 +537,11 @@ uses actual installed SDK HTTP transport against a loopback fake provider for lo
 5xx, 429 success/error alternatives, queue/bucket waits, held headers/body/callbacks and caller
 budgets. Focused tests also run with natural process exit; inherited Jest/test-runner force-exit
 settings are not drain or resource-lifetime evidence.
+`discordRelayJournalCache.test.js` runs in the same required Jest discovery. Accumulated real
+records must require constant new semantic parse/hash work; exact prefix mutation with restored
+mtime, inode replacement, truncation, permissions, unknown/torn tails, caller mutation and
+failed append/sync/cleanup must stay fenced. Local source growth measurements are separate
+from the parent-owned frozen production-image probe and full CI acceptance.
 `runtimeRelayControlReceivers.test.js` executes the actual whole Redis subscription
 adapter, registered control callback and five shared local helpers in source and
 compiled form. Synthetic stores and socket sinks exercise successful delivery,

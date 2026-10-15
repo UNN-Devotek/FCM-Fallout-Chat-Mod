@@ -268,7 +268,7 @@ test('failed protected-payload cleanup remains fenced after known verified compl
     expect(journalRecords().at(-1)).toMatchObject({ stage: 'complete', discordMessageId: sentId });
   } finally { spy.mockRestore(); }
   expect(runtime.discordRelays.inspect().pending).toBe(1);
-  await relay(); expect(mockSend).toHaveBeenCalledTimes(1);
+  await expect(relay()).rejects.toThrow(/private recovery/); expect(mockSend).toHaveBeenCalledTimes(1);
   expect((await runtime.drain({ timeoutMs: 1000 })).phase).toBe('failed');
   expect(JSON.stringify(runtime.snapshot())).not.toContain('private-cleanup-canary');
 });

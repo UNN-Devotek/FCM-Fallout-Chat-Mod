@@ -8,10 +8,11 @@ beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fcm-entrypoint-'
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 function fixture(marker) {
-  fs.mkdirSync(path.join(dir, 'control'));
+  fs.mkdirSync(path.join(dir, 'control'), { mode: 0o700 });
   fs.mkdirSync(path.join(dir, 'bin'));
   fs.mkdirSync(path.join(dir, 'dist', 'runtime'), { recursive: true });
   fs.copyFileSync(path.resolve('dist/runtime/bootstrap.js'), path.join(dir, 'dist', 'runtime', 'bootstrap.js'));
+  fs.copyFileSync(path.resolve('dist/runtime/discordRelayJournal.js'), path.join(dir, 'dist', 'runtime', 'discordRelayJournal.js'));
   if (marker) fs.writeFileSync(path.join(dir, 'control', marker), marker === 'failures.jsonl' ? '{"id":"unresolved"}\n' : '{}');
   fs.writeFileSync(path.join(dir, 'baseline-migrations.sh'), '#!/bin/sh\nprintf migrated > migration-ran\n', { mode: 0o700 });
   fs.writeFileSync(path.join(dir, 'bin', 'node'), `#!/bin/sh\nif [ "$1" = dist/runtime/bootstrap.js ]; then exec '${process.execPath.replace(/'/g, "'\\''")}' "$@"; fi\nprintf node-started\n`, { mode: 0o700 });

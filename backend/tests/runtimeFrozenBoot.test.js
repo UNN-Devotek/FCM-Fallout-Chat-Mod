@@ -13,7 +13,7 @@ test('a real backend module load and startup inherit freeze before stores, worke
   let child;
   try {
     await Promise.all([new Promise(resolve => db.listen(0, '127.0.0.1', resolve)), new Promise(resolve => redis.listen(0, '127.0.0.1', resolve))]);
-    const control = path.join(dir, 'control'); fs.mkdirSync(control); fs.writeFileSync(path.join(control, 'maintenance.json'), '{}');
+    const control = path.join(dir, 'control'); fs.mkdirSync(control, { mode: 0o700 }); fs.writeFileSync(path.join(control, 'maintenance.json'), '{}');
     const driver = path.join(dir, 'driver.cjs');
     fs.writeFileSync(driver, `
       const fs=require('node:fs'); const copied=[];

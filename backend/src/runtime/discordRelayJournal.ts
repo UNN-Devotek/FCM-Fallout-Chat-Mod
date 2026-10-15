@@ -9,6 +9,7 @@ const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_RECORD_BYTES = 2048;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_PAYLOAD_FILES = 4096;
+const PREFIX_BLOCK_BYTES = 256 * 1024;
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const ID = /^[A-Za-z0-9_:=.-]{1,160}$/;
@@ -23,8 +24,8 @@ export type DiscordRelayIntent = {
   configDigest: string;
   payloadDigest: string;
 };
-type RelayState = { intent: DiscordRelayIntent; stage: 'intent' | 'attempt' }
-  | { intent: DiscordRelayIntent; stage: 'returned' | 'complete'; discordMessageId: string };
+type RelayState = { intent: Readonly<DiscordRelayIntent>; stage: 'intent' | 'attempt' }
+  | { intent: Readonly<DiscordRelayIntent>; stage: 'returned' | 'complete'; discordMessageId: string };
 type JournalRecord = { format: typeof FORMAT; stage: 'intent'; intent: DiscordRelayIntent }
   | { format: typeof FORMAT; stage: 'attempt'; operationId: string }
   | { format: typeof FORMAT; stage: 'returned' | 'complete'; operationId: string; discordMessageId: string };
@@ -103,6 +104,10 @@ export class DiscordRelayJournal {
   readonly payloadDirectory: string;
   private readonly observedStates = new Map<string, RelayState>();
   private readonly observedPayloads = new Set<string>();
+  private readonly prefix: Buffer[] = [];
+  private prefixBytes = 0;
+  private journalStat: Stats | undefined;
+  private failed: 'integrity' | 'persistence' | undefined;
   constructor(private readonly directory: string) {
     this.filename = path.join(directory, 'discord-relays.jsonl');
     this.payloadDirectory = path.join(directory, 'discord-relay-payloads');
@@ -188,9 +193,42 @@ export class DiscordRelayJournal {
       || reference.channelId !== intent.channelId || reference.payloadDigest !== intent.payloadDigest) throw refused();
   }
 
+  private remember(bytes: Buffer): void {
+    let offset = 0;
+    while (offset < bytes.length) {
+      const index = Math.floor(this.prefixBytes / PREFIX_BLOCK_BYTES), start = this.prefixBytes % PREFIX_BLOCK_BYTES;
+      if (!this.prefix[index]) this.prefix[index] = Buffer.allocUnsafe(PREFIX_BLOCK_BYTES);
+      const count = Math.min(bytes.length - offset, PREFIX_BLOCK_BYTES - start);
+      bytes.copy(this.prefix[index], start, offset, offset + count);
+      offset += count; this.prefixBytes += count;
+    }
+  }
+
+  /** Compare every validated byte; size and filesystem timestamps cannot prove
+   * that an old record is unchanged. Only this instance's durable appends grow
+   * the cache. A new process always performs the complete semantic parse.
+   */
+  private verifyPrefix(descriptor: number, stat: Stats): void {
+    if (!this.journalStat || stat.dev !== this.journalStat.dev || stat.ino !== this.journalStat.ino
+      || stat.size !== this.prefixBytes) throw refused();
+    const scratch = Buffer.allocUnsafe(PREFIX_BLOCK_BYTES);
+    for (let position = 0; position < this.prefixBytes; position += PREFIX_BLOCK_BYTES) {
+      const length = Math.min(PREFIX_BLOCK_BYTES, this.prefixBytes - position);
+      let offset = 0;
+      while (offset < length) {
+        const count = readSync(descriptor, scratch, offset, length - offset, position + offset);
+        if (!count) throw refused();
+        offset += count;
+      }
+      if (!scratch.subarray(0, length).equals(this.prefix[position / PREFIX_BLOCK_BYTES].subarray(0, length))) throw refused();
+    }
+    if (fstatSync(descriptor).size !== this.prefixBytes) throw refused();
+  }
+
   private read() {
     let descriptor: number | undefined;
     try {
+      if (this.failed) throw refused();
       try { privateEntry(lstatSync(this.directory), true); }
       catch (error) {
         if (object(error) && error.code === 'ENOENT' && this.observedStates.size === 0) return { states: new Map<string, RelayState>(), bytes: 0 };
@@ -203,6 +241,10 @@ export class DiscordRelayJournal {
       }
       const stat = fstatSync(descriptor); privateEntry(stat, false);
       if (stat.size === 0 || stat.size > MAX_BYTES) throw refused();
+      if (this.journalStat) {
+        this.verifyPrefix(descriptor, stat);
+        return { states: this.observedStates, bytes: this.prefixBytes, stat };
+      }
       const bytes = readBounded(descriptor, MAX_BYTES);
       if (bytes.length !== stat.size || !bytes.equals(Buffer.from(bytes.toString('utf8')))
         || bytes[bytes.length - 1] !== 10) throw refused();
@@ -214,7 +256,7 @@ export class DiscordRelayJournal {
         if (record.stage === 'intent') {
           if (!keys(record, ['format', 'stage', 'intent']) || !validIntent(record.intent)
             || states.has(record.intent.operationId)) throw refused();
-          states.set(record.intent.operationId, { intent: record.intent, stage: 'intent' });
+          states.set(record.intent.operationId, { intent: Object.freeze({ ...record.intent }), stage: 'intent' });
           continue;
         }
         if (typeof record.operationId !== 'string') throw refused();
@@ -229,25 +271,26 @@ export class DiscordRelayJournal {
           states.set(record.operationId, { intent: prior.intent, stage: record.stage, discordMessageId: record.discordMessageId });
         } else throw refused();
       }
-      const stages = ['intent', 'attempt', 'returned', 'complete'];
-      for (const [operationId, observed] of this.observedStates) {
-        const current = states.get(operationId);
-        if (!current || discordRelayDigest(current.intent) !== discordRelayDigest(observed.intent)
-          || stages.indexOf(current.stage) < stages.indexOf(observed.stage)
-          || 'discordMessageId' in observed && (!('discordMessageId' in current) || current.discordMessageId !== observed.discordMessageId)) throw refused();
-      }
+      this.remember(bytes);
       for (const [operationId, current] of states) this.observedStates.set(operationId, current);
+      this.journalStat = stat;
       return { states, bytes: bytes.length, stat };
-    } catch { throw refused(); }
-    finally { if (descriptor !== undefined) closeSync(descriptor); }
+    } catch { this.failed ||= 'integrity'; throw refused(); }
+    finally {
+      try { if (descriptor !== undefined) closeSync(descriptor); }
+      catch { this.failed ||= 'integrity'; throw refused(); }
+    }
   }
 
   private append(record: JournalRecord, previous: ReturnType<DiscordRelayJournal['read']>): void {
     let descriptor: number | undefined;
     let directoryDescriptor: number | undefined;
     try {
-      const line = `${JSON.stringify(record)}\n`;
-      if (Buffer.byteLength(line) > MAX_RECORD_BYTES || previous.bytes + Buffer.byteLength(line) > MAX_BYTES) throw refused();
+      // Own the flat string fields before recording or caching them. A caller
+      // must not be able to mutate the authoritative intent after admission.
+      const owned = record.stage === 'intent' ? { ...record, intent: Object.freeze({ ...record.intent }) } : record;
+      const line = Buffer.from(`${JSON.stringify(owned)}\n`);
+      if (line.length > MAX_RECORD_BYTES || previous.bytes + line.length > MAX_BYTES) throw refused();
       mkdirSync(this.directory, { recursive: true, mode: 0o700 });
       privateEntry(lstatSync(this.directory), true);
       descriptor = openSync(this.filename, constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -258,10 +301,22 @@ export class DiscordRelayJournal {
       fsyncSync(descriptor);
       directoryDescriptor = openSync(this.directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       fsyncSync(directoryDescriptor);
-    } catch { throw refused(); }
+      const durable = fstatSync(descriptor); privateEntry(durable, false);
+      if (durable.size !== previous.bytes + line.length) throw refused();
+      closeSync(descriptor); descriptor = undefined;
+      closeSync(directoryDescriptor); directoryDescriptor = undefined;
+      this.remember(line);
+      const next: RelayState = owned.stage === 'intent' ? { intent: owned.intent, stage: 'intent' }
+        : owned.stage === 'attempt' ? { intent: previous.states.get(owned.operationId)!.intent, stage: 'attempt' }
+          : { intent: previous.states.get(owned.operationId)!.intent, stage: owned.stage, discordMessageId: owned.discordMessageId };
+      this.observedStates.set(next.intent.operationId, next);
+      this.journalStat = durable;
+    } catch { this.failed = 'persistence'; throw refused(); }
     finally {
-      if (descriptor !== undefined) closeSync(descriptor);
-      if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+      try {
+        if (descriptor !== undefined) closeSync(descriptor);
+        if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+      } catch { this.failed = 'persistence'; throw refused(); }
     }
   }
 
@@ -303,10 +358,11 @@ export class DiscordRelayJournal {
       unlinkSync(path.join(this.payloadDirectory, `${operationId}.json`));
       syncDirectory(this.payloadDirectory);
       this.observedPayloads.delete(operationId);
-    } catch { throw refused(); }
+    } catch { this.failed = 'persistence'; throw refused(); }
   }
 
   inspect(): DrainInspection {
+    if (this.failed === 'persistence') return { pending: 1, detail: { unavailable: 1 } };
     const states = [...this.read().states.values()];
     const unresolved = states.filter(state => state.stage !== 'complete');
     const references = this.payloadReferences();

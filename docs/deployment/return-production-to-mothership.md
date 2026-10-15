@@ -1,6 +1,6 @@
 # Return production from Hostinger to Mothership
 
-**Version:** 0.8 — 2026-10-15 UTC
+**Version:** 0.9 — 2026-10-15 UTC
 
 **Status:** Preparation and integration authorized; Task 1 runtime qualification passes at
 `ab0bedcd`, and bounded Task 2A compatibility/attribution qualification passes at
@@ -1197,3 +1197,16 @@ remains authoritative while these checks are open.
   Task 2B2 private repair runner, broader recovery, promotion and timing remain
   open. Hostinger and hosted Dev authority are unchanged; no production repair
   or operation is authorized by this source checkpoint.
+- **Task 2B1 v28 failed, 2026-10-15 UTC:** commit `1406f01f` passes the
+  bounded specification review, 39 direct-image and 58 emitted caller/relay
+  checks, and nine new-image application cases. Required CI fails five tests
+  in two startup fixtures: the compiled journal dependency and explicit 0700
+  fixture controls were missing. Quality review also measures 1.17 seconds of
+  synchronous journal work at 10,000 completed operations, below the file cap.
+  Both defects require correction while preserving private permissions,
+  complete journal integrity and failure fencing. The failed source, image
+  bindings, reviews, CI log and reproductions are preserved in the 34-member
+  `runtime-rehearsal/v28-task2b1-ci-failed/` catalog, SHA256
+  `c1b0c11335b13096b894565f018b1cb8c368c6abfedd36f16936dcf0333b9120`.
+  Fresh reviews, a new exact image/application run and current CI remain
+  required after the source correction. This is not Task 2B1 qualification.
