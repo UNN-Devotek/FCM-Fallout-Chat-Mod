@@ -2,6 +2,7 @@ import { Pool, PoolClient, QueryResult } from 'pg';
 import env from './environment';
 import logger from './logger';
 import { createError } from '../middleware/errorHandler';
+import { runtime } from '../runtime';
 
 const pool = new Pool({
   host: env.DB_HOST,
@@ -26,7 +27,7 @@ pool.on('error', (err: Error) => {
  */
 async function getClient(): Promise<PoolClient> {
   try {
-    return await pool.connect();
+    return await runtime.initializeSdkLifetime(() => pool.connect());
   } catch (err: any) {
     const isExhaustion =
       err.message?.includes('timeout') ||

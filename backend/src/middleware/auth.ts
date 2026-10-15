@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
@@ -23,6 +24,7 @@ declare global {
  * Attaches req.user on success.
  */
 async function requireAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('authority', 'auth:39e81c7dc53d', async () => {
   const token = req.headers['x-auth-token'] as string | undefined;
 
   if (!token) {
@@ -48,10 +50,10 @@ async function requireAuth(req: Request, _res: Response, next: NextFunction): Pr
 
     // Auto-lift expired temp bans before the reject check
     if (user.isBanned && user.bannedUntil && new Date(user.bannedUntil) < new Date()) {
-      await prisma.user.update({
+      await runRequiredMutation('authority', '5d7f8c8f9d9e7f55ce9f6a14', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
         where: { id: userId },
         data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       (user as any).isBanned = false;
     }
 
@@ -69,10 +71,10 @@ async function requireAuth(req: Request, _res: Response, next: NextFunction): Pr
 
     // Auto-lift expired mutes so moderators don't need to manually unmute
     if (user.isMuted && user.muteExpiresAt && new Date(user.muteExpiresAt) < new Date()) {
-      await prisma.user.update({
+      await runRequiredMutation('authority', '340a610f1d91f9e99a570a6b', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
         where: { id: userId },
         data: { isMuted: false, muteExpiresAt: null },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       (user as any).isMuted = false;
       (user as any).muteExpiresAt = null;
     }
@@ -84,6 +86,8 @@ async function requireAuth(req: Request, _res: Response, next: NextFunction): Pr
     logger.error({ err }, 'Auth middleware error');
     next(err);
   }
+
+  });
 }
 
 /**
@@ -163,10 +167,10 @@ function requireDiscordRole(...allowedRoles: string[]) {
         select: { id: true, isBanned: true, bannedUntil: true, banReason: true, banCategory: true },
       });
       if (linked?.isBanned && linked.bannedUntil && new Date(linked.bannedUntil) < new Date()) {
-        await prisma.user.update({
+        await runRequiredMutation('authority', '50b0573ed698f2cbd8b7d23d', { stage: 'primary-write-unconfirmed', rowId: linked.id }, () => prisma.user.update({
           where: { id: linked.id },
           data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null },
-        }).catch(() => {});
+        }), isPrismaAtomicRefusal, undefined, undefined).catch(() => {});
         linked.isBanned = false;
       }
       if (linked?.isBanned) {

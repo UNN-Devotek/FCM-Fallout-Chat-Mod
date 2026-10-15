@@ -1,3 +1,5 @@
+import { runRequiredMutation } from '../../lib/requiredEffects';
+import { cancelProducerTimer, producerTimeout } from '../../runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import env from '../../config/environment';
@@ -87,8 +89,11 @@ export class LocalExportBridge {
     // it eventually watches/observes. An older lazy socket cannot steal a newer
     // connection's actor on a different backend replica.
     this.connectionOrder = getRedisClient().then(async redis => {
-      const order = await redis.incr(this.connectionKey);
-      await redis.expire(this.connectionKey, STATE_SECONDS);
+      const order = await runRequiredMutation('session', '033216821619f119abf20263',
+        { accountId: this.accountId, relayUserId: this.actorId, stage: 'bridge-connection-order-unconfirmed' }, () => redis.incr(this.connectionKey));
+      await runRequiredMutation('session', 'b7388fea3c5d0e31d262bf59',
+        { accountId: this.accountId, relayUserId: this.actorId, stage: 'bridge-connection-expiry-unconfirmed' }, () => redis.expire(this.connectionKey, STATE_SECONDS),
+        undefined, undefined, reply => reply === 0);
       return order;
     }).catch(() => 0); // Storage failure denies ownership; no unhandled startup rejection.
   }
@@ -103,7 +108,11 @@ export class LocalExportBridge {
     return raw ? JSON.parse(raw) as ObservationState : null;
   }
   private async save(state: ObservationState): Promise<void> {
-    await (await getRedisClient()).set(this.stateKey, JSON.stringify(state), { EX: STATE_SECONDS });
+    const redis = await getRedisClient();
+    const serialized = JSON.stringify(state);
+    await runRequiredMutation('session', '2e3db06cd20c42d189ca1684',
+      { accountId: this.accountId, relayUserId: this.actorId, stage: 'bridge-state-write-unconfirmed' },
+      () => redis.set(this.stateKey, serialized, { EX: STATE_SECONDS }));
     if (state.active && state.snapshot) {
       await indexBridgeNameplates(state.snapshot, this.accountId, this.token, this.actorId,
         this.owner, await this.connectionOrder, state.expiresAt).catch(() => {});
@@ -119,13 +128,13 @@ export class LocalExportBridge {
   }
 
   private cancelSoftLeaveTimer(): void {
-    if (this.softLeaveTimer) clearTimeout(this.softLeaveTimer);
+    if (this.softLeaveTimer) cancelProducerTimer(this.softLeaveTimer);
     this.softLeaveTimer = undefined;
   }
 
   private scheduleSoftLeaveExpiry(until: number): void {
     this.cancelSoftLeaveTimer();
-    this.softLeaveTimer = setTimeout(() => { void this.expireSoftLeave(until).catch(() => {}); }, Math.max(1, until - Date.now()));
+    this.softLeaveTimer = producerTimeout('local-export-soft-leave', () => this.expireSoftLeave(until), Math.max(1, until - Date.now()));
     this.softLeaveTimer.unref?.();
   }
 

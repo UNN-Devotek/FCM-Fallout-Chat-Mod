@@ -1,0 +1,165 @@
+# Production return definition. Restore the four external volumes before use.
+# Images must already exist on Mothership; no checkout is built or pulled here.
+name: chat-mod-fallout-chat-mod-dprwq2
+
+services:
+  postgres:
+    image: ${TIMESCALE_IMAGE:?set the verified local image config ID}
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - path: /home/devotek/fcm-return-mothership-20261013/config/postgres.env
+        required: true
+        format: raw
+    volumes:
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+    networks:
+      data: {}
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: ${REDIS_IMAGE:?set the verified local image config ID}
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - path: /home/devotek/fcm-return-mothership-20261013/config/redis.env
+        required: true
+        format: raw
+    command: ["sh", "-c", 'exec redis-server --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "$$REDIS_PASSWORD"']
+    volumes:
+      - type: volume
+        source: redis_data
+        target: /data
+    networks:
+      data: {}
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -qx PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: ${MINIO_IMAGE:?set the verified local image config ID}
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - path: /home/devotek/fcm-return-mothership-20261013/config/minio.env
+        required: true
+        format: raw
+    command: server /data --address ":9700" --console-address ":9701"
+    volumes:
+      - type: volume
+        source: minio_data
+        target: /data
+    networks:
+      data:
+        aliases: [minio-internal]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9700/minio/health/live >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    image: ${FCM_BACKEND_IMAGE:?set the accepted Hostinger image config ID}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 180s
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    env_file:
+      - path: /home/devotek/fcm-return-mothership-20261013/config/runtime.env
+        required: true
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "7676"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MINIO_ENDPOINT: http://minio-internal:9700
+      TRUST_PROXY: "true"
+      FCM_RUNTIME_CONTROL_DIR: /app/runtime-control
+      FCM_DRAIN_TIMEOUT_MS: "120000"
+    ports:
+      - target: 7676
+        published: ${ORIGIN_PORT:?set an unused loopback port}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    networks:
+      data: {}
+      app:
+        aliases: [chat-mod-fallout-chat-mod-dprwq2-backend-1]
+    volumes:
+      - type: volume
+        source: releases_downloads
+        target: /app/downloads
+      - type: bind
+        source: /home/devotek/fcm-return-mothership-20261013/runtime-control
+        target: /app/runtime-control
+        bind: {create_host_path: false}
+      - type: bind
+        source: /home/devotek/fcm-return-mothership-20261013/config/releases.json
+        target: /app/releases.json
+        bind: {create_host_path: false}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7676/api/health').then(r=>r.json()).then(r=>process.exit(r.data?.database==='connected'&&r.data?.redis==='connected'?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?set the verified local image config ID}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: [edge]
+    depends_on:
+      backend: {condition: service_healthy}
+    env_file:
+      - path: /home/devotek/fcm-return-mothership-20261013/config/edge.env
+        required: true
+        format: raw
+    command: tunnel --no-autoupdate run
+    networks:
+      app: {}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+
+networks:
+  data:
+    name: fcm-return-prod-20261013-data
+    internal: true
+  app:
+    name: fcm-return-prod-20261013-app
+
+volumes:
+  postgres_data:
+    external: true
+    name: fcm-return-prod-20261013-postgres
+  redis_data:
+    external: true
+    name: fcm-return-prod-20261013-redis
+  minio_data:
+    external: true
+    name: fcm-return-prod-20261013-minio
+  releases_downloads:
+    external: true
+    name: fcm-return-prod-20261013-downloads

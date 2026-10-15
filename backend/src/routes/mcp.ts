@@ -1,3 +1,5 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
+import { cancelProducerTimer, producerInterval } from '../runtime';
 import express, { Request, Response, NextFunction } from 'express';
 import { randomInt, randomBytes } from 'crypto';
 import { requireMcpToken, mcpLimiter } from '../middleware/requireMcpToken';
@@ -254,7 +256,7 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
     const pick = <T>(arr: T[]): T => arr[randomInt(arr.length)] as T;
 
     let sent = 0;
-    const timer = setInterval(() => {
+    const timer = producerInterval('mcp-simulation-stream', () => {
       const author = simUsers.length > 0
         ? simUsers[randomInt(simUsers.length)]
         : { id: `sim-ephemeral-${randomBytes(8).toString('hex')}`, username: pick(SIM_NAMES) };
@@ -265,7 +267,7 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
         messageQueue.add({ id: messageId, content: `[sim] test message ${sent}`, userId: author.id, channelId: safeChannelId, source: 'game', createdAt }).catch(() => {});
       }
       sent++;
-      if (sent >= safeCount) clearInterval(timer);
+      if (sent >= safeCount) cancelProducerTimer(timer);
     }, safeInterval);
     if (typeof (timer as any).unref === 'function') (timer as any).unref();
 
@@ -277,6 +279,7 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
 
 // POST /api/mcp/sim/users — gate: dev/test only + explicit opt-in
 router.post('/sim/users', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcp:f464b9361236', async () => {
   const env = require('../config/environment');
   if (process.env.NODE_ENV === 'production' || !env.ENABLE_SIM_ROUTES) {
     return next(createError(403, 'Sim endpoints are not available. Set ENABLE_SIM_ROUTES=true in a non-production environment.'));
@@ -294,19 +297,21 @@ router.post('/sim/users', async (req: Request, res: Response, next: NextFunction
       const username = SIM_NAMES[i % SIM_NAMES.length];
       const installToken = `sim-mcp-${String(i).padStart(4, '0')}`;
       const sessionToken = uuidv4();
-      const user = await prisma.user.upsert({
+      const user = await runRequiredMutation('identity', '4bf617399149a4d039b4a384', { stage: 'primary-write-unconfirmed' }, () => prisma.user.upsert({
         where: { username },
         create: { username, installToken },
         update: { installToken },
         select: { id: true, username: true },
-      });
-      await redis.set(`session:${sessionToken}`, user.id, { EX: SESSION_TTL });
+      }), isPrismaAtomicRefusal, undefined, undefined);
+      await runRequiredMutation('identity', 'f804d4a2a89f73f5e4b95857', { stage: 'primary-write-unconfirmed' }, () => redis.set(`session:${sessionToken}`, user.id, { EX: SESSION_TTL }), undefined, undefined, undefined);
       users.push({ username: user.username, userId: user.id });
     }
     res.json({ data: { count: users.length, users } });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 export default router;

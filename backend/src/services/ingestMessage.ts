@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * ingestMessage.ts — shared message ingestion for WS, MCP, and native relay.
  *
@@ -37,6 +38,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 import { engineEvaluate } from './autoModEngine';
 import { relayToDiscord, type RelayAuthorCosmetics } from './discordService';
 import { persistMessage } from './messageService';
@@ -146,6 +148,7 @@ export async function ingestMessage(opts: {
   // Discord name (the message is still attributed to the linked user UUID for moderation).
   displayName?: string;
 }): Promise<IngestResult> {
+  return runRequiredBundle('authority', 'ingestMessage:690f6c9b2265', async () => {
   const { userId, channelId, source, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
@@ -170,10 +173,10 @@ export async function ingestMessage(opts: {
   // Auto-lift expired mutes.
   let isMuted = dbUser.isMuted;
   if (isMuted && dbUser.muteExpiresAt && new Date(dbUser.muteExpiresAt) < new Date()) {
-    await prisma.user.update({
+    await runRequiredMutation('authority', '55341142ebc74df7f33e647e', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
       where: { id: userId },
       data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     isMuted = false;
   }
 
@@ -243,6 +246,8 @@ export async function ingestMessage(opts: {
   });
 
   return { ok: true, messageId };
+
+  });
 }
 
 // ── Shared finalize tail ────────────────────────────────────────────────────
@@ -261,7 +266,11 @@ export async function ingestMessage(opts: {
  * the native relay broadcasts after queue acceptance so its synchronous RPC is
  * not held open by worker completion.
  */
-export async function finalizeMessage(opts: {
+export async function finalizeMessage(opts: Parameters<typeof finalizeAdmittedMessage>[0]): Promise<{ messageId: string; createdAt: string }> {
+  return runtime.run('chat:finalize', () => finalizeAdmittedMessage(opts));
+}
+
+async function finalizeAdmittedMessage(opts: {
   userId: string;
   channelId: string;
   content: string;        // already emoji-expanded; caller trims

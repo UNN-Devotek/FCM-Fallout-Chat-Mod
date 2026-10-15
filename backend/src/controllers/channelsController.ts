@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -39,6 +40,7 @@ async function listChannels(req: Request, res: Response, next: NextFunction): Pr
  * Body: { name, color?, parentId?, sortOrder?, discordRelay?, discordChannelId? }
  */
 async function createChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'channelsController:e85eb1f13035', async () => {
   const { name, color, parentId, sortOrder, discordRelay, discordChannelId, allowGifs, allowEmojis } = req.body;
   try {
     // Validate parentId exists if provided
@@ -49,7 +51,7 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
       if (parent.parentId) return next(createError(400, 'Sub-channels cannot have sub-channels (max 2 levels)'));
     }
 
-    const channel = await prisma.channel.create({
+    const channel = await runRequiredMutation('domain', '734f87352544bfcd5f18cd90', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.create({
       data: {
         name,
         color,
@@ -60,8 +62,8 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
         allowGifs: allowGifs === true,            // GIFs default OFF
         allowEmojis: allowEmojis !== false,       // emojis default ON
       },
-    });
-    await prisma.auditLog.create({
+    }), isPrismaAtomicRefusal, undefined, undefined);
+    await runRequiredMutation('audit', '1487cd7b5abc26b480afd1a2', { stage: 'primary-write-unconfirmed', targetId: channel.id }, () => prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'create_channel',
@@ -69,7 +71,7 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
         targetType: 'channel',
         metadata: { name, parentId: parentId || null },
       },
-    });
+    }), undefined, undefined, undefined);
     try {
       if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('created', channel);
     } catch { /* non-fatal — channel is created; clients will re-sync on next poll */ }
@@ -77,12 +79,15 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * PATCH /api/channels/:id -- admin+
  */
 async function updateChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'channelsController:92840f6cd162', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
 
   const data: any = {};
@@ -98,10 +103,10 @@ async function updateChannel(req: Request, res: Response, next: NextFunction): P
   if (Object.keys(data).length === 0) return next(createError(400, 'No fields to update'));
 
   try {
-    const channel = await prisma.channel.updateMany({
+    const channel = await runRequiredMutation('domain', '85effc6afe89342c7bca7ea1', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.updateMany({
       where: { id: paramStr(req, 'id'), isArchived: false },
       data,
-    });
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (channel.count === 0) return next(createError(404, 'Channel not found'));
 
     const updated = await prisma.channel.findUnique({ where: { id: paramStr(req, 'id') } });
@@ -112,6 +117,8 @@ async function updateChannel(req: Request, res: Response, next: NextFunction): P
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -119,26 +126,27 @@ async function updateChannel(req: Request, res: Response, next: NextFunction): P
  * Archives the channel; preserves history.
  */
 async function archiveChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'channelsController:d3f7499688d0', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
-    const result = await prisma.channel.updateMany({
+    const result = await runRequiredMutation('domain', 'd699e491a2e4e4cc9a957d80', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.updateMany({
       where: { id: paramStr(req, 'id'), isArchived: false },
       data: { isArchived: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (result.count === 0) return next(createError(404, 'Channel not found'));
     // Also archive children
-    await prisma.channel.updateMany({
+    await runRequiredMutation('domain', 'bd33a2b1fc680e6c2ff0ca05', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.updateMany({
       where: { parentId: paramStr(req, 'id'), isArchived: false },
       data: { isArchived: true },
-    });
-    await prisma.auditLog.create({
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    await runRequiredMutation('audit', '97e81050be6489c8dcbc3b64', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'archive_channel',
         targetId: paramStr(req, 'id'),
         targetType: 'channel',
       },
-    });
+    }), undefined, undefined, undefined);
     try {
       if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('archived', { id: paramStr(req, 'id') });
     } catch { /* non-fatal */ }
@@ -146,6 +154,8 @@ async function archiveChannel(req: Request, res: Response, next: NextFunction): 
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -153,6 +163,7 @@ async function archiveChannel(req: Request, res: Response, next: NextFunction): 
  * Hard-deletes the channel and all its messages. Irreversible.
  */
 async function deleteChannelPermanently(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'channelsController:b1e9ddfc1309', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
     const channel = await prisma.channel.findUnique({ where: { id: paramStr(req, 'id') } });
@@ -165,16 +176,16 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
     })).map(c => c.id);
     const allIds = [paramStr(req, 'id'), ...childIds];
 
-    await prisma.$transaction([
+    await runRequiredTransaction('domain', '3ff42302673d6612ce6fb10d', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction([
       // Messages have onDelete: Restrict — delete them first
       prisma.message.deleteMany({ where: { channelId: { in: allIds } } }),
       // Children (DiscordRelayMapping cascades automatically)
       prisma.channel.deleteMany({ where: { id: { in: childIds } } }),
       // Parent channel
       prisma.channel.delete({ where: { id: paramStr(req, 'id') } }),
-    ]);
+    ]), { confirmedRollback: isPrismaAtomicRefusal, lazyArray: true, confirmedNoChange: replies => replies.every(isRowCountNoChange) });
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '5b1044e7acf29c95d4642c8f', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'delete_channel',
@@ -182,7 +193,7 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
         targetType: 'channel',
         metadata: { name: channel.name, childCount: childIds.length },
       },
-    });
+    }), undefined, undefined, undefined);
     try {
       if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('deleted', { id: paramStr(req, 'id') });
     } catch { /* non-fatal */ }
@@ -190,6 +201,8 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 export { listChannels, createChannel, updateChannel, archiveChannel, deleteChannelPermanently };

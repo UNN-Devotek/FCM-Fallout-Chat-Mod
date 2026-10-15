@@ -1,3 +1,4 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 /**
  * worldRosterService.ts — roster-derived world rooms.
  *
@@ -106,6 +107,7 @@ function sharedPopulationDecision(aSeenNames: string[], bSeenNames: string[], aD
 
 export async function setRoster(relayUserId: string, ownName: string, seenNames: string[], requestId = '', expiresAt?: number,
   ownAliases: string[] = [], options: SetRosterOptions = {}): Promise<boolean> {
+  return runRequiredBundle('session', 'worldRosterService:0f350df6ec96', async () => {
   try {
     const redis = await getRedisClient();
     const seen = [...new Set(seenNames
@@ -186,8 +188,8 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       ...(lastDirectEvidenceAt === undefined ? {} : { lastDirectEvidenceAt }),
       ...(observationSource ? { observationSource } : {}),
       ...(roomKey ? { roomKey } : {}), ...(expiresAt === undefined ? {} : { expiresAt }) });
-    await redis.set(`${KEY_PREFIX}${relayUserId}`, value, expiresAt === undefined
-      ? { EX: TTL_SECONDS } : { PX: Math.max(1, Math.ceil(expiresAt - Date.now())) });
+    await runRequiredMutation('session', '9d66caea7f219dc8374790a2', { stage: 'primary-write-unconfirmed' }, () => redis.set(`${KEY_PREFIX}${relayUserId}`, value, expiresAt === undefined
+      ? { EX: TTL_SECONDS } : { PX: Math.max(1, Math.ceil(expiresAt - Date.now())) }), undefined, undefined, undefined);
     const changed = !previous || previous.requestId !== requestId || previous.session !== session
       || previous.observationSource !== observationSource
       || previous.seen.join('\u001f') !== seen.join('\u001f')
@@ -215,6 +217,8 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
     logger.warn({ err, relayUserId }, '[worldRoster] setRoster failed');
     throw err;
   }
+
+  });
 }
 
 /** A soft-loss tombstone can restore only its own former room, and only when a
@@ -230,10 +234,11 @@ export async function canRestoreRoomAffinity(relayUserId: string, roomKey: strin
 }
 
 export async function clearRoster(relayUserId: string): Promise<void> {
+  return runRequiredBundle('session', 'worldRosterService:7c3327e60735', async () => {
   try {
     const redis = await getRedisClient();
     const previous = await readRoster(relayUserId);
-    await redis.del(`${KEY_PREFIX}${relayUserId}`);
+    await runRequiredMutation('session', 'c333c6213a9e9589db4cc938', { stage: 'primary-write-unconfirmed' }, () => redis.del(`${KEY_PREFIX}${relayUserId}`), undefined, undefined, isRowCountNoChange);
     if (previous) await recordRoomDiagnostic(relayUserId, {
       event: 'roster_cleared', previousRoomRef: previous.roomKey ? opaqueRef(previous.roomKey) : null,
       previousSessionRef: opaqueRef(previous.session), previousRosterCount: previous.seen.length,
@@ -242,6 +247,8 @@ export async function clearRoster(relayUserId: string): Promise<void> {
     logger.warn({ err, relayUserId }, '[worldRoster] clearRoster failed');
     throw err;
   }
+
+  });
 }
 
 export async function readRoster(userId: string): Promise<RosterEntry | null> {
@@ -329,6 +336,7 @@ function isRosterPayload(value: unknown): value is Omit<RosterEntry, 'userId'> {
  * server chat still works when alone on a world.
  */
 export async function computeRooms(assertCurrent: () => Promise<void> = async () => {}): Promise<Map<string, string>> {
+  return runRequiredBundle('session', 'worldRosterService:81ffd881ed2d', async () => {
   const startedAt = Date.now();
   const redis = await getRedisClient();
   const rosters = await getAllRosters();
@@ -402,7 +410,7 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
     roster.lastDirectEvidenceAt = directEvidenceAt;
     const { userId, ...payload } = roster;
     await assertCurrent();
-    await redis.set(`${KEY_PREFIX}${userId}`, JSON.stringify(payload), { XX: true, KEEPTTL: true });
+    await runRequiredMutation('session', '3b9f6763e2bd3ae04663d2d6', { stage: 'primary-write-unconfirmed' }, () => redis.set(`${KEY_PREFIX}${userId}`, JSON.stringify(payload), { XX: true, KEEPTTL: true }), undefined, undefined, reply => reply === null);
   }
 
   // Instanced activities such as Daily Ops can hide the party members themselves
@@ -512,7 +520,7 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
       // Caller holds the shared coordinator lock. XX/KEEPTTL cannot recreate an
       // expired observation or turn a heartbeat into fresh roster evidence.
       await assertCurrent();
-      await redis.set(`${KEY_PREFIX}${userId}`, JSON.stringify({ ...payload, roomKey }), { XX: true, KEEPTTL: true });
+      await runRequiredMutation('session', '08005cb1939a0724098c94de', { stage: 'primary-write-unconfirmed' }, () => redis.set(`${KEY_PREFIX}${userId}`, JSON.stringify({ ...payload, roomKey }), { XX: true, KEEPTTL: true }), undefined, undefined, reply => reply === null);
     }
     if (changedMembers.length > 0) {
       const continuityReason = candidates.length
@@ -538,4 +546,6 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
   }
   logger.debug({ rosterCount: rosters.length, elapsedMs: Date.now() - startedAt }, '[worldRoster] rooms recomputed');
   return rooms;
+
+  });
 }

@@ -22,6 +22,7 @@
  */
 
 import { createHash } from 'crypto';
+import { beginRuntimeFetch as fetch } from '../runtime/nativeFetch';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import env from '../config/environment';
@@ -318,6 +319,7 @@ async function requestClassification(text: string, timeoutMs: number): Promise<A
     });
 
     if (!res.ok) {
+      await res.text();
       noteDegraded(`http_${res.status}`);
       return null;
     }

@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
 import { v4 as uuidv4 } from 'uuid';
@@ -90,6 +91,7 @@ async function createMessage(req: Request, res: Response, next: NextFunction): P
  * Replaces message content with '[REDACTED]' for PII removal.
  */
 async function scrubMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'messagesController:8a99b8aa4d97', async () => {
   const { messageIds } = req.body || {};
 
   if (!Array.isArray(messageIds) || messageIds.length === 0)
@@ -100,45 +102,48 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
     return next(createError(400, 'All messageIds must be valid UUIDs'));
 
   try {
-    const result = await prisma.$executeRaw`
-      UPDATE messages SET content = '[REDACTED]' WHERE id = ANY(${messageIds}::uuid[]) AND content != '[REDACTED]'`;
+    const result = await runRequiredMutation('moderation', '66956d734bcc5e4517f04af1', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
+      UPDATE messages SET content = '[REDACTED]' WHERE id = ANY(${messageIds}::uuid[]) AND content != '[REDACTED]'`, undefined, undefined, isRowCountNoChange);
 
     const count = result;
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '4fa658293fd3b9d89a7daa4a', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'scrub_messages',
         targetType: 'message',
         metadata: { count, messageIds },
       },
-    });
+    }), undefined, undefined, undefined);
 
     res.json({ data: { scrubbed: count } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/messages/:id -- moderator+
  */
 async function deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'messagesController:da98359c2286', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid message ID format'));
   try {
     // Raw query required — Message has a composite PK.
-    const result = await prisma.$executeRaw`
-      UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`;
+    const result = await runRequiredMutation('moderation', 'bf5dd370c55bb78bfb7e591e', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
+      UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
 
     if (result === 0) return next(createError(404, 'Message not found'));
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', 'dfaab758ebec568e87cd224a', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'delete_message',
         targetId: paramStr(req, 'id'),
         targetType: 'message',
       },
-    });
+    }), undefined, undefined, undefined);
     if ((global as any).broadcastMessageDeletion) {
       (global as any).broadcastMessageDeletion(paramStr(req, 'id'));
     }
@@ -146,6 +151,8 @@ async function deleteMessage(req: Request, res: Response, next: NextFunction): P
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**

@@ -244,6 +244,13 @@ fail-closed checkpoint in future rehearsals and in Production:
   must not be used against a Compose ID. Until that MCP capability exists, this
   flag is an explicit Dokploy UI checkpoint; do not substitute a direct database
   edit or an undocumented shell/API call.
+- For the 2026-10-13 Mothership return, this UI checkpoint is complete: the existing
+  signed-in Chrome tab saved production Compose `3GsIKasZFoGsbum6d9XoZ`
+  `autoDeploy=false`; MCP readback and the UI agree. The Dev service was unchanged.
+  Keep the Prod trigger off while the
+  [pinned return definition](../return-mothership/README.md), drain/recovery and
+  native/timing acceptance are prepared. Current state and remaining gates live
+  in the [return runbook](../../docs/deployment/return-production-to-mothership.md).
 - After the Production laptop restart, GitHub ticket creation returned an HTTP
   401 while core Discord/chat relay remained healthy. Treat outbound GitHub
   automation as a separate acceptance check: validate the configured GitHub

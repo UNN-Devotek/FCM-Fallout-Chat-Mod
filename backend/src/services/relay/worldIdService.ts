@@ -1,3 +1,4 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 /**
  * worldIdService.ts — per-relay-user worldId store backed by Redis.
  *
@@ -24,14 +25,17 @@ function worldKey(relayUserId: string): string {
  * callers cannot acknowledge a binding that was not persisted.
  */
 export async function setWorldId(relayUserId: string, worldId: string, expiresAt?: number): Promise<void> {
+  return runRequiredBundle('session', 'worldIdService:fb563e5488a4', async () => {
   try {
     const redis = await getRedisClient();
-    await redis.set(worldKey(relayUserId), worldId, expiresAt === undefined
-      ? { EX: TTL_SECONDS } : { PX: Math.max(1, Math.ceil(expiresAt - Date.now())) });
+    await runRequiredMutation('session', '841b341c01b8a0ada0c6c2b5', { stage: 'primary-write-unconfirmed' }, () => redis.set(worldKey(relayUserId), worldId, expiresAt === undefined
+      ? { EX: TTL_SECONDS } : { PX: Math.max(1, Math.ceil(expiresAt - Date.now())) }), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldIdService] setWorldId failed');
     throw err;
   }
+
+  });
 }
 
 /**
@@ -52,11 +56,14 @@ export async function getWorldId(relayUserId: string): Promise<string | null> {
  * Explicitly delete the worldId for a relay user (e.g. on disconnect or LEAVE).
  */
 export async function clearWorldId(relayUserId: string): Promise<void> {
+  return runRequiredBundle('session', 'worldIdService:f2d45f5c0319', async () => {
   try {
     const redis = await getRedisClient();
-    await redis.del(worldKey(relayUserId));
+    await runRequiredMutation('session', '12f2a50d3fe3076dc2f61acf', { stage: 'primary-write-unconfirmed' }, () => redis.del(worldKey(relayUserId)), undefined, undefined, isRowCountNoChange);
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldIdService] clearWorldId failed');
     throw err;
   }
+
+  });
 }

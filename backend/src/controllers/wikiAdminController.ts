@@ -19,8 +19,11 @@ import {
   runWikiIngestion,
   runIncrementalSync,
   getWikiUpdateStatus,
+  WIKI_INGEST_LOCK_HELD_MESSAGE,
 } from '../services/wikiIngestionService';
 import logger from '../config/logger';
+import { randomUUID } from 'node:crypto';
+import { runtime } from '../runtime';
 
 /**
  * POST /api/admin/wiki/ingest
@@ -72,7 +75,17 @@ export async function triggerWikiIngest(req: Request, res: Response, next: NextF
     }
 
     const runFn = titles ? () => runWikiIngestion(titles) : () => runWikiIngestion();
-    runFn().then(result => {
+    const evidence = { operationId: randomUUID(), mode, targeted: Boolean(titles), titleCount: titles?.length };
+    void runtime.required('wiki:admin-ingest', async () => {
+      try { return await runFn(); }
+      catch (err) {
+        if (err instanceof Error && err.message === WIKI_INGEST_LOCK_HELD_MESSAGE) {
+          logger.info(evidence, '[wikiAdmin] admin-triggered ingest skipped (concurrent lock held)');
+          return undefined;
+        }
+        throw err;
+      }
+    }, evidence).then(result => {
       logger.info({ ...result, mode }, '[wikiAdmin] admin-triggered ingest completed');
     }).catch(err => {
       logger.error({ err, mode }, '[wikiAdmin] admin-triggered ingest failed');

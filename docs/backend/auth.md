@@ -2,6 +2,12 @@
 
 The backend has distinct auth flows for the dashboard, desktop overlay, HUD linking, and device sessions.
 
+Background Discord admin verification distinguishes authoritative role changes from transient
+member-read failures. Failed role writes, session revocation, cache changes or revocation audits
+retain private runtime failure evidence and prevent a clean maintenance drain, including after
+part of the revocation already succeeded. Optional cache reads and malformed unrelated session
+JSON keep their fallback behavior. See [runtime maintenance](runtime-maintenance.md).
+
 > **Direction (locked): mandatory multi-provider auth gate.** Chat access requires **a linked
 > Discord, Nexus, or Steam account** (one or more). The overlay enforces a provider sign-in wall;
 > Steam OpenID is available as a direct alternative, and the in-game chat gets a **device-code link**.
@@ -312,3 +318,26 @@ membership checks. A Discord identity on another account, an existing different 
 link, a banned account, or a changed session fails without an account merge. Success returns
 to the profile with `linked=discord`; failures use `linkError` or a session error.
 Self-service chat-name updates accept the same verified provider sessions.
+
+Browser session save/destroy callbacks and authoritative OAuth admin-role writes are required
+accepted effects during maintenance drain. Failed permanent-ban device/token revocation,
+provider-unlink cache/session/relay cleanup, account cleanup and previous-name history writes
+retain trusted account IDs and stages, even where the existing response remains available.
+A confirmed already-absent session/user (`P2025`) keeps its existing response without an
+unresolved-write record. Session IDs, tokens and name values never enter operator evidence.
+See [runtime maintenance](runtime-maintenance.md).
+
+Primary enrollment, account/identity updates, OAuth state and grant creation/consumption,
+session cache and row revocation, device nonce claims, MCP token revocation, and QA authority
+updates retain unknown write outcomes inside their own maintenance lease. Existing response
+and permission handling continues to apply. MCP's intentionally non-enumerating OAuth denial
+still hides domain errors from the caller; it cannot hide failed family revocation from the
+operator journal. A confirmed family revocation followed by the intended token denial is a
+completed security action. Token last-used and device last-seen telemetry remain optional.
+
+Account merges and authorization-code exchange defer only statements using the actual bound
+SQL transaction client. A proven atomic rollback does not leave a statement failure record;
+unknown transaction completion remains unresolved. An independently committed account update
+or separate transaction retains its own stage during an outer rollback. Evidence includes
+trusted record IDs and writer hashes; OAuth codes, bearer/refresh/session/install tokens,
+provider names and raw SQL are excluded.

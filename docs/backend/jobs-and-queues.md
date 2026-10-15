@@ -13,6 +13,11 @@ The wrapper counts **consecutive** failures: each failing run logs `logger.warn`
 resets to `0` on the first successful run (and logs a one-line recovery `info`). This makes a
 silently-stuck recurring job visible instead of drowning forever at warn level.
 
+Real failures also enter the private runtime failure journal. Scheduler recovery resets the
+consecutive-failure counter but does not silently erase that drain evidence. Producer timers
+and cron jobs stop during maintenance while accepted work finishes; see
+[runtime maintenance](runtime-maintenance.md) for the complete inventory and operator disposition.
+
 Two rules make the tracker actually work, and both are enforced:
 
 1. **The tracked function must throw on real failure.** A job whose body catches everything and
@@ -120,6 +125,20 @@ Calls `runWikiIngestion()` from `services/wikiIngestionService.ts`. The service:
 
 Can also be triggered on-demand via `POST /api/admin/wiki/ingest` (owner/admin only, 1h min re-trigger interval for full; no rate-limit for incremental).
 
+Full/targeted admin runs return HTTP 202 while the accepted run remains tracked. A later
+unexpected rejection enters the private runtime journal with its operation ID; logging and
+returning a completed HTTP response cannot make that failed run pass drain. The exact
+competing lock-held skip remains an expected path. CAMP admin sync and acknowledged migration
+image backfill also retain unexpected failure evidence; see [runtime maintenance](runtime-maintenance.md).
+
+Callback-based migration restores have the same accepted-work boundary: SQL
+restore waits for the child's verified close, and storage restore awaits complete
+entries and every PUT. Client disconnect is not completion. Incomplete or
+unconfirmed restore effects enter the durable failure journal and block drain.
+Image backfill workers advance past per-row skips/failures rather than retiring after their
+first already-present or rejected image. A real failed image remains journaled while later
+rows continue, so a completed run accounts for its entire selected input.
+
 The cron callback returns a `makeJobTracker('[wikiIngest]')` promise, so genuine failures are tracked and escalate warn → error after repeated consecutive runs, and the tick is awaited so overlap is detected. A **lock-held** skip (a concurrent admin trigger holds the Redis ingest lock — surfaced as the exported `WIKI_INGEST_LOCK_HELD_MESSAGE` error) is an expected non-error path: it is logged at info and **not** counted as a failure, so a normal concurrent run never falsely escalates.
 
 ### 5b. Wiki Incremental Sync Schedule (setInterval)
@@ -208,7 +227,7 @@ the synchronous in-game RPC is not held open by worker completion.
 - Redis connection: `env.REDIS_HOST` / `env.REDIS_PORT` / `env.REDIS_PASSWORD`
 - `attempts: 3` with exponential backoff starting at 1 second
 - `removeOnComplete: 100` (keeps last 100 completed jobs for debugging)
-- `removeOnFail: 50`
+- `removeOnFail: false` (also enforced on producer overrides and consumed legacy jobs)
 
 **Worker:** calls `persistMessage(job.data)` from `services/messageService.ts`. The persist uses `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` so retries are safe.
 
@@ -219,6 +238,12 @@ the eventual database write, reducing in-game send latency. Background and simul
 explicitly use the queue directly may also enqueue asynchronously.
 
 Failed jobs are logged at error level with `jobId`.
+
+The queue records stable acceptance timestamps and private canonical receipt proofs. A frozen
+destination does not start its worker; the source's existing worker continues accepted work
+after producer freeze. Draining includes waiting/active/delayed/paused/failed/stalled state and
+verifies initial committed rows, rather than inferring persistence from zero runnable jobs.
+Failures are retained for explicit disposition; see [runtime maintenance](runtime-maintenance.md).
 
 ---
 
@@ -236,3 +261,12 @@ Failed jobs are logged at error level with `jobId`.
 | Role re-verification | setInterval | Every 5 min | Re-verify Discord roles, revoke stale sessions |
 | Supporter reconcile | setInterval | Startup + every 15 min | Re-derive supporter entitlements from live paid-tier/admin cosmetics roles (bulk fetch, not per-user); login, overlay/dashboard reads, Discord `/cosmetics` interactions, and HUD sends also use a Redis-coordinated once-per-minute-per-user role refresh |
 | message-persist | Bull (Redis) | Event-driven | Persist chat messages to Postgres |
+
+Party reaping continues across individual failed rows while retaining required deletion,
+audit and presentation stages per party. Wiki ingestion distinguishes upstream fetch/image-cache
+fallbacks from attempted entry/alias/image/location/error-row mutations; failed mutations block
+a clean drain without stopping other entities. CAMP Atomic Shop price persistence is required
+after an authoritative price match. Startup relay SQL backfill and Redis seed/high-water writes
+also retain unconfirmed stages and observed sequence values; an expected `SET NX` no-op and
+ordinary optional cursor-allocation fallback remain resolved. A seed retry retains a known
+high-water value instead of substituting zero. See [runtime maintenance](runtime-maintenance.md).

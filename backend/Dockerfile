@@ -41,6 +41,7 @@ COPY --from=ts-builder /app/dist ./dist
 COPY --from=dashboard-builder /dashboard/dist ./admin-dashboard/dist
 COPY backend/db/init.sql ./db/init.sql
 COPY backend/baseline-migrations.sh ./
+COPY backend/runtime-start.sh ./
 # releases.json is baked in as a seed; POST /admin/releases overwrites it at runtime
 COPY backend/releases.json ./releases.json
 # CLI install scripts served at /install.sh, /uninstall.sh, /install.ps1. Runtime
@@ -49,9 +50,9 @@ COPY Packaging/linux ./Packaging/linux
 COPY Packaging/windows ./Packaging/windows
 # A Windows runner may check shell scripts out with CRLF. Normalize the runtime
 # entrypoint inside the Linux image so its shebang always resolves to /bin/sh.
-RUN sed -i 's/\r$//' baseline-migrations.sh \
- && chmod +x baseline-migrations.sh \
+RUN sed -i 's/\r$//' baseline-migrations.sh runtime-start.sh \
+ && chmod +x baseline-migrations.sh runtime-start.sh \
  && test "$(head -n 1 baseline-migrations.sh)" = '#!/bin/sh' \
  && mkdir -p /app/downloads
 EXPOSE 7676
-CMD ["sh", "-c", "./baseline-migrations.sh && node dist/server.js"]
+CMD ["./runtime-start.sh"]

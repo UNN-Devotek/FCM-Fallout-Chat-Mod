@@ -230,6 +230,16 @@ has `discord_relay` enabled.
 
 - Outbound messages are rate-limited to 4 msg/sec through an in-memory queue
   drained by a 250 ms interval timer.
+- The backend drain counts both queued and in-flight sends, including their link-save step.
+  Send/link failures remain in its private journal even when an outer feature catch logs them.
+  A send-success/link-save failure retains the sent Discord ID and canonical ID for inspection;
+  it is never blindly retried. This does not provide crash/outage backfill. The shared gateway
+  producer fence and shutdown ordering are documented in
+  [runtime maintenance](../backend/runtime-maintenance.md).
+- Failed inbound edit writes retain canonical/Discord IDs even when the gateway listener logs
+  the error. Report/thread/attachment and ticket mapping effects retain their external IDs and
+  ambiguous stage; a failed required DB write prevents success acknowledgement and further
+  destructive teardown. Created objects require exact inspection rather than blind recreation.
 - Raw Discord mention syntax is stripped (abuse guard).
 - In-app autocomplete selections carry `{name, discordId}` and are converted to
   real `<@discordId>` Discord mentions. The same ID-backed entity is persisted
@@ -311,6 +321,12 @@ reconcile runs immediately after the gateway is ready; linked login/link-status,
 overlay/dashboard refreshes, and `/cosmetics` interactions also perform a bounded
 live role check, so roles granted while the feature was off do not depend on a
 replayed gateway event.
+
+An authoritative live role result or definitive member removal starts required entitlement
+effects. Entitlement/cache/audit/presentation failures retain trusted account/Discord IDs in
+the private runtime journal and block a clean drain, even when an outer refresh preserves
+availability. Transient member reads, cooldown fallback and expected nickname/role no-ops
+retain their existing behavior. See [runtime maintenance](../backend/runtime-maintenance.md).
 
 The appearance subcommands are `/cosmetics color`, `/cosmetics star`,
 `/cosmetics effect`, `/cosmetics tag`, `/cosmetics show`, `/cosmetics clear`, and

@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr, paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -63,6 +64,7 @@ const APP_LIMITS: Record<string, number> = {
 };
 
 export async function createApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'applicationsController:7445ab7d8300', async () => {
   const { inGameName, discordTag, age, timezone, experience, motivation, availability } = req.body;
   if (!inGameName || !discordTag || !age || !timezone || !experience || !motivation || !availability) {
     res.status(422).json({ title: 'Invalid', detail: 'All fields are required.' });
@@ -86,24 +88,29 @@ export async function createApplication(req: Request, res: Response, next: NextF
       const user = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
       userId = user?.id ?? null;
     }
-    const app = await prisma.staffApplication.create({
+    const app = await runRequiredMutation('domain', '8c5221c34d4b5beb856dfbfc', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.staffApplication.create({
       data: { inGameName, discordTag, age, timezone, experience, motivation, availability, userId },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.status(201).json({ data: app });
   } catch (err) { next(err); }
+
+  });
 }
 
 export async function updateApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'applicationsController:9b93b735d956', async () => {
   const { id } = paramsOf(req);
   const { status, adminNotes } = req.body;
   try {
-    const app = await prisma.staffApplication.update({
+    const app = await runRequiredMutation('domain', '6ac18f88426de81585d3bad5', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.staffApplication.update({
       where: { id },
       data: { ...(status && { status }), ...(adminNotes !== undefined && { adminNotes }) },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: app });
   } catch (err: any) {
     if (err.code === 'P2025') { res.status(404).json({ title: 'Not Found' }); return; }
     next(err);
   }
+
+  });
 }

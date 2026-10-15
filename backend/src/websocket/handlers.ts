@@ -1,3 +1,6 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredMutation } from '../lib/requiredEffects';
+import { cancelProducerTimer, runtime, producerInterval, producerTimeout, acceptedTimeout } from '../runtime';
+import { accountSocket } from '../runtime/ingress';
 import { rejectChatSlowmode, rejectCommandSlowmode } from './chatSlowmode';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket, RawData } from 'ws';
@@ -194,6 +197,7 @@ async function getChannelName(channelId: string): Promise<string> {
  * Membership is FK equality on `worldSessionId`.
  */
 export async function broadcastToSession(payload: any, sessionId: string | null | undefined, excludeWs: WebSocket | null = null): Promise<number> {
+  return runRequiredBundle('publication', 'handlers:d19155549c0d', async () => {
   if (!sessionId) return 0;
   if (payload?.type === 'chat:message') {
     logger.info({
@@ -223,11 +227,13 @@ export async function broadcastToSession(payload: any, sessionId: string | null 
   // instances can deliver to their local clients on the same world session.
   if (pubsubActive) {
     const envelope = JSON.stringify({ instanceId: INSTANCE_ID, payload, scope: 'session', sessionId });
-    getRedisClient()
-      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+    runRequiredLookup('publication', 'session-broadcast:publication-client', () => getRedisClient(), 'required')
+      .then((redis) => runRequiredMutation('publication', 'c321ef106c3566d93bdf0ca3', { stage: 'primary-write-unconfirmed' }, () => redis.publish(PUBSUB_CHANNEL, envelope), undefined, undefined, undefined))
       .catch((err) => logger.warn({ err }, 'broadcastToSession: Redis publish failed (non-fatal)'));
   }
   return delivered;
+
+  });
 }
 // WebSocket close codes
 const WS_CLOSE_AUTH_FAILED = 4001;
@@ -271,6 +277,7 @@ export async function broadcastToUsers(
   userIds: string[],
   excludeWs: WebSocket | null = null,
 ): Promise<number> {
+  return runRequiredBundle('publication', 'handlers:1bd63dc1481b', async () => {
   const userSet = new Set(userIds.filter((id) => typeof id === 'string' && id.length > 0));
   if (userSet.size === 0) return 0;
 
@@ -295,12 +302,14 @@ export async function broadcastToUsers(
       scope: 'users',
       userIds: [...userSet],
     });
-    getRedisClient()
-      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+    runRequiredLookup('publication', 'user-broadcast:publication-client', () => getRedisClient(), 'required')
+      .then((redis) => runRequiredMutation('publication', '709fa5eebb87000040b5e19f', { stage: 'primary-write-unconfirmed' }, () => redis.publish(PUBSUB_CHANNEL, envelope), undefined, undefined, undefined))
       .catch((err) => logger.warn({ err }, 'broadcastToUsers: Redis publish failed (non-fatal)'));
   }
 
   return delivered;
+
+  });
 }
 
 // ── WS-flap grace window ──────────────────────────────────────────────────────
@@ -430,6 +439,8 @@ export function refreshClientCosmetics(
       },
     });
   } catch (err) {
+    runtime.recordFailure('cosmetics:live-presentation', new Error('Cosmetics identity broadcast was not confirmed'),
+      { userId, stage: 'presentation-refresh-unconfirmed' });
     logger.warn({ err, userId }, 'refreshClientCosmetics: broadcast failed (non-fatal)');
   }
 }
@@ -710,8 +721,8 @@ function broadcast(payload: any, excludeWs: WebSocket | null = null): void {
   // Publish to Redis so other instances can relay to their local clients
   if (pubsubActive) {
     const envelope = JSON.stringify({ instanceId: INSTANCE_ID, payload });
-    getRedisClient()
-      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+    runRequiredLookup('publication', 'message-broadcast:publication-client', () => getRedisClient(), 'required')
+      .then((redis) => runRequiredMutation('publication', '5229a0bf220b0820019635f7', { stage: 'primary-write-unconfirmed' }, () => redis.publish(PUBSUB_CHANNEL, envelope), undefined, undefined, undefined))
       .catch((err) => {
         logger.warn({ err }, 'Redis pub/sub publish failed; other instances will not receive this message');
       });
@@ -815,7 +826,7 @@ async function initPubSub(): Promise<void> {
     pubsubInitializing = false;
     logger.warn({ err }, 'Redis pub/sub unavailable -- falling back to local-only broadcast; retrying in 30s');
     // Schedule a retry so a transient startup blip doesn't permanently disable pub/sub.
-    setTimeout(() => { initPubSub().catch(() => {}); }, 30_000);
+    producerTimeout('pubsub-retry', () => initPubSub(), 30_000);
   }
 }
 
@@ -836,6 +847,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
   adminObservers.add(ws);
 
   ws.on('message', async (raw: RawData) => {
+  return runRequiredBundle('publication', 'handlers:3f20a0d50e43', async () => {
     let frame: any;
     try {
       frame = JSON.parse(raw.toString());
@@ -961,10 +973,10 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             const payload = { ...edited };
 
             if (edited.source === 'party' && edited.channelId) {
-              const members = await prisma.partyMember.findMany({
+              const members = await runRequiredLookup('publication', 'admin-party-edit:member-discovery', () => prisma.partyMember.findMany({
                 where: { partyId: edited.channelId },
                 select: { userId: true },
-              });
+              }), 'required');
               await broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
               ws.send(JSON.stringify({ type: 'chat:edit', payload }));
             } else if (edited.source === 'pm' && edited.recipientId) {
@@ -1023,7 +1035,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
 
           // Auto-lift expired mutes
           if (gameUser.isMuted && gameUser.muteExpiresAt && new Date(gameUser.muteExpiresAt) < new Date()) {
-            await prisma.user.update({ where: { id: gameUser.id }, data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null } });
+            await runRequiredMutation('authority', '337ed303ab3e9de2bfe65b66', { stage: 'primary-write-unconfirmed', rowId: gameUser.id }, () => prisma.user.update({ where: { id: gameUser.id }, data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null } }), isPrismaAtomicRefusal, undefined, undefined);
             gameUser.isMuted = false;
           }
 
@@ -1167,9 +1179,9 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
               } else if (cmdResult.actionType === 'report') {
                 const reportId = uuidv4();
                 try {
-                  await prisma.playerReport.create({
+                  await runRequiredMutation('publication', '5ece6d103e6102b90b9c5ee3', { stage: 'primary-write-unconfirmed', rowId: reportId, userId: gameUser.id }, () => prisma.playerReport.create({
                     data: { id: reportId, userId: gameUser.id, content: cmdResult.reportContent, reportType: cmdResult.reportType },
-                  });
+                  }), isPrismaAtomicRefusal, undefined, undefined);
                 } catch (err) {
                   logger.error({ err }, 'Admin observer: failed to create player report');
                 }
@@ -1253,7 +1265,9 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
       logger.error({ err }, 'Unhandled error in admin observer WS message handler');
       try { sendWsError(ws, 'Internal server error.'); } catch {}
     }
+
   });
+});
 
   ws.on('close', () => {
     adminObservers.delete(ws);
@@ -1301,6 +1315,7 @@ export async function broadcastToPartyMembers(
   memberUserIds: string[],
   excludeWs: WebSocket | null = null,
 ): Promise<number> {
+  return runRequiredBundle('publication', 'handlers:f360708f5aed', async () => {
   const memberSet = new Set(memberUserIds);
   const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
   let delivered = 0;
@@ -1326,12 +1341,14 @@ export async function broadcastToPartyMembers(
       scope: 'party',
       memberUserIds,
     });
-    getRedisClient()
-      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+    runRequiredLookup('publication', 'party-broadcast:publication-client', () => getRedisClient(), 'required')
+      .then((redis) => runRequiredMutation('publication', 'cc8a9b8f79816d301eb02be1', { stage: 'primary-write-unconfirmed' }, () => redis.publish(PUBSUB_CHANNEL, envelope), undefined, undefined, undefined))
       .catch((err) => logger.warn({ err }, 'broadcastToPartyMembers: Redis publish failed (non-fatal)'));
   }
 
   return delivered;
+
+  });
 }
 
 /**
@@ -1456,7 +1473,7 @@ function notifyAndDisconnect(userId: string, frame: { type: string; payload: unk
     try { entry.ws.send(JSON.stringify(frame)); } catch { /* socket already gone */ }
     n++;
   }
-  setTimeout(() => disconnectByUserId(userId, closeCode, closeReason), 250);
+  acceptedTimeout('moderation-disconnect', () => disconnectByUserId(userId, closeCode, closeReason), 250);
   return n;
 }
 
@@ -1479,6 +1496,13 @@ function markClientMuted(userId: string, muted: boolean, detail?: { until: strin
 }
 
 async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+  accountSocket(ws, runtime, 'ws');
+  if (runtime.isFrozen()) { ws.close(1013, 'Server maintenance; retry shortly'); return; }
+  await runtime.run('ws:connection', () => handleAdmittedConnection(ws, req), true);
+}
+
+async function handleAdmittedConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+  return runRequiredBundle('authority', 'handlers:e7feb74948d0', async () => {
   // Check for a one-time browser ticket (?ticket=<uuid>). Staff enter the
   // admin-observer handler; members continue through the standard client path.
   const urlParams = new URLSearchParams((req.url || '').split('?')[1] || '');
@@ -1490,7 +1514,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     let adminIdentity: AdminIdentity = {};
     try {
       const redis = await getRedisClient();
-      const ticketVal = await redis.get(`ws_ticket:${ticket}`); await redis.del(`ws_ticket:${ticket}`);
+      const ticketVal = await redis.get(`ws_ticket:${ticket}`); await runRequiredMutation('publication', 'a5ccc1fc043542ca7667b1f8', { stage: 'primary-write-unconfirmed' }, () => redis.del(`ws_ticket:${ticket}`), undefined, undefined, isRowCountNoChange);
       if (!ticketVal) {
         ws.close(WS_CLOSE_AUTH_FAILED, 'Invalid or expired ticket');
         return;
@@ -1598,10 +1622,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
   // Auto-lift expired temp bans before the reject check (cron also does this hourly).
   if (user.isBanned && user.bannedUntil && new Date(user.bannedUntil) < new Date()) {
-    await prisma.user.update({
+    await runRequiredMutation('authority', 'a5799d47b8eb61984179f542', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
       where: { id: userId },
       data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     user.isBanned = false;
   }
 
@@ -1620,10 +1644,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
   // Check if mute has expired
   if (user.isMuted && user.muteExpiresAt && new Date(user.muteExpiresAt) < new Date()) {
-    await prisma.user.update({
+    await runRequiredMutation('authority', '6f5351659ee1734c7296b058', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
       where: { id: userId },
       data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     user.isMuted = false;
   }
 
@@ -1692,7 +1716,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     if (pd) {
       const newEp: string | null = null;
       const decision = decideFlapHandoff({ endpoint: pd.endpoint }, newEp);
-      clearTimeout(pd.timer);
+      cancelProducerTimer(pd.timer);
       pendingDisconnect.delete(user.id);
       notePendingDisconnectSuppressed(user.id);
       if (decision.kind === 'fire-old-immediately') {
@@ -1781,6 +1805,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
   let presenceStatsPending = false;
   ws.on('message', async (raw: RawData) => {
+  return runRequiredBundle('publication', 'handlers:3f20a0d50e43', async () => {
     let frame: any;
     try {
       frame = JSON.parse(raw.toString());
@@ -1964,10 +1989,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           });
           if (dbUser) {
             if (dbUser.isMuted && dbUser.muteExpiresAt && new Date(dbUser.muteExpiresAt) < new Date()) {
-              await prisma.user.update({
+              await runRequiredMutation('authority', '98590013cfb6bc17b9ced77c', { stage: 'primary-write-unconfirmed', rowId: user.id }, () => prisma.user.update({
                 where: { id: user.id },
                 data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
-              });
+              }), isPrismaAtomicRefusal, undefined, undefined);
               pmClient.isMuted = false;
             } else if (!dbUser.isMuted) {
               pmClient.isMuted = false;
@@ -2119,10 +2144,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const payload = { ...edited };
 
           if (edited.source === 'party' && edited.channelId) {
-            const members = await prisma.partyMember.findMany({
+            const members = await runRequiredLookup('publication', 'party-edit:member-discovery', () => prisma.partyMember.findMany({
               where: { partyId: edited.channelId },
               select: { userId: true },
-            });
+            }), 'required');
             broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
 
             // Keep privileged observers in sync even when they are not members
@@ -2256,10 +2281,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           });
           if (dbUser) {
             if (dbUser.isMuted && dbUser.muteExpiresAt && new Date(dbUser.muteExpiresAt) < new Date()) {
-              await prisma.user.update({
+              await runRequiredMutation('authority', '6bef2c22a6061ebfe0deebdc', { stage: 'primary-write-unconfirmed', rowId: user.id }, () => prisma.user.update({
                 where: { id: user.id },
                 data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
-              });
+              }), isPrismaAtomicRefusal, undefined, undefined);
               client.isMuted = false;
             } else if (!dbUser.isMuted) {
               client.isMuted = false; // moderator unmuted externally
@@ -2436,9 +2461,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             } else if (cmdResult.actionType === 'report') {
               const reportId = uuidv4();
               try {
-                await prisma.playerReport.create({
+                await runRequiredMutation('publication', '6ce5b707d7da4a806b19ecd9', { stage: 'primary-write-unconfirmed', rowId: reportId, userId: user.id }, () => prisma.playerReport.create({
                   data: { id: reportId, userId: user.id, content: cmdResult.reportContent, reportType: cmdResult.reportType },
-                });
+                }), isPrismaAtomicRefusal, undefined, undefined);
               } catch (err) {
                 logger.error({ err }, 'Failed to create player report');
               }
@@ -2693,7 +2718,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           });
           if (psDbUser) {
             if (psDbUser.isMuted && psDbUser.muteExpiresAt && new Date(psDbUser.muteExpiresAt) < new Date()) {
-              await prisma.user.update({ where: { id: user.id }, data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null } });
+              await runRequiredMutation('authority', '059b0e110c511d76bab61f5e', { stage: 'primary-write-unconfirmed', rowId: user.id }, () => prisma.user.update({ where: { id: user.id }, data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null } }), isPrismaAtomicRefusal, undefined, undefined);
               if (psClient) psClient.isMuted = false;
             } else if (!psDbUser.isMuted) {
               if (psClient) psClient.isMuted = false;
@@ -2759,7 +2784,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const psCreatedAt = new Date().toISOString();
 
         // Persist PartyMessage directly (fire-and-forget, like serverMessage in server channel)
-        prisma.partyMessage.create({
+        (<PreparedArgs extends Parameters<typeof prisma.partyMessage.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('publication', 'f3b9dc21a87ae8262b0e1449', { stage: 'primary-write-unconfirmed', rowId: psMessageId, partyId: psSendPartyId, userId: user.id }, () => prisma.partyMessage.create(preparedArgs), undefined, undefined, undefined))({
           data: {
             id: psMessageId,
             partyId: psSendPartyId,
@@ -2769,19 +2794,23 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             source: 'party',
             createdAt: new Date(psCreatedAt),
           },
-        }).catch((err: unknown) => logger.warn({ err, messageId: psMessageId }, '[party:send] persist failed (non-fatal)'));
+        }).catch((err: unknown) => {
+          logger.warn({ err, messageId: psMessageId }, '[party:send] persist failed (non-fatal)');
+        });
 
         // Bump Party.lastMessageAt and recentMsgCount (fire-and-forget)
-        prisma.party.update({
+        runRequiredMutation('publication', '5883e53d72b718121fdd5d19', { stage: 'primary-write-unconfirmed', rowId: psSendPartyId }, () => prisma.party.update({
           where: { id: psSendPartyId },
           data: { lastMessageAt: new Date(), recentMsgCount: { increment: 1 } },
-        }).catch((err: unknown) => logger.warn({ err, partyId: psSendPartyId }, '[party:send] party stats bump failed (non-fatal)'));
+        }), undefined, undefined, undefined).catch((err: unknown) => {
+          logger.warn({ err, partyId: psSendPartyId }, '[party:send] party stats bump failed (non-fatal)');
+        });
 
         // Get party member IDs for broadcast
-        const psAllMembers = await prisma.partyMember.findMany({
+        const psAllMembers = await runRequiredLookup('publication', 'party-send:member-discovery', () => prisma.partyMember.findMany({
           where: { partyId: psSendPartyId },
           select: { userId: true },
-        });
+        }), 'required');
         const psMemberIds = psAllMembers.map((m: { userId: string }) => m.userId);
 
         const psBroadcastPayload = {
@@ -2903,7 +2932,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       logger.error({ err, userId: user.id }, 'Unhandled error in WS message handler');
       try { sendWsError(ws, 'Internal server error.'); } catch {}
     }
+
   });
+});
 
   // The real message handler is now attached: stop early-buffering and replay any
   // frames captured during the async connect-time setup above (see earlyFrameBuffer).
@@ -2915,10 +2946,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   // Registered after clients.set() so the client entry always exists when the
   // interval fires. The ws.on('close') handler also clears this interval, so
   // cleanup is robust against both normal and error-path disconnects.
-  const heartbeat = setInterval(() => {
+  const heartbeat = producerInterval('ws-client-heartbeat', () => {
     void serverModeration.validate();
     if (ws.readyState !== WebSocket.OPEN) {
-      clearInterval(heartbeat);
+      cancelProducerTimer(heartbeat);
       serverBridge.dispose();
       serverModeration.dispose();
       // Only evict if WE are still the current socket for this token. A newer
@@ -2930,10 +2961,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   }, 30_000);
   // Register an error handler that guarantees the interval is cleared if the
   // socket errors before ws.on('close') fires.
-  ws.once('error', () => { clearInterval(heartbeat); serverBridge.dispose(); serverModeration.dispose(); });
+  ws.once('error', () => { cancelProducerTimer(heartbeat); serverBridge.dispose(); serverModeration.dispose(); });
 
   ws.on('close', () => {
-    clearInterval(heartbeat);
+    cancelProducerTimer(heartbeat);
     serverBridge.dispose();
     serverModeration.dispose();
     // ── Supersession guard (token-keyed clients map) ───────────────────────────
@@ -2982,9 +3013,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       // Replace any prior pending entry (rare: shouldn't happen — handoff
       // cancels on connect — but be safe).
       const prior = pendingDisconnect.get(user.id);
-      if (prior) clearTimeout(prior.timer);
+      if (prior) cancelProducerTimer(prior.timer);
 
-      const timer = setTimeout(async () => {
+      const timer = producerTimeout('ws-disconnect-grace', async () => {
         // Re-check at fire time: if a fresh client for this user is on the
         // same endpoint, suppress (belt-and-suspenders for race conditions
         // where the connect-side handoff hasn't yet observed pendingDisconnect).
@@ -3038,7 +3069,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   });
 
   ws.on('error', (err) => {
-    clearInterval(heartbeat);
+    cancelProducerTimer(heartbeat);
     logger.error({ err, userId: user.id }, 'WS client error');
     // Same supersession guard as the close handler — never evict a newer socket
     // for this token, and don't drop its fullscreen registration.
@@ -3047,6 +3078,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       removeFullscreenClient(user.id);
       noteUserDisconnected(user.id);
     }
+  });
+
   });
 }
 

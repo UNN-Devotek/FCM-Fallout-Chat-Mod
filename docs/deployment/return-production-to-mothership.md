@@ -1,8 +1,9 @@
 # Return production from Hostinger to Mothership
 
-**Version:** 0.2 — 2026-10-13
+**Version:** 0.6 — 2026-10-15 UTC
 
-**Status:** Execution authorized; preparation started. Live transfer remains gated by the evidence below.
+**Status:** Preparation and integration authorized; runtime quality correction, outage recovery,
+final CI/promotion and timed rehearsal remain open. Hostinger remains authoritative.
 
 **Sequence:** Integrate code → accept Dev → accept the promoted version on Hostinger → rehearse → transfer that same version and final state to Mothership → hold Hostinger for 48 hours.
 
@@ -20,7 +21,9 @@ the cutover approval explicitly includes the rehearsed rollback procedure.
 
 ## 1. Observed state and changes since the first plan
 
-Read-only checks on 2026-10-13 at approximately 13:20–13:24 UTC established:
+The initial read-only checks on 2026-10-13 at approximately 13:20–13:24 UTC
+established the following historical baseline. Later changes and verified
+results are recorded in the execution ledger; baseline flags are not current state.
 
 | Surface | Observation | Consequence |
 | --- | --- | --- |
@@ -33,13 +36,21 @@ Read-only checks on 2026-10-13 at approximately 13:20–13:24 UTC established:
 | Mothership production Dokploy service | Compose ID `3GsIKasZFoGsbum6d9XoZ`, app name `chat-mod-fallout-chat-mod-dprwq2`, branch `prod`, **`autoDeploy=true`**, displayed status `idle` | Dormant does not mean fenced. Disable and verify this trigger before any Prod push. |
 | Mothership Dev Dokploy service | Compose ID `iWO0FprKUe9j0CXg7k5yq`, branch `dev`, `autoDeploy=false`; laptop deploy variable is false. | Dev deployment must deliberately install and prove the accepted revision. |
 | Local code, cached Git refs | 41 changed/new files; HEAD is five commits behind cached `origin/dev`; cached Dev/Prod divergence is 73/3. | Preserve work, fetch, then recompute. These counts are not a live remote inventory. |
-| Current HUD acceptance | 2.10.149 failed native stability; 2.10.150 has local automated gates and is `installed-native-pending`. | The earlier 2.10.149 promotion assumption is superseded. Native acceptance remains required. |
-| Edge control | No callable Cloudflare MCP is present in the executing session. | No edge operation or production write freeze until capability testing succeeds. |
+| Current HUD acceptance | 2.10.149 failed native stability; 2.10.150 has local automated gates and remains native-unverified. | The earlier 2.10.149 promotion assumption is superseded. The operator waived the manual native matrix on 2026-10-13; no native pass or new client publication is established. |
+| Edge control at initial inventory | No callable Cloudflare MCP was present. | Capability testing was required; the execution ledger now records its successful reconnection and isolated control-plane test. |
 
 The earlier inventory estimated about **15.7 GB** of live state. Remeasure after
 promotion. Capacity must cover images, source recovery backup, fresh restored
 volumes, a reverse-transfer backup, temporary extraction and growth on each host.
 Do not delete the only recovery copy to make room.
+
+**Explicit operator waiver — 2026-10-13:** the operator answered **“bypass”** to
+the two-client native acceptance requirement. For this return operation, proceed
+without the manual six-pairing game-client matrix. Record it as **waived/unverified**,
+never passed. Preserve the historical 2.10.149 native failure and the exact
+2.10.150 candidate hashes. All automated HUD/source/package/Ruffle checks remain
+required, as do review/CI, storage integrity, single authority, drain/recovery,
+rollback and timing. This waiver does not authorize a new client/HUD release.
 
 ## 2. Gaps found in the implementation
 
@@ -56,6 +67,7 @@ These are source findings, not features already implemented by this plan.
 | Jobs, giveaway timers and party reaping start during module loading/startup; Discord can receive events before public ingress is opened. | Mark destination state as changed **before starting any backend, migration runner, bot or worker**, not at connector startup or first public message. Prevent blind rollback to stale source state. |
 | Reaction-role startup hydrates panel configuration but does not reconcile users' reactions; inbound chat has no verified outage backfill. | Rehearse a bounded, deduplicated Discord recovery procedure. A gateway reconnect or warm panel cache does not prove missed messages or role changes were recovered. |
 | `/api/health` can report `status: ok` and return HTTP 200 while a dependency field is disconnected. | Parse `data.database`, `data.redis`, `data.discord`; separately test object storage, queues, authenticated delivery, revision and downloads. |
+| A default Python health request receives Cloudflare error 1010; the same GET with `User-Agent: Mozilla/5.0` returns 200 and connected dependencies. | Record the tested user agent in scripted public health checks and distinguish edge denial from origin failure. Keep the edge settings unchanged; use private origin checks for rehearsal resource guards. |
 | The root Compose uses mutable image tags/builds and project-derived volumes; Dokploy can regenerate configuration. | Install an explicit durable, pinned production definition with exact fresh-volume mappings and origin aliases; prove a redeploy preserves them. |
 
 The complete source-specific acceptance record must include
@@ -74,12 +86,12 @@ action to each. A command's success status cannot substitute for its postconditi
 | --- | --- |
 | G1 — code preservation/integration | Restricted backup of tracked/untracked work and refs; reviewed integration preserving Prod-only fixes; final source/artifact manifests match. |
 | G2 — deployment fencing | Mothership Prod trigger disabled before Prod push; Hostinger flag/marker fenced; no queued/running deploy, scheduled restart, standby or alternate writer can restart production. Actual containers/processes agree with control-plane state. |
-| G3 — code acceptance | Required CI succeeds for the actual integration/promotion revision; Dev and native compatibility acceptance pass; diagnostic/DEV packages are not published as PROD. |
+| G3 — code acceptance | Required CI succeeds for the actual integration/promotion revision; Dev and automated compatibility acceptance pass. Manual two-client native acceptance is explicitly waived by the operator and remains unverified; diagnostic/DEV packages are not published as PROD. |
 | G4 — Hostinger promotion | Verified pre-upgrade recovery backup, rehearsed schema rollback, exact accepted running image, full functional checks and 30 minutes stable operation. |
 | G5 — target definition/config | Pinned image archives/digests; fresh explicit volumes; correct Dokploy source and overrides; secure runtime/edge settings; isolated networks and no direct data-store exposure; redeploy preserves the mappings. |
 | G6 — freeze/drain/recovery | Tested §5 contract, queue accounting, clean shutdown and Discord outage reconciliation; all accepted sentinels survive both directions without duplicate side effects. |
 | G7 — backup/restore | Encrypted complete state restored on fresh volumes, source/target checksums and semantic inventories match, encryption key recoverable independently of either host. |
-| G8 — edge/transport | Cloudflare MCP capability-tested for read/snapshot/exact restore; source/target connector inventory; origin DNS reachable from connector network; authenticated `/ws` and `/relay`, native providers and all discovered production hostnames pass. |
+| G8 — edge/transport | Cloudflare MCP capability-tested for read/snapshot/exact restore; source/target connector inventory; origin DNS reachable from connector network; authenticated `/ws` and `/relay`, automated provider transport probes and all discovered production hostnames pass. The manual game-client gate remains waived/unverified under G3. |
 | G9 — timing/reverse transfer | Representative measured forward and reverse runs, restart overhead and external validation fit the 30-minute budget with reserve; no untested delta-copy shortcut. |
 | G10 — approved window | Exact date/start/end/timezone, operator, outage accounting, freeze/drain commands, latest rollback decision time and preapproved rollback scope recorded. |
 | G11 — acceptance/operations | Post-transfer checks in §8 pass, external monitoring/backup jobs point at Mothership, Dev remains healthy; only the selected Mothership deployment path is enabled. |
@@ -119,13 +131,21 @@ documentation work; the implementation and rehearsal gates remain separate work.
    Exercise common rooms/history, both-direction exactly-once delivery, discovery,
    travel/hops, expiry, stale confirmations, auth and isolation. Accept the current
    candidate's stationary nameplate behavior and negative cases as well.
+   **Operation exception:** the explicit operator waiver above skips this manual
+   matrix for the return. Retain its failure/pending evidence and the automated
+   gates; do not report native success or publish a new mod as a consequence.
 7. Fence Hostinger's deployment flag and local marker **before merging Prod**;
    stop/drain any running deployment safely, cancel queued jobs and recheck just
    before the merge. Job-level flags may already have been evaluated. Marker
    removal alone cannot stop a deployment that already passed that check.
-8. Promote accepted Dev via a **merge commit**, never squash/rebase the Dev→Prod
-   promotion. Preserve Prod-only behavior and require checks on the resulting
-   revision. Do not use an admin bypass to waive required tests.
+8. Respect the verified **linear-history requirement on both Dev and Prod**.
+   Merge the reviewed integration through an allowed linear method. Create the
+   promotion branch from refreshed Prod, apply the accepted Dev tree as reviewed
+   linear commit(s), and prove its final tree equals the accepted Dev tree with
+   every Prod-only fix retained. Keep original refs/recovery bundles; do not reset
+   or force-push Prod. Use a Prod PR with code-owner approval and required checks
+   on its resulting revision. A merge commit would violate current protection;
+   do not bypass that rule or change branch protection for this operation.
 9. Rehearse the new image's startup schema/data patches on isolated Dev fixtures.
    Capture a verified production recovery set under an approved write freeze
    before applying an incompatible upgrade. A live pre-upgrade copy is not a
@@ -135,14 +155,26 @@ documentation work; the implementation and rehearsal gates remain separate work.
 10. Deploy the exact accepted artifact explicitly while other triggers stay
     fenced. Verify image identity, dependency fields, functional checks and 30
     minutes stable operation. Upgrade failures are resolved here, before migration.
+    Hostinger's current backend mounts only downloads. Before installing the
+    coordinator image, add and rehearse durable control-directory and release-file
+    binds with its actual UID/GID and sufficient stop grace; preserve every store,
+    connector, network alias and download volume. Verify the resulting container
+    executes `runtime-start.sh`, and compare every effective raw runtime setting
+    without printing credentials. A fence inside a replaceable image is insufficient.
     A newly built HUD/overlay does not automatically authorize publication: follow
     the separate release version/notes, native, smoke and VirusTotal rules.
 
 ## 5. Freeze, drain and external recovery contract
 
-**Blocking implementation gap:** a working procedure is not present in the
-current reviewed source. Define, implement and test this contract before G6.
-Do not invent a maintenance URL or assume it exists.
+**Blocking acceptance gap:** the private runtime implementation exists, but has
+not passed its final quality gate. The frozen v23 candidate passes all fourteen
+specification requirements and its local verification groups; quality review
+confirmed that five remote relay-control receivers can log a required delivery
+failure and still persist a clean close. The v24 correction moves ownership into
+their shared delivery helpers. Complete that correction, its tests, fresh reviews
+and final CI before accepting G6. Operator control remains private; use the
+[documented local commands](../backend/runtime-maintenance.md), not a public
+maintenance URL.
 
 - Freeze every new mutation producer: REST/admin/upload/MCP, new and existing
   `/ws` and `/relay` sessions, native transports, Discord message/interaction
@@ -177,6 +209,12 @@ Do not invent a maintenance URL or assume it exists.
   timeout. Docker can force-kill after its grace period; an exit 137/forced kill
   is a discrepancy requiring accepted-ID and integrity recovery, not success.
   [Docker stop behavior](https://docs.docker.com/reference/cli/docker/container/stop/)
+  A cold-copy boundary requires a persisted `closed` checkpoint with
+  `ingressClosed: true`, empty active work and failures, matching inspection
+  epochs, and cleared restart evidence, plus the actual stopped container state.
+  A nonclosing `drained` response or a `closed` coordinator that never closed
+  ingress cannot satisfy this boundary. Operator commands must exit nonzero if
+  marker/checkpoint persistence or the requested shutdown remains unconfirmed.
 - Verify no processes, connector, standby or deployment supervisor can write or
   restart the old backend. Check DB activity for non-backup clients/transactions;
   stop stores only after application consumers finish. Record clean Postgres
@@ -188,11 +226,15 @@ recovery interval from recorded channel/event checkpoints through reconnect:
 paginated message backfill with canonical Discord-ID deduplication; reaction-role
 adds **and removals** with panel/role ownership respected; supporter boosts/lapses;
 scheduled-event subscribers and due giveaways; applicable ticket/voice actions.
-Define race-free reconciliation with new live events. Deleted/edited messages or
-transient events may be unrecoverable from current Discord state alone. Where
-needed, use a proven event/audit source or prevent the affected activity during
-maintenance with an approved, reversible control. If neither is possible, zero
-loss is unproven and remains a blocker; do not silently weaken the success signal.
+Define race-free reconciliation with new live events. **The user approved retained
+history and current state on 2026-10-14:** preserve every FCM-accepted operation,
+retained accessible Discord messages and the latest observable roles, boosts,
+events and related current state. Unobservable external transient events are
+excluded, including independently created-and-deleted content and intermediate
+changes that cannot be retrieved after downtime. This resolves the external-scope
+choice; it does not excuse an unknown FCM-accepted effect, retained failed job or
+legacy acceptance gap. Prove completeness within these approved bounds and
+present any remaining concrete exception separately.
 No public Discord notice or user-role mutation is authorized by this planning work.
 
 ## 6. Prepare Mothership and rehearse both directions
@@ -211,6 +253,11 @@ Compose routing/resources through versioned nonsecret overrides that Dokploy
 actually loads. Save runtime variables in Dokploy's persistent environment store
 as well as generated runtime files. Prove a sandbox deploy/redeploy does not attach
 old/empty volumes, rebuild a different image or start an extra connector.
+The staged [Mothership definition](../../deploy/return-mothership/README.md)
+uses verified immutable local image IDs, dedicated networks, the exact tunnel
+alias and four explicitly named external volumes. Its render/unit checks pass;
+it is not yet installed or accepted. The complete frozen deploy/resume procedure
+must pass an isolated redeploy rehearsal before G5 or trigger enablement.
 
 Transfer current configuration securely from Hostinger, not the stale Mothership
 store. Compare required keys, intentional empty values, secret equality locally
@@ -276,8 +323,30 @@ semantic restoration. Interrupted output uses a temporary name and becomes a
 completed artifact only after verification. Encryption-key recovery must work
 without Hostinger, Mothership or the laptop. Retain source and reverse archives
 through acceptance and retirement.
+Include the complete persistent runtime-control directory in both cold-state
+catalogs: accepted-message receipts, failure journals, operator maintenance
+marker, restart evidence, checkpoints and any accepted recovery journal or cursor.
+Restore its ownership and restrictive permissions with the data. Record explicit
+operator disposition of stale restart evidence; never erase it to make startup
+pass. A storage-only rehearsal does not prove preservation or recovery of this
+application state.
+The operator selected **this desktop (`Devotek-PC`)** for the protected recovery
+key copy on 2026-10-13. Its `/home/devotek/.config/fcm-recovery/keys/` directory is
+0700 and private key files are 0600. Desktop-only authenticated decryption and
+manifest-signature verification pass for the provisional configuration archive;
+repeat them for the final production and reverse-state archives. This key check
+does not establish a complete production data backup.
 Use a tested authenticated-encryption format and protect the manifest's integrity;
 do not trust an archive and a replaceable neighboring checksum as proof of origin.
+
+Binary archive helpers must use `--log-driver none`: Docker's default JSON log
+driver can retain and expand attached binary stdout independently of the archive,
+exhausting the backup reserve. Override unused image-declared anonymous volumes
+with a bounded tmpfs, and record every helper container/process ID and its exact
+owned mounts. A failed attached CLI or pipeline must explicitly stop and remove
+only the verified operation-owned helper; do not assume loss of the CLI stopped
+the container. Preserve the failed checkpoint and delete no source data volume.
+Rehearse this disconnect/cleanup behavior before using the final backup commands.
 
 | State | Capture and acceptance |
 | --- | --- |
@@ -356,6 +425,8 @@ Acceptance requires more than a 101 handshake:
   read full authorized history and verify exactly one canonical row and expected
   Discord copy/link. Verify reconnect/resync and native ZFE/xScal HUD plus desktop
   export bridge traffic, room isolation and expired/stale authority rejection.
+  The operator's explicit waiver skips manual game-client probes; keep automated
+  provider/transport fixtures and report the native result as unverified.
 - Compare final source inventories/sentinels against restored storage before
   target writes; after C4 account explicitly for startup patches, expected expiry,
   reconciliation and test-created state. Exercise moderation/account changes and
@@ -422,9 +493,10 @@ of recovery archives remain outside this plan.
 
 ## Review outcome
 
-The plan now gives every identified failure path a gate, bounded recovery or
-explicit stop condition. It does **not** establish zero-loss readiness yet:
-G2/G3/G6/G8 and the unperformed restore/timing tests are known blockers. Record
+The plan gives the identified failure paths a gate, bounded recovery or explicit
+stop condition. It does **not** establish zero-loss readiness yet: final code
+acceptance, application drain/external recovery, target redeploy, complete
+transport checks and representative timing remain open. Record
 the eventual command bundles, rehearsal results and discrepancy fixes here; do
 not erase historical failures or mark a gate passed from intention alone.
 
@@ -442,7 +514,12 @@ remains authoritative while these checks are open.
 - Disabled `HOSTINGER_PROD_AUTODEPLOY` and deactivated its local marker, retaining
   the marker in `checkpoints/HOSTINGER_AUTODEPLOY_ACTIVE.before-return-20261013`.
   No running/queued Hostinger deployment was found; source health remains good.
-  Mothership Prod `autoDeploy=true` is still awaiting the documented UI step.
+  Mothership Prod was subsequently fenced through the existing signed-in Chrome
+  ChatGPT extension tab's Dokploy **Toggle autodeploy** control. Persisted
+  `compose.one` readback confirms `autoDeploy=false`, `triggerType=tag`, status
+  `idle`, with no pending deployment. `fcm-dev-stack` remains unchanged. Screenshot
+  evidence and a sanitized checkpoint are retained in the operation's recovery
+  record. Recheck all gates immediately before any production action.
 - Current Hostinger files and container lacked `MINIO_BUCKET`; the real object
   store contains the `avatars` bucket. The newly integrated backend requires an
   explicit bucket. Added `MINIO_BUCKET=avatars` to source `.env` and
@@ -470,11 +547,561 @@ remains authoritative while these checks are open.
   `68390c3d534a865ac8b078a5d8830bc15a4404dc5c6c434792de560bf35be965`.
   Source manifest IDs differed from the target Engine's imported config IDs;
   archive config hashes, architecture, creation time and every rootfs layer match.
-  `runtime-images.json` records the verified mapping. No containers were started.
+  `runtime-images.json` records the verified mapping. No production containers
+  were started.
 - The Git merge-tree result for refreshed Dev/Prod equals the Dev tree exactly:
   the Prod-only input/install fixes and release notes are already present in
   current Dev content. Preserve the Prod ancestry in the integration merge; do
   not replay an older fix over the newer source.
-- Cloudflare MCP reconnection and native acceptance confirmations were requested
-  asynchronously. No production backup, writer shutdown, target restore, edge
-  handoff, Prod push or release publication has occurred at this checkpoint.
+- Cloudflare MCP OAuth now succeeds. Read/snapshot tests cover the zone's eight
+  DNS records, production/Dev tunnel configuration versions and connector
+  inventory. Isolated temporary TXT/tunnel fixtures passed create, mutate, exact
+  restore, repeated restore and guarded cleanup. The complete live DNS/tunnel
+  baseline was unchanged afterward; all fixture resources were removed. The
+  production tunnel remains `6d9d808c-ec3c-4029-8cc5-c544dcd583ac`, configuration
+  version 3, origin `http://chat-mod-fallout-chat-mod-dprwq2-backend-1:7676`, with
+  one Hostinger connector instance. Restricted `cloudflare-control-plane/`
+  snapshots, executable fixture and result record provide the evidence. This
+  passes the G8 control-plane prerequisite, not full transport acceptance.
+- A small isolated synthetic storage rehearsal passed cold forward and reverse
+  restore, destination-created state, Redis expiry, versioned MinIO/delete
+  markers and download hashes. It also rejected corrupt archives and unsafe
+  extraction paths. Fixtures were removed. Its small timing result is not G9;
+  a separate representative 15.7 GB random-data round trip subsequently passed
+  storage integrity, with failed attempts retained. Its timing fails G9 below.
+- Added the prepared pinned Mothership definition and required-backend-CI policy
+  tests. Thirty-one tests pass, and real Docker Compose JSON rendering passes
+  the validator without resolving secret files or starting containers. Protected
+  configuration staging is recorded below; final configuration refresh, live
+  image/mount checks, redeploy and runtime acceptance remain pending before G5.
+- GitHub readback confirms Dev and Prod both require linear history, one approval,
+  code-owner review and `CI Summary`. Corrected the earlier merge-commit promotion
+  instruction to a reviewed linear promotion from Prod with the accepted Dev tree.
+- The revised backend durable freeze/drain controller passes 94 runtime tests,
+  the full backend build, 1,820 implemented Jest tests and 445 TS tests including
+  the separately enabled real Redis suites. Nine old wiki live placeholders
+  remain skipped. The exact Node 22 container image passes frozen non-writing
+  health/downloads and HTTP/WebSocket refusals, one canonical admitted-message
+  drain with one database row/frame/acknowledgment, ordinary SIGTERM closure and
+  restart, persistent crash fencing, and operator-maintenance restart fencing.
+  Closed checkpoints and actual stopped states agree. Real pg/Redis/Bull/S3
+  lifetime regressions are covered without exempting pending application work.
+  Fresh spec/quality review, final revision CI and Task 2 outage recovery remain
+  open; this limited runtime proof does not pass all of G6.
+  The old `a6e8df12` image has no such controller: its first promotion requires a
+  separate proven bootstrap freeze/queue/external-effect recovery procedure.
+  Installing a new signal handler does not retroactively drain that old image.
+- Subsequent Task 1 corrections passed 1,877 Jest tests and 444 TypeScript tests;
+  the separately enabled 17 real-Redis checks remain valid for their unchanged
+  surfaces. The exact Node 22 v5 image passed eight real application/container
+  cases, including a 3 MiB upload/readback and a complete SQL restore whose client
+  disconnects while the write is blocked. These are scoped success-path proofs.
+  Round 4 spec review failed 25 actual-source required-effect probes across
+  audits/AutoMod evidence, authorization/session revocations, per-item producers,
+  cursor startup and account/history cleanup. This evidence describes the earlier
+  revision; subsequent corrections and their remaining findings are recorded below.
+  Do not interpret the passing container cases as G6 acceptance. Signed evidence
+  is retained in the operation's `runtime-rehearsal/v5-round3-fixed/` directory.
+- Round 4 corrections passed 1,943 Jest tests and 444 TypeScript tests. The exact
+  Node 22 v7 image passed eight application/container cases; the separate callback
+  barrier experiment failed because the fixture blocked rate limiting before
+  reaching the intended callback and is retained as unaccepted evidence.
+  Fresh Round 5 review confirms the previous repairs but fails three remaining
+  requirements: unknown primary DB/Redis/object outcomes can drain clean, the
+  ban-evidence S3 client retains two SDK promises after a successful 3 MiB PUT,
+  and several producer failure dispositions occur after their lease is released.
+  The ordering probe did not reproduce a falsely closed checkpoint. The complete
+  writer inventory includes manual tracing of dynamic delegates and pipelines;
+  required mutations, covered transaction/domain boundaries and optional work
+  must have an explicit classification before this batch can pass fresh review.
+  Spec review, quality review, final revision CI and Task 2 remain open. The signed
+  `runtime-rehearsal/v7-round4-fixed/` record is a scoped rehearsal, not G6 acceptance.
+- Round 5's internal transaction-scope checkpoint passes 60 focused tests and
+  nine actual PostgreSQL cases. Explicit ownership distinguishes a rolled-back
+  transaction from an independent write that committed inside its callback.
+  A lost COMMIT response remains unresolved even when an independent observer
+  confirms the row exists. Zero-result operations require a per-writer no-op
+  predicate; a zero-returning DDL statement still counts as a committed effect.
+  These helper and inventory-policy checks do not accept the remaining writer
+  changes. Authority/session, moderation, canonical publication and producer
+  classifications still require the complete batch's fresh spec and quality review.
+  The internal authority/identity/session/OAuth checkpoint adds 185 required
+  writer classifications and eight verified merge-caller proofs, with 193 current
+  AST validations, 165 authentication tests and 50 scope/policy/source checks.
+  Six actual-source unknown/refusal/alias probes fail against the prior immutable
+  v7 artifact and pass against these corrections. Moderation, publication and
+  producer work remains open; these counts do not constitute final batch acceptance.
+  The subsequent internal moderation/object checkpoint validates 410 classified
+  AST rows and passes 16 actual SDK cases, 209 domain tests, 79 focused primary
+  checks and 29 reconciled refusal/object tests. The old artifact stores a PUT,
+  loses its reply, then receives a denial on retry and falsely drains clean.
+  The correction retains that outcome; only a confirmed first-attempt refusal or
+  an explicitly verified desired namespace state resolves it. Required audit
+  refusals remain failures, and download counters remain optional. Publication,
+  producers and the whole batch's independent review still remain open.
+  The internal publication checkpoint validates 473 classified AST rows out of
+  631 inventoried writers: 383 required, 23 delegated and 67 optional; 130 pending
+  and 28 existing boundaries still need review. Five prior-source failure probes
+  and a held-history case establish the corrected ownership boundary. The focused
+  giveaway and publication suites pass 47 and 19 checks respectively. A history
+  update admitted before freeze retains ownership until its effect disposition is
+  recorded, even without an outer request lease. Signed checkpoint evidence is
+  retained under `runtime-rehearsal/round5-chunk-d/`; source is still changing, so
+  this does not accept the whole writer inventory or final application image.
+- The next internal source checkpoint has 706 classified writers and passes the
+  comparison for those recognized rows. The exact Node 22 v8 image passes eight
+  application/container cases, nine compiled-helper PostgreSQL cases and fourteen
+  installed S3 SDK cases, including independently confirmed COMMIT response loss
+  and a successful PUT followed by response loss and a later denial. The signed
+  845-file record is `runtime-rehearsal/v8-round5-final-scoped/`.
+  **Fresh Round 6 review still fails acceptance.** Actual installed Discord login
+  and successful REST sends retain unused SDK queue promises in drain accounting.
+  Required Redis deletion and automatic browser-session save/touch paths lack
+  complete failure ownership; the inventory also misses SDK writers. A required
+  audit refusal after zero affected rows can drain clean. The TypeScript runner
+  returns exit zero for an actual failing test on Node 22 and Node 26. Preserve
+  these failures, correct the complete batch and rerun independent spec/quality
+  and final gates. Passing scoped cases and a zero-pending recognized inventory
+  cannot substitute for that acceptance.
+- The interrupted Round 6 correction checkpoint passes 93 focused primary,
+  required-audit and actual test-runner checks. It adds explicit Redis session
+  cleanup ownership, retains required audit refusals after zero-row actions, and
+  makes the programmatic TypeScript runner fail on failed, canceled or incomplete
+  tests. The installed Discord and automatic session-store lifecycle corrections
+  and complete SDK/alias inventory are still being verified. These are unfinished
+  source changes, not a new accepted artifact, whole-batch PASS or G6 evidence.
+  Preserve the signed six-finding review under
+  `runtime-rehearsal/full-spec-round6/`; fresh spec and quality reviews follow the
+  complete correction batch and exact Node 22 regression evidence.
+- The next frozen v9 image passes all eight application/container cases and 32
+  compiled primary-effect probes. Its actual Node 22 runner rejects assertion
+  failures, canceled tests and incomplete child exits, and accepts a successful
+  test with an open test-only timer. The complete SDK fixture executes 25 cases;
+  two login closure cases still fail while the REST/session cases match their
+  expected outcomes. A minimal Node 22 reproduction identifies reentry into
+  `AsyncLocalStorage.exit()` as restoring the previous login owner to later SDK
+  promises. The explicit empty-store correction requires a new artifact and
+  fresh SDK/spec/quality evidence; v9 is a scoped proof, not acceptance.
+- The corrected v10 Node 22 image passes all 25 installed SDK scenarios, 32
+  compiled controller outcome checks and four actual runner checks. Its second
+  application rehearsal passes all eight cases. The first attempt is retained
+  as failed: a pre-existing Redis presence key expired between snapshots. The
+  corrected evidence reader uses atomic read-only binary dumps and Redis time;
+  it rejects added/changed keys and disappearance before the original expiry.
+  **Fresh Round 7 review fails four requirements:** successful embed reads leave
+  canceled timeout promises pending; canceled static downloads retain middleware
+  leases; failed multipart cleanup can leave an installer while reporting clean
+  closure; and the CLI reports success for failed freeze persistence or shutdown
+  that joins a nonclosing drain. These are actual v10 Node 22 reproductions.
+  The signed 1,290-file failure record is `runtime-rehearsal/v10-round7-failed/`,
+  catalog SHA256 `05114786215c4efa983b10e59c6c275e57979f226464eaa328ec9a697f0e2a96`.
+  All five reviewer containers were independently confirmed removed by exact ID.
+  Correct the complete batch and rerun whole spec/quality and required gates.
+  Neither v10's scoped passes nor the expanded inventory accepts Task 1, G6,
+  quality review, Task 2 or production promotion.
+- The v11 Node 22 image passes 54 installed file/control scenarios, 25 installed
+  SDK scenarios, 32 compiled mutation checks, four actual runner checks and all
+  eight application/container cases. Every application shutdown additionally
+  requires `ingressClosed: true` and the actual stopped state. The implementer's
+  subsequent self-audit identifies a pending multipart metadata callback that
+  can lose ownership after request abort before any output stream exists. This
+  draft remains unaccepted; preserve its scoped proofs and correct that callback
+  before the next frozen artifact and fresh whole spec/quality review. The signed
+  687-file record is `runtime-rehearsal/v11-scoped-draft/`, catalog SHA256
+  `95378a5f077637a3ca255da80a40e1f1a847858a5226a927256f2c956a7d34fe`.
+- The v12 artifact fixes the three pending upload-metadata cases in the actual
+  Node 22/Multer 2.4 image. It also passes 25 SDK, 32 mutation, four runner, nine
+  PostgreSQL, 14 S3 and eight application cases. Its 59-case file/control gate
+  remains **failed**: two fixture expectations assume the host's older Multer
+  finish-listener contract. Installed 2.4 uses `stream.pipeline` and completes
+  canceled uploads through its result callback. Correct the supported-SDK
+  fixtures and verify actual pending result ownership before final acceptance.
+  The complete 539-file frozen source and failed proofs are preserved in the
+  signed 1,321-file `runtime-rehearsal/v12-supported-sdk-pending/` record, catalog
+  SHA256 `876e898a0f8205d7965e613dd2b9e823c55425f3c718921e0b73b4c1ad0f5ae3`.
+- The v13 Node 22/Multer 2.4 artifact passes all 60 installed file/control
+  scenarios, 25 SDK, 32 mutation, four runner, nine PostgreSQL, 14 S3 and eight
+  application cases. **Fresh whole Round 8 review fails three requirements:** a
+  real redirect response outlives a clean checkpoint; malformed GitHub deletion
+  responses manufacture confirmation before ticket unlink/thread teardown; and
+  seven current Discord `showModal` dispatches lack explicit inventory rows.
+  Its corrected full backend attempt passes all 445 TypeScript tests, but Jest
+  remains failed with 2,210 passed, two failed and nine skipped tests. The failures
+  include the unsynchronized disconnect fixture and missing public HUD/deployment
+  fixtures in the test snapshot. The original heap/OpenSSL/noexec preparation
+  failure is preserved separately; correcting preparation does not accept v13.
+  The 539 runtime source files, wider frozen inputs, complete review and both
+  full-test attempts are preserved in signed 1,916-file
+  `runtime-rehearsal/v13-round8-failed/`, catalog SHA256
+  `219009440261eb282167e3ea4f9679d3b9017dc498a3c77e5309ab0ee05dd483`.
+  Correct the findings and disconnect lifetime regression, rerun complete current
+  supported-image gates, and obtain fresh whole spec then quality acceptance.
+  Task 1, G6, Task 2 implementation and production promotion remain unaccepted.
+  V4 transfer-helper work is paused at signed checkpoint 004; its eight drafts
+  have no behavioral acceptance, remote staging or execution grant.
+- The Round 8 correction's actual Node 22 native-fetch diagnosis also finds a
+  legitimate GitHub success unable to drain within 120 seconds: the request,
+  response and socket have all closed, but Undici's unused request-body clone
+  retains an internal stream promise. The source-bound creation trace identifies
+  `cloneRequest` and the internal byte-stream closed promise; this is a confirmed
+  deadline failure, without a claim of a permanent leak. Preserve the earlier
+  invalid missing-timeout attempt separately. Isolate only proven SDK initiation
+  while retaining the actual request result, response body, parsing, required
+  disposition and caller descendants. Check equivalent body-bearing OAuth and
+  moderation calls with actual supported native requests before freezing the next
+  artifact. No global fetch patch, arbitrary promise deletion or whole-handler
+  bypass is accepted. Compiled-image regression and fresh full reviews remain
+  required after this additional correction.
+  Subsequent genuine loopback JSON and form-request cases reproduce the same
+  retained clone after successful response parsing. The correction therefore
+  covers the seven additional existing OAuth/moderation POST callers as well as
+  GitHub, keeping arguments inside their owner and retaining response consumption
+  before existing non-success refusals. The same correction also covers Steam's
+  default OpenID verification and the optional GitHub release mirror's buffered
+  create/update requests. Injected application fetch implementations retain their
+  original scope; held response bodies, including mirror tag lookup failures,
+  remain owned until consumed. Stream bodies and GET requests keep their original
+  accounting. These are correction requirements, not final acceptance.
+- The frozen v14 image repeats all 60 installed file/control cases and the
+  25 SDK, 32 primary and four runner cases. Its 43 compiled response/native/TLS
+  cases match the expected 29 closed and 14 failed outcomes with no active work.
+  **Fresh whole Round 9 review still fails:** rejected MCP metadata responses
+  can remain live after a closed checkpoint; required GitHub REST mutations can
+  accept missing identities or malformed/mismatched confirmation; and the native
+  helper loads the wrong coordinator in two source test fixtures. The supported
+  full backend run passes 445 TypeScript tests but fails Jest with 2,204 passed,
+  73 failed and nine skipped. Those 73 fixture failures require correct runtime
+  binding; suppressing dotenv output or loosening JSON parsing is insufficient.
+  Separate v14 compiled PostgreSQL/S3 and full-application proofs were not run
+  after these blockers. Their earlier results remain historical only.
+  The complete current source and failed evidence are preserved in signed
+  3,422-file `runtime-rehearsal/v14-round9-failed/`, catalog SHA256
+  `d7e271073b5f7d0b2bfa7a7e01c81c083647f7a1580573ce88be3e1ea53a0e5c`.
+  The next artifact needs all current gates and fresh whole spec then quality
+  review. V4 is paused at signed checkpoint 005, catalog
+  `85c6e5366a385e8929d2b61dd93c53762d235a9e16c4bbf1dfb0ff0c06e2c035`.
+  Its implementer observed 21 local lifecycle/diagnostic tests passing, with no
+  raw passing output file; controller integration and the heavy-input
+  prerequisite remain incomplete. Neither runtime nor transfer is accepted.
+- The frozen v15 artifact passes the full supported backend gates: 2,324 Jest
+  tests across 179 suites, zero failures and nine existing wiki placeholders,
+  plus 445 TypeScript tests with no failures or skips. Current compiled proofs
+  also pass 60 installed file/control cases, 25 SDK, 32 primary, four runner,
+  43 response/native/TLS, 37 MCP/REST/helper-binding, nine PostgreSQL, 14 S3 and
+  eight full-application cases. **Whole Round 10 still fails one P2 finding:**
+  required GitHub label confirmation incorrectly rejects a returned name that
+  differs only by case, retaining a false required failure. This exported helper
+  has no identified current production caller. Correct the valid casefolding
+  control without weakening missing/unknown-result retention, then repeat current
+  gates and fresh whole spec followed by quality review. The complete signed
+  evidence is `runtime-rehearsal/v15-round10-failed/`, catalog SHA256
+  `d6ffc803d6570c24f61b14053d5b6b1d74bf26e41cc4e60e133f7ca710f565e0`.
+  Task 1, G6 and Task 2 implementation remain unaccepted. V4 is paused at signed
+  checkpoint 006, catalog SHA256
+  `ce38fe031e927be03386452f78416dd0366998952e72c744fe8d5fe7c79002f1`.
+  Its five local full-controller scenarios pass, but its 131-case Python attempt
+  fails on a runner import; the corrected runner still needs a complete rerun.
+  The heavy-input prerequisite, complete proposal and both reviews remain open.
+  Neither a SMALL nor a full execution grant has been issued.
+- The frozen v16 artifact passes the complete supported backend gates: 2,371
+  Jest tests across 179 suites, zero failures and nine existing wiki placeholders,
+  plus all 445 TypeScript tests. Current compiled PostgreSQL, S3, SDK, response,
+  control and full-application proofs also pass. Whole Round 11 passes all fourteen
+  runtime requirements, but **quality review fails one important P2 finding**:
+  native cancellation removes a timer without unregistering its producer entry.
+  A real compiled-runtime probe cancels 5,000 interval/timeout pairs and retains
+  10,000 entries; shutdown closes but records those canceled schedules in a
+  1,670,553-byte checkpoint. No outage, OOM or deadline breach was observed.
+  The correction must unregister canceled timers exactly once while retaining
+  any admitted callback until it settles. A minor transaction-fixture teardown
+  issue must also preserve the original setup failure and close its allocated
+  observer even if cleanup fails. The signed 12,100-file evidence is
+  `runtime-rehearsal/v16-quality-failed/`, catalog SHA256
+  `390e8baa1472f2a625b5160a477c2660011fda8e6e3df9844bdaa0e44dc72f8a`.
+  V17 is being corrected and requires new current gates, whole spec review and
+  quality review; Task 1, G6 and Task 2 implementation remain unaccepted.
+  V4 is paused at signed checkpoint 007, catalog SHA256
+  `bc6d7836b287c471c53d3a7ad40f5881b09eb1ca3becc012f2606cf1a949ce85`.
+  Its recorded source generations pass 153 Python cases, five full-controller
+  cases and nine SMALL-controller cases. Later signer metadata changes remain
+  untested; the heavy remote prerequisite guard and both proposal reviews remain
+  incomplete. No SMALL or full execution grant has been issued.
+- The frozen v17 artifact passes all current parent test groups: 2,400 Jest
+  tests across 181 suites with zero failures and nine existing wiki placeholders,
+  445 TypeScript tests with no failures/cancellations/skips, eleven actual compiled
+  timer cases and the current SDK, primary, file/control, response, MCP/REST,
+  PostgreSQL, S3 and eight complete-application proofs. Whole Round 12 still
+  **fails requirement 3**: a non-OK avatar CDN response returns without consuming
+  or canceling its body. In the exact production image, a finite 100-byte refusal
+  and physical socket closure leave two admitted native stream promises pending
+  through the two-second retry. A successful response consumes its body, performs
+  the actual signed S3 PUT and closes. The optional-avatar failure policy remains
+  valid; its abandoned lifetime must be corrected and covered by native regression.
+  `imageStorage` refusal/MIME early returns are a related source audit candidate,
+  not another independently reproduced finding. The signed 16,566-file evidence
+  is `runtime-rehearsal/v17-round12-failed/`, catalog SHA256
+  `a822d79c837b4c993a40be1de18a83f7b348f97394219171fa42d45b6c09b7b1`.
+  V18 is the sole runtime correction; its current gates and both fresh reviews
+  remain required. V17 quality review was not started after the whole-spec failure.
+  V18 freezes 559 runtime files and adds awaited cancellation of unused native
+  response bodies without changing their status, authorization, retry or cache
+  policies. The audit covers 44 native/default/aliased dispatches across 25 files;
+  all 960 writer identities and dispositions, 167 prior source bindings and both
+  shell bindings remain, with 181 current source bindings. Current focused checks
+  pass 112 native/audit/inventory tests, 86 affected Jest regressions and four
+  Steam TypeScript tests. Source and compiled caller fixtures pass 36 cases each;
+  actual compiled TLS/S3 fixtures pass 13 image cases, retaining genuinely held
+  bodies until completion. The initial exact-import assertion failure is retained
+  separately from the corrected passing inventory run. These are implementation
+  proofs; the new exact production image, full parent gates and both fresh reviews
+  remain required before Task 1 acceptance.
+  The frozen v18 production image subsequently passes all eight compiled/store/
+  application groups, including the 49 native-body cases and real PostgreSQL/S3
+  probes. Full TypeScript passes 445 tests, but full Jest has 2,427 passes,
+  46 failures and nine unchanged wiki placeholders. All 46 failures share one
+  required-effects fixture setup: its new native-helper import reaches an
+  unintended fixture runtime/environment, and its stdout parser rejects ordinary
+  dotenv logging. Whole Round 13 therefore fails requirement 14. Correct both the
+  exact helper/coordinator binding and structured result transport; filtering
+  diagnostics does not repair ownership. Signed evidence is
+  `runtime-rehearsal/v18-round13-failed/`, catalog SHA256
+  `ba4d7bbc425a6a701e3ced6ba57b81f96e3e2dd4e510bc60d6254d1421250e01`
+  with 20,422 verified members. V19 is the sole fixture correction. The transfer
+  correction is stopped at partial checkpoint 008, with 49 preserved source
+  snapshots and unfinished, untested integrations. No quality or Task 1 acceptance
+  has been granted.
+  V4's separate code-only proposal is sealed at
+  `full-preparation-v4-implementation/final-code-only-001`, catalog SHA256
+  `0ec34fde53be9c738c4263d8f5d88bbc761832a64b56dc829838590ab9c23461`.
+  Its exact source passes 163 Python regressions, five full-controller mock
+  scenarios and nine SMALL mock scenarios, but **fresh whole proposal review
+  fails nine source findings**: fabricated quarantine evidence for a missing
+  result, admission after deadline, missed descendants, missing tunnel lifecycle
+  acceptance gates, lease sequence replay, cleanup overruns, incomplete birth
+  identity, uncovered CLI paths and uncertain Docker inspection treated as
+  absence. The report and local counterexamples are preserved in signed
+  `full-preparation-v4-implementation/review-round1-failed/`, catalog SHA256
+  `6d8c69002bf9ee53919ebded0ef5c6006d415179af5c2816fa463c1c6ce7f182`.
+  The original sealed proposal remains unchanged. Correct all findings after
+  the runtime source freezes, then repeat whole spec and quality review.
+  Full key/provenance and actual external tunnel closure remain prerequisites;
+  no execution grant or production acceptance is implied by the local passes.
+- V19 corrects both fixture helper bindings and explicit result transport while
+  preserving the original 46 assertions. All current parent groups pass, including
+  2,484 Jest tests, 445 TypeScript tests, actual PostgreSQL/S3 probes and eight
+  application scenarios; nine existing wiki placeholders remain skipped.
+  The first full run's two compiled-fixture failures remain preserved: the parent
+  harness used a custom compiled-directory symlink. A fresh run with the exact
+  compiled files in CI's regular-directory layout passes without changing source
+  or assertions. Whole Round 14 passes all fourteen requirements, but the separate
+  complete quality review fails an Important/P1 compound-outcome gap. An unchanged
+  emitted-code synthetic contract confirms that a committed ban followed by Redis
+  or session discovery failure can skip required cleanup and audit while persisting
+  a clean runtime close. No actual-store incident is claimed. Nested unmute,
+  party-leave and account-unlink paths require their own same-class confirmation.
+  Signed failed evidence is `runtime-rehearsal/v19-quality-failed/`, catalog SHA256
+  `ff60f14c00a5ed878616711125c258a5627b3d5de4ef9429515b87958ca5e3e4`,
+  with 17,859 verified members. V20 began the next runtime correction; current full
+  gates, fresh whole specification and separate quality review remained required.
+  Transfer-helper work is stopped at immutable unsigned partial checkpoint 009,
+  with 80 catalog members and 52 source snapshots. Twenty targeted controls pass;
+  the broader 183-test regression has five failures and nine errors. The parent
+  independently signed its readback outside that checkpoint; the child catalog
+  remains unsigned and unaccepted. Historical warning-child wait/pidfd closure
+  remains unproven. Actual MCP transport lifecycle and Full key/provenance remain
+  unresolved. Task 1, G6, Task 2 source work and production promotion are unaccepted.
+  Signed read-only guards at `2026-10-14T19:06Z` confirm all ten protected
+  Hostinger production and Mothership dev container identities, images, starts,
+  restarts and health remain unchanged. Hostinger's repository deployment flag
+  and Mothership production Compose auto-deploy remain off; dev remains unchanged.
+- V22 passes all eleven current local verification groups and the full fourteen-
+  requirement specification review: 2,711 Jest tests, 445 TypeScript tests,
+  nine real PostgreSQL cases, fourteen S3 SDK cases and eight application cases.
+  Its separate quality review rejects four native publication funnels: layout,
+  nameplates, existing-code link recovery and canonical receipt replay. Local
+  delivery and later Redis acquisition can fail before the required publication
+  boundary, then disappear through internal catches. The preserved source/emitted
+  contracts establish this accounting defect without claiming a live incident.
+  Signed failed custody is `runtime-rehearsal/v22-quality-failed/` and its separate
+  `v22-quality-failed-adjacent/` addendum; neither is accepted for deployment.
+- V23 adds explicit required publication prerequisites for both local delivery
+  and client acquisition after input/reply selection. All 351 focused checks pass;
+  the new 90-case source/emitted matrix reproduces 22 prior failures and preserves
+  68 controls. Current full verification and fresh specification then quality
+  review are pending. Task 1, Task 2, transfer timing and production promotion
+  remain unaccepted; the old Hostinger stack remains authoritative.
+- Exact legacy administrator-chat rehearsal exposed `source='web'` missing from
+  the message source constraint. The current post-push patch has the same mismatch.
+  A read-only production check at `2026-10-14T03:10:49.775Z` confirms 24 retained
+  failed Bull jobs with original IDs/timestamps; 23 use `web` and report the source
+  constraint failure. No jobs or schema were changed. The compatibility correction,
+  actual admin durable delivery test and controlled retained-job recovery remain
+  required before promotion. Preserve original IDs/times and check moderation and
+  retention before repair; retained jobs do not establish absence of older deleted
+  failures or pre-enqueue accepted effects. The protected aggregate inventory is
+  signed in the operation's `legacy-retained-jobs/` directory.
+  Follow-up SQL confirms those 24 exact rows are absent. Ten web jobs and the one
+  other game-source job reference unavailable users; every referenced channel is
+  present. Trace deletion/merge/moderation decisions before any replay and retain
+  unresolved cases for specific disposition. Do not recreate deleted accounts.
+  The signed deletion-audit aggregate identifies four distinct missing authors
+  across those eleven jobs, with no matching deletion audit or durable legacy
+  merge mapping. Their absence remains unknown; it does not establish an intended
+  deletion or authorize replay through a guessed account. The thirteen jobs with
+  existing authors still require per-ID moderation/retention/link checks and a
+  proved persistence/publication disposition before controlled repair.
+  The current retention setting is `0` (cleanup disabled); it supplies no age cutoff.
+- A separate atomic Redis `EVAL_RO` at `2026-10-14T07:19:23.910712Z` preserves
+  all 24 currently retained failed jobs, their raw hashes/logs, the failed set
+  and absolute expiries. Only encrypted payload leaves Hostinger; the desktop
+  authenticates decryption without writing plaintext and signs the nine-file
+  catalog. It is retained under
+  `legacy-retained-jobs/recovery-snapshot-20261014T071200Z/` with catalog SHA256
+  `12081aefc0ff51e4e0b27e8be22a54ac90c5650291a409a00256ad04825b09fe`.
+  No jobs were replayed or repaired and the source Redis process remained healthy
+  and unchanged. This preservation does not prove complete historical capture,
+  absence of older accepted effects or permission to recreate missing accounts.
+  A further read-only audit check identifies four distinct unavailable authors
+  across those eleven jobs and finds no matching `user_deleted` audit records.
+  This establishes no deletion or merge decision. The exact legacy merge helper
+  deletes the placeholder after repointing SQL rows but leaves no durable mapping
+  for already queued payloads. Its deletion endpoint catches audit-write failures.
+  Keep these jobs unresolved until a supported identity/deletion disposition is
+  available; neither an absent author nor an absent audit authorizes replay.
+  Static schema/auth inspection also finds direct audit calls using Discord
+  snowflakes or `api-key` where `audit_logs.actor_id` requires a nullable internal
+  user UUID. Validate actor mapping and actual audit rows on PostgreSQL for user,
+  channel and message administration before promotion. Main moderation/AutoMod
+  paths already resolve internal actors and need their own normal acceptance.
+  This mismatch is a possible legacy audit-failure mechanism, not a proven cause
+  of the unavailable authors or a production failure count.
+- Completed an isolated full SQL/schema rehearsal with the exact PostgreSQL 15.17
+  /TimescaleDB 2.26.2 image. All 16 compatibility patches applied repeatedly with
+  identical rows/timestamps/constraints; `/sos` becomes Swarm of Suitors and
+  `/sts` appears once. Custom commands and configured moderation defaults survive.
+  The legacy patch runner preserves upgraded data, and a second full Prisma
+  schema sync leaves the normalized complete catalog unchanged. Legacy/current
+  Prisma schema files are identical. The owned fixture stopped cleanly and was
+  removed. Restricted `schema-rehearsal/result.json` records this limited proof;
+  full old/new application acceptance and verified state rollback remain open.
+- Exported the exact running Hostinger backend image without changing its
+  container, start time, restart count or health. The 179,442,176-byte archive
+  matches SHA-256
+  `a77fdc4c5789e5afedf5918ca01955dbebcba80a9cc7694b6175059324edc798`.
+  Local import preserves its config/layers and verified image identity. On fresh
+  private synthetic stores after the current schema/patch sync, the actual old
+  image passes cookie-session authentication, download bytes, application upload
+  and readback, authenticated WebSocket delivery, and one canonical message with
+  one row/frame/acknowledgment/history entry. Its isolated SIGTERM probe did not
+  stop within five seconds; forced fixture cleanup is retained as a discrepancy.
+  This scoped compatibility proof does not account for the old production
+  process's already accepted effects, prove external OAuth/Discord, or establish
+  complete state rollback. The first-upgrade drain/recovery gate remains open.
+  A separate synthetic probe adds one populated unknown SQL table: the old
+  image's authoritative Prisma startup refuses to boot rather than drop it. Its
+  row remains intact; `--accept-data-loss` was never used. Therefore populated
+  additive recovery/outbox tables require exact schema/startup and full-state
+  rollback rehearsal; current-schema compatibility cannot accept that future change.
+- The exact legacy image's native HTTPS fetch and default Discord REST/Gateway
+  handshake pass against private synthetic authorities on a dedicated internal
+  Docker network. Missing CA and wrong-hostname negative controls also pass;
+  ordinary TLS validation remains enabled. The actual legacy SDK and compiled
+  service hashes are bound to signed evidence in `legacy-tls-preparation-v1/`.
+  All seven existing fixture stores remain unchanged and the handshake resources
+  were removed. The full backend default command, message/thread/issue creates
+  and cutoff cases were not executed. A separate fixture preparation must prove
+  accepted remote effects and missing local maps without SDK/source replacement;
+  its diagnostic ledger cannot establish effects that old production never logged.
+- Securely captured current source runtime/edge settings, effective container
+  environments and release metadata, and staged six protected configuration files
+  on Mothership. All 68 runtime settings preserve effective source credentials;
+  URI identity is unchanged while private hosts normalize. Per-store credentials
+  match the source; the connector file is separate. Compose `format: raw` and an
+  isolated synthetic container verify literal dollar handling. Target byte checks
+  pass without returning credential values or hashes. `runtime-control/` and the
+  release metadata bind are owned by backend UID 0 with 0700/0600 modes; a harmless
+  probe with all capabilities dropped passes. The target's maintenance marker
+  exists before any application start. This is provisional configuration staging,
+  not final recovery: refresh after Hostinger acceptance. Existing stacks and
+  production authority are unchanged.
+- **G9 fails for the baseline full-copy method.** A fresh representative capture
+  takes 525.045 seconds for a 15,780,369,000-byte encrypted archive. Even its
+  configured 30 MiB/s cap cannot fit forward/reverse streams and acceptance reserve
+  in 30 minutes; observed forward relay throughput is slower, about 8 MB/s.
+  The complete round trip passes all cold files/hashes/ownership, Redis
+  sessions/expiry/queue acknowledgments, MinIO versions/delete markers and
+  destination-created messages/downloads. Successful components plus the
+  provisional 300-second application reserve take **85m 05.7s**; actual elapsed
+  time including failures/gaps plus reserve is **112m 53.6s**. Reverse recovery
+  alone plus reserve takes **36m 17.3s**, so no destination-writer boundary fits
+  the 30-minute budget. Signed report, timings and 180-file evidence catalog are
+  retained in the protected operation's `representative-rehearsal/` directory.
+  Owned source/target fixtures and transport helpers were removed; independent
+  encrypted archives remain on the desktop and Mothership. Do not schedule this
+  method. A
+  pre-stage optimization requires its own complete cold-state and reverse-state
+  rehearsal before it can replace the failed baseline; no shortened verification
+  or untested delta path is accepted.
+- The proposed optimization passed small signed restore and refusal tests on
+  both actual hosts, including an external SIGKILL after an applied file and
+  rejection of incomplete/quarantined candidates. Exact ownership, nanosecond
+  timestamps, deletions and hashes were checked. Full-workload timing remains
+  untested. Parent review found that the start gate must also hash-bind its final
+  manifest to the signed capsule after apply; revised small probes on both hosts
+  pass the corresponding positive and altered-manifest refusal cases. Keep the original signed P0 evidence
+  immutable. The complete runner must include the acknowledged live mutation
+  journal, genuine absolute Redis expiries, independent trusted signing-key
+  fingerprint, fresh Docker ownership/no-writer checks and the continuous
+  forward/reverse clock plus application reserve. No integrity check may be
+  omitted to meet the budget.
+- The sealed complete optimization preparation verifies 192 catalog files,
+  17 scripts and the helper's nine ordered layers, eight source modules and two
+  age binaries. Independent review passes 68 small tests and the 40-operation
+  orchestration dry-run, but fails three boundaries: SSH pipe transfers can block
+  without a deadline or abort check; incoming archive ACL/xattr metadata can be
+  discarded; Docker checks omit actual network identity and complete mount proofs.
+  The unchanged v1 method and failed proofs are retained. A separate v2 correction
+  requires fresh spec review, quality review and exact signed rehearsal approval
+  before the full representative run. Production readiness remains false.
+  Measure `forwardElapsed + reverseAfterAnyWriter + 300 <= 1800` from one unchanged
+  operator boot and `CLOCK_BOOTTIME`; also retain the continuous total. Successful
+  synthetic storage timing alone does not accept application or edge recovery.
+- The operator selected **this desktop**, verified as `Devotek-PC`, for the
+  protected independent production recovery-key copy. Its mode-0700 key directory
+  and mode-0600 age/signing files passed ownership checks, configuration archive
+  authentication/decryption and signature verification. Neither the MSI laptop
+  nor Steam Deck is the selected second copy. No production private key was
+  uploaded to either host. The recorded paths and verification procedure are in
+  the protected operation's `desktop-key-recovery-record.json` and
+  `verify-desktop-key.py`; do not commit the keys or configuration plaintext.
+- A second source checkpoint preserved 98 changed/new source files, the tracked
+  patch, refs and a verified Git bundle before another remote fetch. Its catalog
+  signature verifies. Refreshed Dev remains `ddfa1fae286d8197da7abeb0b735f45f40538f27`
+  and Prod remains `a6e8df12a730a421b7dea22c83c08726e4310b3f`; no new remote
+  content was integrated at this checkpoint. Current runtime/definition changes
+  are still uncommitted and require final review/CI on their eventual revision.
+- The operator explicitly waived the two-client native acceptance matrix with
+  “bypass”; its result remains unverified. The waiver is limited to that manual
+  game-client gate and does not waive any automated or infrastructure acceptance.
+  No final production data backup,
+  writer shutdown, production target restore, edge handoff, Prod push or release
+  publication has occurred at this checkpoint.
+- **Recovered verification, 2026-10-15 UTC:** frozen v23 passes all eleven local
+  verification groups: 2,803 Jest tests, 445 TypeScript tests, nine real PostgreSQL
+  cases, fourteen S3 SDK cases and eight packaged application cases. Nine existing
+  wiki placeholders remain skipped. The independent specification review passes
+  all fourteen runtime requirements. The separate quality review fails one P1:
+  five remote relay-control delivery helpers can swallow required acquisition or
+  cursor failures. Its 64 source/emitted observations include sixteen false clean
+  closes, four retained failures and 44 clean controls. Preserve that failure;
+  the passing groups do not accept the candidate. Public source and review
+  custody is retained in the protected operation's
+  `runtime-rehearsal/v23-quality-failed/`. The bounded v24 shared-helper correction
+  is in progress; production remains unchanged.
+  The transfer harness's separate local generation 003 passes 193 Python tests,
+  nine Full mock scenarios and thirteen SMALL mock scenarios, with zero skips.
+  Its immutable `partial-checkpoint-001` preserves 53 source files and 96 catalog
+  members. These are local tests: the final parent-death lifecycle correction,
+  complete review, external MCP transport proof, Full key provenance and actual
+  timed forward/reverse rehearsal remain open. No execution grant or cutover
+  readiness follows from these results.

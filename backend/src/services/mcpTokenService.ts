@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import crypto from 'crypto';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
@@ -27,6 +28,7 @@ async function mintToken(
   env: 'dev' | 'prod',
   label?: string,
 ): Promise<{ id: string; token: string; expiresAt: Date }> {
+  return runRequiredBundle('identity', 'mcpTokenService:bb8e9894860d', async () => {
   // Per-user token cap — count active (non-revoked, non-expired) tokens
   const activeCount = await prisma.mcpApiKey.count({
     where: {
@@ -49,12 +51,14 @@ async function mintToken(
   const keyHash = sha256(raw);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86400 * 1000);
 
-  const row = await prisma.mcpApiKey.create({
+  const row = await runRequiredMutation('identity', '8432e5ceadf4ca7fab9275f4', { stage: 'primary-write-unconfirmed' }, () => prisma.mcpApiKey.create({
     data: { keyHash, ownerId, env, label: label ?? null, expiresAt },
     select: { id: true, expiresAt: true },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   return { id: row.id, token: raw, expiresAt: row.expiresAt };
+
+  });
 }
 
 /**
@@ -72,6 +76,7 @@ async function listTokensForUser(ownerId: string) {
  * Revoke a token by ID, enforcing ownership.
  */
 async function revokeToken(ownerId: string, id: string): Promise<void> {
+  return runRequiredBundle('identity', 'mcpTokenService:314c0812afdb', async () => {
   const row = await prisma.mcpApiKey.findUnique({
     where: { id },
     select: { id: true, ownerId: true, revokedAt: true, expiresAt: true, env: true },
@@ -84,12 +89,14 @@ async function revokeToken(ownerId: string, id: string): Promise<void> {
     throw createError(403, 'Forbidden');
   }
 
-  await prisma.mcpApiKey.update({
+  await runRequiredMutation('identity', '3d8f99c0f263514755695f31', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.mcpApiKey.update({
     where: { id },
     data: { revokedAt: new Date() },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   logger.info({ tokenId: id, ownerId }, 'MCP token revoked');
+
+  });
 }
 
 /**

@@ -5,7 +5,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import { runtimeRedisStore } from '../runtime/rateLimitStore';
 import { getRedisClient } from '../config/redis';
 import { clientIp } from '../utils/clientIp';
 import { getPublicStats } from '../services/publicStatsService';
@@ -19,7 +19,7 @@ const publicStatsLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req: any) => clientIp(req),
-  store: new RedisStore({
+  store: runtimeRedisStore({
     prefix: 'rl_pubstats:',
     sendCommand: async (...args: string[]) => {
       try {

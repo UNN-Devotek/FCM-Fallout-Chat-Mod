@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 /**
  * campImageController — proxies a CAMP item image through our own origin.
  *
@@ -53,6 +54,7 @@ async function fetchWithRetry(url: string): Promise<{ buf: Buffer; contentType: 
           return { buf, contentType: res.headers.get('content-type') || 'image/webp' };
         }
       }
+      if (!res.ok) await discardRuntimeResponse(res);
       logger.warn({ url, status: res.status, attempt }, '[campImage] upstream non-OK');
     } catch (err) {
       logger.warn({ err, url, attempt }, '[campImage] upstream fetch error');
