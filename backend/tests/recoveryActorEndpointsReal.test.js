@@ -26,7 +26,7 @@ const users = require('../dist/controllers/usersController'), channels = require
 const messages = require('../dist/controllers/messagesController'), moderation = require('../dist/controllers/moderationController');
 const rules = require('../dist/controllers/autoModRulesController');
 const { validate, schemas } = require('../dist/middleware/validation');
-const actorId = '10000000-0000-4000-8000-000000000001', targetId = '20000000-0000-4000-8000-000000000002';
+const actorId = 'abcdefab-cdef-4abc-8def-abcdefabcdef', targetId = '20000000-0000-4000-8000-000000000002';
 const channelId = '30000000-0000-4000-8000-000000000003', messageId = '40000000-0000-4000-8000-000000000004';
 const ruleId = '50000000-0000-4000-8000-000000000005', discordId = '123456789012345678';
 let fixture, directory, app, observedStatus, starting;
@@ -170,10 +170,44 @@ test('word filter edit and multipart bulk import use real SQL and audit rows', a
   await agent.post('/api/moderation/word-filters/bulk').attach('file', Buffer.from('second synthetic phrase'), 'phrases.txt').expect(200);
   await assertAudit('bulk_import_word_filter', null); expect(await mockDatabase.wordFilter.count()).toBe(2);
 });
-test('self-deletion writes a nullable FK with explicit retained actor attribution', async () => {
-  await (await client()).delete(`/api/users/${actorId}`).expect(200);
-  expect(await mockDatabase.user.findUnique({ where: { id: actorId } })).toBeNull();
-  const row = await assertAudit('user_deleted', actorId, null); expect(row.metadata.deletedActorId).toBe(actorId);
+test.each([
+  ['lowercase', actorId], ['uppercase', actorId.toUpperCase()], ['mixed', 'aBcDeFaB-cDeF-4aBc-8DeF-aBcDeFaBcDeF'],
+])('%s self-deletion purges canonical Redis sessions and retains a nullable audit with a clean drain', async (_spelling, target) => {
+  const token = crypto.randomUUID(), otherToken = crypto.randomUUID();
+  const sessionKey = `session:${token}`, otherSessionKey = `session:${otherToken}`;
+  await mockDatabase.session.createMany({ data: [
+    { token, userId: actorId, expiresAt: new Date(Date.now() + 60000) },
+    { token: otherToken, userId: targetId, expiresAt: new Date(Date.now() + 60000) },
+  ] });
+  await mockRedis.set(sessionKey, actorId, { EX: 60 }); await mockRedis.set(otherSessionKey, targetId, { EX: 60 });
+  try {
+    const response = await (await client()).delete(`/api/users/${target}`).expect(200);
+    expect(response.body.data).toEqual({ deleted: true, id: target, username: 'SyntheticModerator' });
+    expect(await mockDatabase.user.findUnique({ where: { id: actorId } })).toBeNull();
+    expect(await mockDatabase.session.count({ where: { userId: actorId } })).toBe(0);
+    expect(await mockRedis.get(sessionKey)).toBeNull();
+    expect(await mockDatabase.session.count({ where: { userId: targetId } })).toBe(1);
+    expect(await mockRedis.get(otherSessionKey)).toBe(targetId);
+    const row = await assertAudit('user_deleted', actorId, null); expect(row.metadata.deletedActorId).toBe(actorId);
+    const drain = await mockRuntime.drain({ timeoutMs: 2000 });
+    expect(drain.phase).toBe('drained'); expect(drain.failures).toEqual([]);
+  } finally { await mockRedis.del([sessionKey, otherSessionKey]); }
+});
+test('required self-deletion audit refusal remains sticky after successful canonical session cleanup', async () => {
+  const token = crypto.randomUUID(), sessionKey = `session:${token}`;
+  await mockDatabase.session.create({ data: { token, userId: actorId, expiresAt: new Date(Date.now() + 60000) } });
+  await mockRedis.set(sessionKey, actorId, { EX: 60 });
+  await fixture.query("ALTER TABLE audit_logs ADD CONSTRAINT task2a_reject_self_audit CHECK (action <> 'user_deleted')");
+  try {
+    await (await client()).delete(`/api/users/${actorId.toUpperCase()}`).expect(200);
+    expect(await mockDatabase.user.findUnique({ where: { id: actorId } })).toBeNull();
+    expect(await mockDatabase.session.count({ where: { userId: actorId } })).toBe(0);
+    expect(await mockRedis.get(sessionKey)).toBeNull(); expect(await mockDatabase.auditLog.count()).toBe(0);
+    const drain = await mockRuntime.drain({ timeoutMs: 2000 });
+    expect(drain.phase).toBe('failed'); expect(drain.failures).toContainEqual(expect.objectContaining({ label: 'audit:write' }));
+  } finally {
+    await mockRedis.del(sessionKey); await fixture.query('ALTER TABLE audit_logs DROP CONSTRAINT task2a_reject_self_audit');
+  }
 });
 test('an actual PostgreSQL post-primary audit refusal retains required failure before HTTP error handling', async () => {
   await fixture.query(`ALTER TABLE audit_logs ADD CONSTRAINT task2a_reject_audit CHECK (action <> 'create_channel')`);

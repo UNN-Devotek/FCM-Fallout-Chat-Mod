@@ -10,8 +10,10 @@ Malformed/missing identities, nonexistent internal UUIDs, and failed lookups are
 `ACTOR_IDENTITY_INVALID`, `ACTOR_INTERNAL_USER_MISSING`, and `ACTOR_LOOKUP_UNAVAILABLE`
 errors. They return HTTP 503 before the controller changes data, rather than silently
 recording an anonymous actor. These checks do not change authentication, role, ban or session
-admission. Self-deletion records a nullable actor FK plus the verified `deletedActorId` in
-audit metadata. AutoMod audits target the actual rule UUID.
+admission. Self-deletion compares validated UUID identity regardless of letter case when
+purging canonical Redis sessions and recording a nullable actor FK plus the verified
+`deletedActorId` in audit metadata. The response retains the requested UUID spelling.
+AutoMod audits target the actual rule UUID.
 
 Required audit failures after a primary commit keep their existing response policy: routes
 that already preserve availability can still respond successfully, while their required

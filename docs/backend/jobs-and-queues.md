@@ -26,6 +26,16 @@ evidence-linked dispositions after any future authorized resolution. Operator
 reports must contain only job/evidence identifiers, digests and fixed reasons,
 never the protected payload or Redis hash contents.
 
+UUID letter case does not create a distinct author, merge mapping, channel, parent,
+canonical row or external link. The classifier uses a local lowercase UUID comparison
+and digest projection matching PostgreSQL values; canonical-row evidence supplies that
+semantic digest. Original payload bytes/digest, UUID spelling, timestamp and job evidence
+remain unchanged, including when a case alias reveals a conflicting canonical row.
+
+Required backend CI supplies Bull's discrete `REDIS_HOST`/`REDIS_PORT` alongside the same
+synthetic `REDIS_URL`. The real queue fixture checks that their endpoints match before
+opening a store connection or creating a queue.
+
 The supplied retained-set inventory contains 24 failed jobs. All remain protected:
 13 existing-author jobs are candidates for independent review, not automatic
 repair; 11 missing-author jobs remain blocked pending independent provenance or

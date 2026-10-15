@@ -1003,8 +1003,10 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
 async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   return runRequiredBundle('session', 'usersController:b51f6dce2589', async () => {
   try {
-    const { id } = paramsOf(req);
-    if (!validateUuid(id)) { next(createError(400, 'Invalid user ID')); return; }
+    const { id: requestedId } = paramsOf(req);
+    if (!validateUuid(requestedId)) { next(createError(400, 'Invalid user ID')); return; }
+    // SQL UUIDs, Redis ownership and self-audit must share one semantic identity.
+    const id = requestedId.toLowerCase();
     const actorId = await resolveInternalActorId(req.adminUser?.id);
 
     // Delete all related data first (messages, reports, sessions)
@@ -1041,7 +1043,7 @@ async function deleteUser(req: Request, res: Response, next: NextFunction): Prom
     }).catch(() => {});
 
     logger.info({ userId: id, username: deleted.username, actor: req.adminUser?.username }, 'User deleted');
-    res.json({ data: { deleted: true, id, username: deleted.username } });
+    res.json({ data: { deleted: true, id: requestedId, username: deleted.username } });
   } catch (err) {
     next(err);
   }

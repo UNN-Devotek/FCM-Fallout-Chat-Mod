@@ -35,11 +35,15 @@ const userId = 'a1000000-0000-4000-8000-000000000001', channelId = 'a1000000-000
 const canonicalId = 'a1000000-0000-4000-8000-000000000003', discordId = '423456789012345678';
 let fixture, directory, queue, server, socket; const ownJobs = [], ownTickets = [];
 beforeAll(async () => {
-  fixture = await openRecoveryDatabase(); mockDatabase = fixture.database;
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fcm-recovery-message-')); mockRuntime = new RuntimeCoordinator(directory);
   const url = new URL(process.env.REDIS_URL || '');
   if (url.protocol !== 'redis:' || (!['localhost', '127.0.0.1', '[::1]', 'docker'].includes(url.hostname)
     && !/^(?:192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/.test(url.hostname))) throw Error('Explicit local synthetic Redis required');
+  const queueEnvironment = require('../dist/config/environment');
+  if (queueEnvironment.REDIS_HOST !== url.hostname || queueEnvironment.REDIS_PORT !== Number(url.port || 6379)) {
+    throw Error('Recovery queue fixture requires the same explicit Redis URL and queue endpoint');
+  }
+  fixture = await openRecoveryDatabase(); mockDatabase = fixture.database;
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fcm-recovery-message-')); mockRuntime = new RuntimeCoordinator(directory);
   mockRedis = createClient({ url: url.toString() }); await mockRedis.connect();
 }, 20000);
 beforeEach(async () => {

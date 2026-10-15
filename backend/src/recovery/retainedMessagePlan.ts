@@ -62,6 +62,9 @@ export function classifyRetainedMessage(original: RetainedMessageJob, evidence: 
   let message: unknown;
   try { message = JSON.parse(original.payloadJson); } catch { return blocked('invalid-retained-payload'); }
   if (!isPayload(message) || !original.jobId || !original.evidenceRef) return blocked('invalid-retained-payload');
+  // Match PostgreSQL UUID identity locally; never rewrite protected payload evidence.
+  const comparison = { ...message, id: message.id.toLowerCase(), userId: message.userId.toLowerCase(),
+    channelId: message.channelId.toLowerCase(), parentChannelId: message.parentChannelId?.toLowerCase() ?? null };
 
   const governance = evidence.governance;
   if (governance.kind === 'unknown' || !governance.evidenceRef) return blocked('governance-unknown');
@@ -72,18 +75,18 @@ export function classifyRetainedMessage(original: RetainedMessageJob, evidence: 
   const author = evidence.author;
   if (author.kind === 'missing') return blocked('missing-author');
   if (author.kind === 'unknown' || !author.evidenceRef || !UUID.test(author.userId)
-    || (author.kind === 'existing' ? author.userId !== message.userId
-      : author.independentlyConfirmed !== true || author.originalUserId !== message.userId)) return blocked('unproved-author');
-  if (evidence.channel.kind !== 'compatible' || evidence.channel.channelId !== message.channelId
+    || (author.kind === 'existing' ? author.userId.toLowerCase() !== comparison.userId
+      : author.independentlyConfirmed !== true || author.originalUserId.toLowerCase() !== comparison.userId)) return blocked('unproved-author');
+  if (evidence.channel.kind !== 'compatible' || evidence.channel.channelId.toLowerCase() !== comparison.channelId
     || !evidence.channel.evidenceRef) return blocked('incompatible-channel');
   if (evidence.canonical.kind !== 'complete') return blocked('canonical-unknown');
-  const matches = evidence.canonical.rows.filter(row => row.id === message.id);
+  const matches = evidence.canonical.rows.filter(row => row.id.toLowerCase() === comparison.id);
   if (matches.some(row => row.createdAt !== message.createdAt)) return blocked('canonical-time-mismatch');
-  const digest = canonicalDigest({ ...message, userId: author.userId });
+  const digest = canonicalDigest({ ...comparison, userId: author.userId.toLowerCase() });
   if (matches.length > 1 || matches.some(row => row.digest !== digest)) return blocked('canonical-payload-mismatch');
   const external = evidence.external;
   if (external.kind === 'unknown' || !external.evidenceRef
-    || external.kind === 'known' && (external.canonicalId !== message.id || !/^\d{17,20}$/.test(external.sourceMessageId))) {
+    || external.kind === 'known' && (external.canonicalId.toLowerCase() !== comparison.id || !/^\d{17,20}$/.test(external.sourceMessageId))) {
     return blocked('external-link-unknown');
   }
   if (matches.length === 1) return { ...base, kind: 'already-preserved', canonicalId: message.id, createdAt: message.createdAt };
