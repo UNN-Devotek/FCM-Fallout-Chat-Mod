@@ -378,6 +378,10 @@ further work; a new instance must validate the whole file. Only successful file 
 syncs advance the cached append/index. A failed append or protected-input cleanup leaves a
 sticky unresolved inspection and refuses later relay transitions, including a repeated call
 after failed cleanup. This cache creates no additional persistent path or repair capability.
+Append failure cleanup attempts the owned file and directory closes independently, so a file
+close error cannot skip directory cleanup. A descriptor whose native close is refused remains
+unresolved under the same failure fence; successful test teardown is separate from product
+cleanup.
 
 If the initial protected-input write itself fails, no Discord create is attempted and the
 failure/restart fence prevents a clean boundary. The existing live-only REST broadcast/HTTP 201

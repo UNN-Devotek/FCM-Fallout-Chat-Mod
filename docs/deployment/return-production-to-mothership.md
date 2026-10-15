@@ -1,6 +1,6 @@
 # Return production from Hostinger to Mothership
 
-**Version:** 0.9 — 2026-10-15 UTC
+**Version:** 1.0 — 2026-10-15 UTC
 
 **Status:** Preparation and integration authorized; Task 1 runtime qualification passes at
 `ab0bedcd`, and bounded Task 2A compatibility/attribution qualification passes at
@@ -1210,3 +1210,18 @@ remains authoritative while these checks are open.
   `c1b0c11335b13096b894565f018b1cb8c368c6abfedd36f16936dcf0333b9120`.
   Fresh reviews, a new exact image/application run and current CI remain
   required after the source correction. This is not Task 2B1 qualification.
+- **Task 2B1 v29 reviewed, not accepted, 2026-10-15 UTC:** commit
+  `258e79b1` resolves the v28 scaling and startup-fixture defects. Fresh
+  specification review, all fourteen required CI jobs, nine new-image
+  application cases and the unchanged growth probe pass. CI includes 2,999
+  Jest passes, 515 TypeScript passes and all 93 Ruffle scenarios. Quality
+  review finds one Minor cleanup defect: a file-close error can skip an owned
+  directory close. The persistence failure remains fenced; the omitted close
+  must still be corrected and regression-tested before acceptance. The
+  41-member `runtime-rehearsal/v29-task2b1-reviewed-not-accepted/` catalog,
+  SHA256 `9c4fc636e3cfe232a707ea4e0e02484e91dfbe1c7022970c88968d315bf6b1ed`,
+  preserves exact source, emitted files, both reviews, CI and the ownership
+  probe. The next local correction is limited to independent cleanup attempts
+  and their tests/documentation. A new image/application run, fresh reviews
+  and current CI remain required. B2 recovery, security, promotion and the
+  production cutover remain open; this checkpoint grants no operation.

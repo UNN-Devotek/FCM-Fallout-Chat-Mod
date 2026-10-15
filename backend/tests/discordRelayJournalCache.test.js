@@ -118,3 +118,72 @@ test.each(['partial-write', 'journal-fsync', 'directory-fsync', 'cleanup-fsync']
     expect(fs.readFileSync(journal.filename, 'utf8')).toContain('"stage":"returned"');
   },
 );
+
+test.each(['healthy', 'file-error-after-native-close', 'file-error-before-native-close-persistent',
+  'directory-error-after-native-close', 'directory-error-before-native-close-persistent'])(
+  '%s independently cleans owned descriptors before test teardown and preserves the failure fence', mode => {
+    const journal = new DiscordRelayJournal(directory), value = retained(journal);
+    journal.expect(value);
+    const nativeOpen = fs.openSync, nativeClose = fs.closeSync;
+    const live = new Map(), opened = [], calls = [];
+    let injections = 0;
+    jest.spyOn(fs, 'openSync').mockImplementation((target, flags, ...rest) => {
+      const descriptor = nativeOpen(target, flags, ...rest);
+      if (target === directory || target === journal.filename || String(target).startsWith(journal.payloadDirectory + path.sep)) {
+        const record = { descriptor, kind: flags & fs.constants.O_DIRECTORY ? 'directory' : 'file', writable: !!(flags & fs.constants.O_WRONLY) };
+        live.set(descriptor, record); opened.push(record);
+      }
+      return descriptor;
+    });
+    jest.spyOn(fs, 'closeSync').mockImplementation(descriptor => {
+      const record = live.get(descriptor), call = { descriptor, kind: record?.kind ?? 'already-closed' };
+      calls.push(call);
+      const selected = mode.startsWith('file-') ? record?.writable : mode.startsWith('directory-') && record?.kind === 'directory';
+      if (selected && (mode.endsWith('persistent') || injections === 0)) {
+        if (mode.includes('after-native')) { nativeClose(descriptor); live.delete(descriptor); }
+        injections++; call.result = 'synthetic-EIO';
+        throw Object.assign(new Error('private-close-canary'), { code: 'EIO' });
+      }
+      try { nativeClose(descriptor); live.delete(descriptor); call.result = 'closed'; }
+      catch (error) { call.result = error.code; throw error; }
+    });
+    try {
+      if (mode === 'healthy') journal.attempt(value.operationId);
+      else expect(() => journal.attempt(value.operationId)).toThrow('Discord relay journal is incomplete or unavailable; private recovery required');
+      // These assertions precede every test-owned close. A refused descriptor
+      // is explicitly still live; teardown cannot count as product cleanup.
+      const directoryRecord = opened.find(record => record.kind === 'directory');
+      expect(directoryRecord).toBeDefined();
+      const directoryCalls = calls.filter(call => call.kind === 'directory');
+      expect(directoryCalls.length).toBeGreaterThan(0);
+      if (mode.startsWith('file-') || mode === 'healthy') expect(directoryCalls).toHaveLength(1);
+      const stillLive = [...live.values()];
+      for (const record of stillLive) expect(fs.fstatSync(record.descriptor).isDirectory()).toBe(record.kind === 'directory');
+      if (mode === 'file-error-before-native-close-persistent') {
+        expect(stillLive).toEqual([expect.objectContaining({ kind: 'file', writable: true })]);
+      } else if (mode === 'directory-error-before-native-close-persistent') {
+        expect(stillLive).toEqual([expect.objectContaining({ kind: 'directory' })]);
+      } else expect(stillLive).toEqual([]);
+      if (mode !== 'directory-error-before-native-close-persistent') {
+        expect(() => fs.fstatSync(directoryRecord.descriptor)).toThrow(expect.objectContaining({ code: 'EBADF' }));
+      }
+      if (mode.includes('after-native')) expect(calls.some(call => call.result === 'EBADF')).toBe(true);
+      if (mode !== 'healthy') {
+        expect(injections).toBeGreaterThan(0);
+        const openCount = opened.length;
+        expect(journal.inspect().pending).toBeGreaterThan(0);
+        expect(() => journal.returned(value.operationId, '100000000000100001')).toThrow(/private recovery/);
+        expect(() => journal.expect(value)).toThrow(/private recovery/);
+        expect(opened).toHaveLength(openCount);
+        expect(JSON.stringify(journal.inspect())).not.toContain('private-close-canary');
+      }
+      expect(new DiscordRelayJournal(directory).inspect().pending).toBe(1);
+    } finally {
+      jest.restoreAllMocks();
+      // Only exact descriptors opened by this test's journal can remain here.
+      // Native closure after restoring injected refusal is test-owned cleanup.
+      for (const descriptor of live.keys()) { nativeClose(descriptor); live.delete(descriptor); }
+      expect(live.size).toBe(0);
+    }
+  },
+);

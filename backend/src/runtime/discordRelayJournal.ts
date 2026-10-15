@@ -313,10 +313,14 @@ export class DiscordRelayJournal {
       this.journalStat = durable;
     } catch { this.failed = 'persistence'; throw refused(); }
     finally {
+      let cleanupFailed = false;
       try {
         if (descriptor !== undefined) closeSync(descriptor);
+      } catch { cleanupFailed = true; }
+      try {
         if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
-      } catch { this.failed = 'persistence'; throw refused(); }
+      } catch { cleanupFailed = true; }
+      if (cleanupFailed) { this.failed = 'persistence'; throw refused(); }
     }
   }
 
