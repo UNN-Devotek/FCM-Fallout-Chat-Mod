@@ -36033,7 +36033,7 @@
         "file": "backend/tests/recoveryMessageCompatibilityReal.test.js",
         "owner": "<module>"
       },
-      "fingerprint": "ef581b2bd4738e17174e550237a43152e77332d334deff33041d7cd6928105b6",
+      "fingerprint": "0c9854b2494be867d74cbc399b7c76904dc9dcb89b05eb908fa8e9159d263295",
       "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
     },
     {
@@ -36041,7 +36041,15 @@
         "file": "backend/tests/setup/recovery-real-database.cjs",
         "owner": "<module>"
       },
-      "fingerprint": "ed0c5bc68d45bf27d50c6e54a41bcea284e0e62f9c7fa0b36fdba396a2f7348c",
+      "fingerprint": "1d92f8c9c40927878140423050b650bc3424cffa2791f5a3b71294bd74b9e5c5",
+      "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
+    },
+    {
+      "identity": {
+        "file": "backend/tests/recoveryDatabaseIsolationReal.test.js",
+        "owner": "<module>"
+      },
+      "fingerprint": "639ee1305984c6cf252cc4b95cf24a54eeeee25dd8f83847d536320b60a68b58",
       "contract": "Task2A source compatibility/actor attribution/read-only retained classification and actual required CI fixtures. Semantic changes require fresh behavioral and inventory review."
     }
   ],

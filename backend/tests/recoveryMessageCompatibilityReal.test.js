@@ -3,7 +3,20 @@ const { once } = require('node:events');
 const { WebSocket, WebSocketServer } = require('ws');
 const { createClient } = require('redis');
 const { openRecoveryDatabase } = require('./setup/recovery-real-database.cjs');
-let mockDatabase, mockRedis, mockRuntime;
+let mockDatabase, mockRedis, mockRuntime, mockQueueEnvironment, mockAcceptedJob;
+const mockQueuePrefix = `fcm-recovery-${crypto.randomUUID()}`;
+const mockOwnedJobs = [], mockOwnedQueues = [];
+// Namespace only: every client, worker and SDK operation remains real Bull.
+jest.mock('bull', () => {
+  const ActualBull = jest.requireActual('bull');
+  return class OwnedRecoveryQueue extends ActualBull {
+    constructor(name, options) { super(name, { ...options, prefix: mockQueuePrefix }); mockOwnedQueues.push(this); }
+    async add(...args) {
+      const job = await super.add(...args);
+      mockOwnedJobs.push(job); mockAcceptedJob?.(job); return job;
+    }
+  };
+});
 jest.mock('../dist/config/prisma', () => ({ __esModule: true, get default() { return mockDatabase; } }));
 jest.mock('../dist/config/redis', () => ({ getRedisClient: async () => mockRedis }));
 jest.mock('../dist/config/database', () => ({ query: async (sql, args) => ({ rows: await mockDatabase.$queryRawUnsafe(sql, ...(args || [])) }) }));
@@ -33,7 +46,7 @@ const migration = fs.readFileSync(path.join(__dirname, '../prisma/migrations/202
 const sources = ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot'];
 const userId = 'a1000000-0000-4000-8000-000000000001', channelId = 'a1000000-0000-4000-8000-000000000002';
 const canonicalId = 'a1000000-0000-4000-8000-000000000003', discordId = '423456789012345678';
-let fixture, directory, queue, server, socket; const ownJobs = [], ownTickets = [];
+let fixture, directory, queue, server, socket; const ownTickets = [];
 beforeAll(async () => {
   const url = new URL(process.env.REDIS_URL || '');
   if (url.protocol !== 'redis:' || (!['localhost', '127.0.0.1', '[::1]', 'docker'].includes(url.hostname)
@@ -42,6 +55,7 @@ beforeAll(async () => {
   if (queueEnvironment.REDIS_HOST !== url.hostname || queueEnvironment.REDIS_PORT !== Number(url.port || 6379)) {
     throw Error('Recovery queue fixture requires the same explicit Redis URL and queue endpoint');
   }
+  mockQueueEnvironment = queueEnvironment;
   fixture = await openRecoveryDatabase(); mockDatabase = fixture.database;
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fcm-recovery-message-')); mockRuntime = new RuntimeCoordinator(directory);
   mockRedis = createClient({ url: url.toString() }); await mockRedis.connect();
@@ -52,17 +66,26 @@ beforeEach(async () => {
   await mockDatabase.channel.create({ data: { id: channelId, name: 'Synthetic web channel' } });
 });
 afterAll(async () => {
-  try {
-    if (socket && socket.readyState !== WebSocket.CLOSED) { const closed = once(socket, 'close'); socket.close(); await closed; }
-    if (server) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    if (queue) { for (const job of ownJobs) await job.remove(); await queue.pause(true); await queue.close(); }
-    if (mockRedis?.isOpen) {
-      await mockRedis.del([...ownTickets.map(ticket => `ws_ticket:${ticket}`), `chat_slowmode:v2:discord:${discordId}`, `spam:immunity:${userId}`]);
-      await mockRedis.quit();
-    }
-  } finally {
-    mockRuntime?.disposeForTests(); if (directory) fs.rmSync(directory, { recursive: true, force: true }); await fixture?.close();
+  const errors = [];
+  const cleanup = async effect => { try { await effect(); } catch (error) { errors.push(error); } };
+  if (socket && socket.readyState !== WebSocket.CLOSED) await cleanup(async () => { const closed = once(socket, 'close'); socket.close(); await closed; });
+  if (server) await cleanup(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  for (const owned of mockOwnedQueues) await cleanup(() => owned.pause(true));
+  for (const job of mockOwnedJobs) await cleanup(() => job.remove());
+  for (const owned of mockOwnedQueues) await cleanup(() => owned.close());
+  if (mockRedis?.isOpen) {
+    // Queue metadata is owned by this random namespace; never clear default Bull keys.
+    if (mockOwnedQueues.every(owned => owned.closed)) await cleanup(async () => {
+      const keys = await mockRedis.keys(`${mockQueuePrefix}:*`); if (keys.length) await mockRedis.del(keys);
+      expect(await mockRedis.keys(`${mockQueuePrefix}:*`)).toEqual([]);
+    });
+    await cleanup(() => mockRedis.del([...ownTickets.map(ticket => `ws_ticket:${ticket}`), `chat_slowmode:v2:discord:${discordId}`, `spam:immunity:${userId}`]));
+    await cleanup(() => mockRedis.quit());
   }
+  await cleanup(() => mockRuntime?.disposeForTests());
+  if (directory) await cleanup(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await cleanup(() => fixture?.close());
+  if (errors.length) throw new AggregateError(errors, 'Owned recovery fixture teardown failed');
 }, 20000);
 async function oldConstraint(extra = []) {
   await fixture.query('ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_source_check');
@@ -89,9 +112,28 @@ test('a webhook-only substring cannot satisfy the exact web-source guard', async
   await persistMessage({ id: canonicalId, userId, channelId, source: 'web', content: 'exact web literal', createdAt: '2026-10-13T00:00:00.789Z' });
   expect((await mockDatabase.message.findFirst()).source).toBe('web');
 });
+test.each(['completed', 'failed'])('a preceding real worker owns shared-namespace %s events; producer listeners cannot prove completion', async state => {
+  const ActualBull = jest.requireActual('bull');
+  const options = { prefix: `${mockQueuePrefix}:control:${crypto.randomUUID()}`, redis: {
+    host: mockQueueEnvironment.REDIS_HOST, port: mockQueueEnvironment.REDIS_PORT, password: mockQueueEnvironment.REDIS_PASSWORD || undefined,
+  } };
+  const worker = new ActualBull('message-persist', options), producer = new ActualBull('message-persist', options);
+  mockOwnedQueues.push(worker, producer);
+  worker.process(async () => { if (state === 'failed') throw Error('Synthetic preceding worker refusal'); return true; });
+  await worker.isReady(); await producer.isReady();
+  const localCompleted = jest.fn(), localFailed = jest.fn(); producer.on('completed', localCompleted); producer.on('failed', localFailed);
+  const terminal = once(worker, state);
+  const job = await producer.add({ id: crypto.randomUUID(), source: 'web' }, { attempts: 1, removeOnFail: false }); mockOwnedJobs.push(job);
+  const [processed] = await terminal;
+  expect(processed.id).toBe(job.id); expect(await job.getState()).toBe(state);
+  expect(localCompleted).not.toHaveBeenCalled(); expect(localFailed).not.toHaveBeenCalled();
+  expect(worker.keyPrefix).not.toBe(mockQueuePrefix);
+});
 test('actual authenticated admin WS accepts through Bull and persists its ACK/broadcast canonical UUID and original timestamp', async () => {
   await mockDatabase.$executeRawUnsafe(patch);
   queue = require('../dist/queues/messagePersist'); await queue.isReady();
+  expect(queue).toBeInstanceOf(jest.requireActual('bull')); expect(queue.keyPrefix).toBe(mockQueuePrefix);
+  const accepted = new Promise(resolve => { mockAcceptedJob = resolve; });
   const { handleConnection } = require('../dist/websocket/handlers');
   let readyResolve; const ready = new Promise(resolve => { readyResolve = resolve; });
   server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -103,7 +145,7 @@ test('actual authenticated admin WS accepts through Bull and persists its ACK/br
   const port = server.address().port; socket = new WebSocket(`ws://127.0.0.1:${port}/?ticket=${ticket}`);
   const frames = []; socket.on('message', data => frames.push(JSON.parse(data.toString()))); await once(socket, 'open'); await ready;
   const completed = new Promise((resolve, reject) => {
-    queue.once('completed', job => { ownJobs.push(job); resolve(job); });
+    queue.once('completed', resolve);
     queue.once('failed', (_job, error) => reject(error));
   });
   const ack = new Promise((resolve, reject) => {
@@ -113,7 +155,9 @@ test('actual authenticated admin WS accepts through Bull and persists its ACK/br
     }; socket.on('message', read);
   });
   socket.send(JSON.stringify({ type: 'chat:send', payload: { channelId, content: 'authenticated synthetic web publication' } }));
-  const [receipt, job] = await Promise.all([ack, completed]);
+  const [receipt, job, acceptedJob] = await Promise.all([ack, completed, accepted]);
+  expect(acceptedJob.id).toBe(job.id); expect(mockOwnedJobs).toContain(acceptedJob);
+  expect(job.attemptsMade).toBe(0);
   const broadcast = frames.find(frame => frame.type === 'chat:message').payload;
   expect(receipt.messageId).toBe(broadcast.id); expect(job.data.id).toBe(receipt.messageId);
   expect(job.data.createdAt).toBe(broadcast.timestamp); expect(job.opts.removeOnFail).toBe(false);

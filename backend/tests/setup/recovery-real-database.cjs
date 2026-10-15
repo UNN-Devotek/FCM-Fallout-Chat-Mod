@@ -27,6 +27,12 @@ async function openRecoveryDatabase() {
     await observer.query(`CREATE SCHEMA "${schema}"`); schemaCreated = true;
     const tables = ['users', 'channels', 'messages', 'audit_logs', 'sessions', 'reports', 'automod_rules', 'word_filter', 'moderation_settings', 'admin_users'];
     for (const table of tables) await observer.query(`CREATE TABLE "${schema}"."${table}" (LIKE public."${table}" INCLUDING ALL)`);
+    // LIKE copies serial nextval dependencies; replace all three before any insert.
+    for (const table of ['admin_users', 'moderation_settings', 'word_filter']) {
+      const sequence = `${table}_id_seq`;
+      await observer.query(`CREATE SEQUENCE "${schema}"."${sequence}" OWNED BY "${schema}"."${table}".id`);
+      await observer.query(`ALTER TABLE "${schema}"."${table}" ALTER COLUMN id SET DEFAULT nextval('"${schema}"."${sequence}"'::regclass)`);
+    }
     await observer.query(`ALTER TABLE "${schema}".audit_logs ADD CONSTRAINT audit_actor_fixture_fk FOREIGN KEY (actor_id) REFERENCES "${schema}".users(id) ON DELETE SET NULL`);
     await observer.query(`ALTER TABLE "${schema}".messages ADD FOREIGN KEY (user_id) REFERENCES "${schema}".users(id) ON DELETE CASCADE`);
     await observer.query(`ALTER TABLE "${schema}".messages ADD FOREIGN KEY (channel_id) REFERENCES "${schema}".channels(id) ON DELETE RESTRICT`);

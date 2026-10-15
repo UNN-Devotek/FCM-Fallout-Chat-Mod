@@ -36,6 +36,14 @@ Required backend CI supplies Bull's discrete `REDIS_HOST`/`REDIS_PORT` alongside
 synthetic `REDIS_URL`. The real queue fixture checks that their endpoints match before
 opening a store connection or creating a queue.
 
+The recovery acceptance fixture gives real Bull clients and workers one owned random
+namespace. It records accepted jobs before waiting for local worker events, tests the
+same-namespace competing-worker failure mode, and removes only its owned jobs, keys and
+handles on success or failure. Its copied PostgreSQL tables use private schema-owned
+sequences for `admin_users.id`, `moderation_settings.id` and `word_filter.id`; catalog and
+before/after checks cover setup, real inserts, reset, close and failed setup without
+resetting or advancing public sequences.
+
 The supplied retained-set inventory contains 24 failed jobs. All remain protected:
 13 existing-author jobs are candidates for independent review, not automatic
 repair; 11 missing-author jobs remain blocked pending independent provenance or
