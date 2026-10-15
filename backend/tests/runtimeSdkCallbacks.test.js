@@ -19,10 +19,10 @@ test.each(['login-callback', 'rest-held', 'rest-callback'])('actual installed Di
   expect(value.facts.held.phase).toBe('failed'); expect(value.facts.held.active.length).toBeGreaterThan(0);
   if (mode.endsWith('callback')) { expect(value.facts.destroyedBeforeCallback).toBe(false); expect(value.facts.callbackCompleted).toBe(true); }
 });
-test.each(['rest-unknown', 'rest-lost-reply'])('unknown actual Discord mutation %s retains required disposition and default retries', mode => {
+test.each(['rest-unknown', 'rest-lost-reply'])('unknown actual Discord mutation %s retains required disposition without hidden retries', mode => {
   const value = result('discord-' + mode);
-  expect(value.facts.rejected).toBe(true); expect(value.facts.sdkRetries).toBe(3);
-  expect(value.facts.requests).toBe(mode === 'rest-unknown' ? 4 : 1); expect(value.phase).toBe('failed');
+  expect(value.facts.rejected).toBe(true); expect(value.facts.sdkRetries).toBe(0);
+  expect(value.facts.requests).toBe(1); expect(value.phase).toBe('failed');
   expect(value.failures).toContainEqual(expect.objectContaining({ label: 'discord-rest:POST', evidence: expect.objectContaining({ stage: 'discord-rest-completion-unconfirmed' }) }));
   expect(JSON.stringify(value.failures)).not.toContain('private-fixture-token');
 });

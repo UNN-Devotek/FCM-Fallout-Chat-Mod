@@ -78,7 +78,7 @@ async function createMessage(req: Request, res: Response, next: NextFunction): P
     }
 
     // Admin messages are live-broadcast and Discord-relayed only — no DB row.
-    relayToDiscord(channelId, username, content.trim()).catch(() => {});
+    relayToDiscord(channelId, username, content.trim(), undefined, undefined, undefined, messageId, undefined, createdAt).catch(() => {});
 
     res.status(201).json({ data: { id: messageId } });
   } catch (err) {

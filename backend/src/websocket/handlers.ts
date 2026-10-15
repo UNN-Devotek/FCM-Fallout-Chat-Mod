@@ -1252,7 +1252,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             });
           }
 
-          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions, undefined, messageId).catch((err) => {
+          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions, undefined, messageId, undefined, createdAt).catch((err) => {
             logger.warn({ err }, 'Admin observer Discord relay failed (non-fatal)');
           });
           break;
@@ -2451,7 +2451,7 @@ async function handleAdmittedConnection(ws: WebSocket, req: IncomingMessage): Pr
                   createdAt: relayTs,
                 }).catch((err: unknown) => logger.warn({ err }, 'Relay message queue failed'));
                 if (cmdResult.relayToDiscord) {
-                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined, undefined, undefined, relayId).catch((err) => {
+                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined, undefined, undefined, relayId, undefined, relayTs).catch((err) => {
                     logger.warn({ err }, 'Discord relay for command failed (non-fatal)');
                   });
                 }

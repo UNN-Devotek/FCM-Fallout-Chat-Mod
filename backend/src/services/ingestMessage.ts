@@ -363,6 +363,7 @@ async function finalizeAdmittedMessage(opts: {
       Array.isArray(payload.badges)
         ? { badges: payload.badges as RelayAuthorCosmetics['badges'] }
         : undefined,
+      createdAt,
     );
     relayPromise.catch((err) => logger.warn({ err }, '[finalizeMessage] Discord relay failed (non-fatal)'));
   }

@@ -224,18 +224,28 @@ stopped event.
 
 ### Overlay → Discord (outbound)
 
-Handled by `relayToDiscord()` at `discordService.ts:747`. Called from the WS
-`chat:send` handler and the shared HUD relay finalizer when the destination channel
-has `discord_relay` enabled.
+Handled by `relayToDiscord()` in `discordService.ts`. The shared ingest/HUD finalizer,
+admin and command WS callers, and live-only REST publication pass the original canonical
+UUID and timestamp. An explicit configured mapping fixes one destination; an unavailable
+mapped target cannot redirect to the default. Only a channel without an explicit mapping
+may use `DISCORD_CHANNEL_ID`. A configured but disconnected/unavailable bridge fails the
+required relay expectation. An empty `DISCORD_TOKEN` disables the integration, and explicit
+roundtrip probes remain excluded.
 
 - Outbound messages are rate-limited to 4 msg/sec through an in-memory queue
   drained by a 250 ms interval timer.
 - The backend drain counts both queued and in-flight sends, including their link-save step.
-  Send/link failures remain in its private journal even when an outer feature catch logs them.
-  A send-success/link-save failure retains the sent Discord ID and canonical ID for inspection;
-  it is never blindly retried. This does not provide crash/outage backfill. The shared gateway
-  producer fence and shutdown ordering are documented in
+  A private journal records immutable intent, attempt-before-send, returned ID before linkage,
+  and completion after link readback. Original arguments/prefix remain in a separate private
+  protected-input file until verified completion and durable cleanup. Live-only REST still
+  creates no history row. Send/link/cleanup failures, incomplete inputs and unknown results
+  block clean drain; a known returned ID never authorizes another create. The shared gateway
+  producer fence, exact file bounds/permissions and shutdown ordering are documented in
   [runtime maintenance](../backend/runtime-maintenance.md).
+- The shared runtime REST client disables network/5xx and separate 429 retries at construction,
+  including reads/desired-state requests. A whole-request abort budget retains caller signals;
+  real SDK completion and application callbacks remain accounted. Nonce windows do not permit
+  a later repeat create. Private repair/recovery commands are deferred Task2B2 work.
 - Failed inbound edit writes retain canonical/Discord IDs even when the gateway listener logs
   the error. Report/thread/attachment and ticket mapping effects retain their external IDs and
   ambiguous stage; a failed required DB write prevents success acknowledgement and further

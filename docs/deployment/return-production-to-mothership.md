@@ -1,10 +1,11 @@
 # Return production from Hostinger to Mothership
 
-**Version:** 0.7 — 2026-10-15 UTC
+**Version:** 0.8 — 2026-10-15 UTC
 
 **Status:** Preparation and integration authorized; Task 1 runtime qualification passes at
-`ab0bedcd`. Task 2 outage recovery, final integrated acceptance/promotion and timed rehearsal
-remain open. Hostinger remains authoritative.
+`ab0bedcd`, and bounded Task 2A compatibility/attribution qualification passes at
+`199e2464`. Remaining outage recovery, security review, final integrated
+acceptance/promotion and timed rehearsal remain open. Hostinger remains authoritative.
 
 **Sequence:** Integrate code → accept Dev → accept the promoted version on Hostinger → rehearse → transfer that same version and final state to Mothership → hold Hostinger for 48 hours.
 
@@ -174,9 +175,11 @@ all fourteen runtime requirements, all fourteen hosted CI jobs, and eight exact-
 application checks. The shared-helper correction retains required failures on both
 initiating and remote relay-control delivery paths; v23's failed quality record remains
 preserved. This accepts the Task 1 runtime checkpoint, not G6 or production readiness.
-Task 2 still needs verified legacy acceptance, source compatibility/audit attribution,
-expected external effects, outage history/current-state and due-work recovery, and the
-complete forward/reverse application rehearsal. Operator control remains private; use the
+Task 2A separately qualifies source compatibility, audit attribution and a private
+read-only retained-job classifier at `199e2464`; it grants no replay or repair.
+Task 2 still needs verified legacy acceptance, expected external effects,
+outage history/current-state and due-work recovery, and the complete forward/reverse
+application rehearsal. Operator control remains private; use the
 [documented local commands](../backend/runtime-maintenance.md), not a public
 maintenance URL.
 
@@ -205,9 +208,30 @@ maintenance URL.
   directions; this is a different, explicitly accepted mode.
 - Drain Discord queue entries **and in-flight promises**, then verify expected
   Discord copies and durable links. A send may succeed while its link save fails.
-  Reconcile that ambiguity before retrying, using bounded channel history and
-  canonical IDs; otherwise a retry can create a duplicate. Send/link failure,
-  permission errors or timeout fail the drain rather than disappear into a log.
+  The ordinary-relay journal at
+  `<FCM_RUNTIME_CONTROL_DIR>/discord-relays.jsonl` must preserve the original
+  message UUID/time, sole destination/config binding and payload digest, with
+  intent before attempt, returned remote ID before linkage, and completion.
+  Protected original input and the deterministic link prefix live in
+  `<FCM_RUNTIME_CONTROL_DIR>/discord-relay-payloads/<operationId>.json` before
+  mapping lookup or send. This also covers live-only REST messages without
+  creating public history rows. Journal/operator output contains references
+  and digests, not those private contents.
+  If the first protected-input write fails, perform zero Discord creates and
+  retain a failed drain. The existing live-only REST response policy can still
+  return HTTP 201 after broadcast; a crash at this boundary may leave the original
+  body unavailable. This remains an unresolved recovery failure, not accepted
+  message loss. An absent payload cannot establish successful recovery or permit
+  a clean cold-copy checkpoint. Changing the REST acceptance policy is outside
+  this bounded Task 2B1 change.
+  Required disconnected/skipped sends and unresolved journal entries fail drain.
+  A known returned ID permits only separately verified local link repair;
+  an unknown create is never automatically resent after restart. Any candidate
+  search must prove stable identity and complete bounded coverage, not text/time
+  similarity or a short nonce window. The private repair runner remains Task 2B2
+  work; no manual journal clearing or new recovery command is authorized here.
+  Send/link failure, permission errors or timeout fail the drain rather than
+  disappear into a log.
 - Close sockets, stop the Discord client and process only after the drain record
   passes. Test actual container PID/signal forwarding and a bounded shutdown
   timeout. Docker can force-kill after its grace period; an exit 137/forced kill
@@ -330,6 +354,18 @@ through acceptance and retirement.
 Include the complete persistent runtime-control directory in both cold-state
 catalogs: accepted-message receipts, failure journals, operator maintenance
 marker, restart evidence, checkpoints and any accepted recovery journal or cursor.
+This includes the complete `discord-relays.jsonl` ordinary-relay journal when
+installing the Task 2B1 candidate. Preserve pending/attempted/known-result and
+completed records with their original bindings; do not transfer only completed
+entries or recreate the file empty. Its directory is 0700 and file is 0600.
+Include the `discord-relay-payloads/` subdirectory (0700) and every unresolved
+immutable payload file (0600) with exact bytes and reference digests. Only
+accounted cleanup after verified completion may remove unneeded protected
+input. Missing, orphaned or corrupt references, or failed cleanup, block
+startup/drain; a digest cannot reconstruct the original input. Keep these
+contents inside the encrypted application-state archive and out of agent output.
+Final-state reverse restoration after C4 must carry the destination's final
+journal together with its database/Redis/object/download/control state.
 Restore its ownership and restrictive permissions with the data. Record explicit
 operator disposition of stale restart evidence; never erase it to make startup
 pass. A storage-only rehearsal does not prove preservation or recovery of this
@@ -1136,12 +1172,28 @@ remains authoritative while these checks are open.
   inputs are complete; five earlier test-file revisions retain their captured
   hashes and raw results without recoverable historical bytes. No real transfer
   or new execution grant is accepted from this checkpoint.
-- Task 2A source work is released against the qualified runtime baseline:
-  correct `web` source acceptance, resolve valid audit attribution before
-  mutation, and classify retained jobs privately without replay. Its real-store
-  tests use a separate synthetic local database and Redis instance. The known
-  24 retained failed jobs remain protected; thirteen existing-author jobs are
-  candidates for verification, and eleven missing-author jobs remain blocked
-  pending provenance or explicit disposition. No production repair is authorized
-  by implementing or testing the classifier. Final Task 2A review and integrated
-  CI remain pending; Hostinger and hosted Dev authority are unchanged.
+- **Task 2A qualified, 2026-10-15 UTC:** commit `199e2464` passes fresh
+  specification and quality reviews for `web` compatibility, FK-safe audit
+  attribution/canonical self-deletion and private retained-job classification.
+  The real fixtures own their Bull prefixes and PostgreSQL sequences. All 851
+  frozen files and 960 prior writer identities/dispositions match their bindings.
+  Required [CI run 38725875287](https://github.com/UNN-Devotek/FCM-Fallout-Chat-Mod/actions/runs/38725875287)
+  passes all fourteen workflow jobs: 193 Jest suites / 2,956 tests, 476 TypeScript
+  tests and 93 Ruffle scenarios; nine unchanged wiki placeholders remain skipped.
+  Independent proof passes 65 real-store tests and 110 source/emitted cases.
+  An optional inventory run hit its reviewer watchdog and remains incomplete;
+  the separate direct inventory/mutation check passed. All 656 production build
+  inputs are unchanged, so the same immutable image's prior nine application
+  cases and six natural terminal closures are explicitly reused. Public source
+  and synthetic evidence are sealed in `runtime-rehearsal/v27-task2a-qualified/`,
+  unsigned catalog SHA256
+  `949d519efe1d68e30c2d1fb4d25f5c4b09311c88b1ec6d02c0a7f8516d6ddb1e`.
+  Earlier v25/v26 failures remain preserved. The separate CodeQL check
+  `116390777156` fails six alerts and is outside that fourteen-job count;
+  production CSRF review remains open, with no security-readiness claim.
+  All 24 retained jobs remain protected: thirteen existing-author candidates
+  and eleven missing-author blocks pending provenance or explicit disposition.
+  Task 2B1 ordinary relay/journal/SDK work is released locally, while its review,
+  Task 2B2 private repair runner, broader recovery, promotion and timing remain
+  open. Hostinger and hosted Dev authority are unchanged; no production repair
+  or operation is authorized by this source checkpoint.

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { claimProcessFence, fenceNames, inheritedProcessFence, syncControlDirectory, type ProcessFence } from './bootstrap';
+import { DiscordRelayJournal } from './discordRelayJournal';
 
 export class MaintenanceError extends Error {
   readonly retryAfterMs = 30_000;
@@ -23,6 +24,7 @@ type DrainRequest = { deadline: number; close: boolean; maintenance: boolean; in
  * Callback-only middleware uses an explicit lease; disconnect is not completion.
  */
 export class RuntimeCoordinator {
+  readonly discordRelays: DiscordRelayJournal;
   readonly markerPath: string;
   readonly checkpointPath: string;
   readonly failuresPath: string;
@@ -47,13 +49,15 @@ export class RuntimeCoordinator {
   private inspectionEpoch: number | null = null;
 
   constructor(readonly controlDir: string, bootstrapNonce?: string) {
+    this.discordRelays = new DiscordRelayJournal(controlDir);
     this.markerPath = path.join(controlDir, 'maintenance.json');
     this.checkpointPath = path.join(controlDir, 'checkpoint.json');
     this.failuresPath = path.join(controlDir, 'failures.jsonl');
     this.restartFence = bootstrapNonce
       ? inheritedProcessFence(controlDir, bootstrapNonce, process.pid)
       : claimProcessFence(controlDir, process.pid);
-    this.phase = this.otherFenceNames().length || !this.restartFence ? 'frozen' : 'running';
+    this.phase = this.otherFenceNames().length || !this.restartFence || this.discordRelays.inspect().pending ? 'frozen' : 'running';
+    this.registerParticipant('discord-relays', { inspect: async () => this.discordRelays.inspect() });
     if (existsSync(this.failuresPath)) {
       for (const line of readFileSync(this.failuresPath, 'utf8').split('\n').filter(Boolean)) {
         const value: unknown = JSON.parse(line);

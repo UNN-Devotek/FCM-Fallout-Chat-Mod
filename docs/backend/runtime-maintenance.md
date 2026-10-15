@@ -25,6 +25,8 @@ Direct Node/development startup claims the same fence before importing producer 
 | `checkpoint.json` | Atomic structured snapshot with phase, process ID, fences, `operatorMarkerPersisted`, `ingressClosed`, active work, accounting/inspection epochs, closed participants, stopped producer schedules, failures, and queue/Discord inspections. |
 | `failures.jsonl` | Append-only required-effect failures, including ambiguous external sends. Unresolved records fence a new process and prevent a clean drain. |
 | `messages.jsonl` | Accepted canonical message IDs, timestamps, content digests, and initial committed-row proofs. Contains no message bodies or tokens. |
+| `discord-relays.jsonl` | Ordinary-message relay intent, attempt, known returned Discord ID, and verified completion. Immutable canonical UUID/time, destination, configuration and protected-input digest; no message bodies or tokens. |
+| `discord-relay-payloads/<operationId>.json` | Private original relay arguments and exact link prefix for unresolved ordinary messages, including live-only REST. Directory `0700`, files `0600`; never print these contents. Verified completion durably removes the protected input; failed cleanup remains unresolved. |
 
 A frozen boot skips baseline migrations, startup compatibility patches/seeds, Bull consumption,
 Discord login, scheduled jobs and producer timers, rate-limit Redis script initialization, and
@@ -253,8 +255,16 @@ The isolated scope uses an explicit empty ALS store. On Node 22, `exit()` disabl
 globally and a scoped SDK callback can re-enable the old login owner; an empty store preserves
 isolation across that callback reentry while still owning the application callback.
 The registered Discord participant destroys this exact client after accepted work finishes.
-Existing SDK retries are unchanged. Drain ownership and failure disposition do not establish
-exactly-once external publication under SDK retries; outage reconciliation remains a separate gate.
+Its installed REST 2.6.3 client is constructed with `retries: 0` and a rejecting
+`rejectOnRateLimit` policy. Network/5xx retries and the separate 429 retry loop are disabled
+for every request, including reads and desired-state operations. No per-request shared-option
+mutation or implicit desired-state retry remains. The existing REST timeout (normally 15000 ms)
+also supplies a whole-request abort signal, combined with any caller signal, covering SDK
+queue/bucket waits and response bodies. The adapter awaits actual SDK settlement and accounts
+application response callbacks independently; expiry never substitutes a losing promise race
+for completion. An already-aborted SDK queue entry can remain owned until its head completes;
+its aborted transport cannot dispatch a later create. Unknown effects still require private
+verification; these settings provide no long-gap replay permission or nonce guarantee.
 
 Bull's local pause is initialized/awaited outside the application scope before normal scoped
 `close()`: its unresolved SDK resume gate is not unfinished work, while disconnect and async
@@ -330,12 +340,48 @@ operations must not resurrect original chat content. A zero queue with an unprov
 canonical ID still fails drain. Historical failures already deleted by the legacy image cannot
 be reconstructed by this mechanism.
 
-Discord tracks queued and in-flight sends. A failed send or link write rejects the operation and
-is journaled even if a feature's outer catch logs and continues. Send-success/link-save failure
-retains the canonical ID, Discord channel and sent Discord message ID with an ambiguous-effect
-stage; operators inspect/repair that exact effect rather than send it again blindly. Ticket and
-voice ownership-link failures are also retained. This is orderly-drain accounting, not a durable
-Discord outbox or a crash/outage backfill implementation.
+Ordinary Discord relay expectations are established before connection/channel skips. An explicit
+mapping selects the sole target; missing/non-text/refused mapped targets cannot fall back to
+the default. The default is eligible only without an explicit mapping. Missing destination,
+failed lookup, disconnection or failure to enqueue retains required failure evidence and blocks
+clean drain. An empty `DISCORD_TOKEN` intentionally disables this integration; explicit
+`[TEST-ROUNDTRIP…]`/`TestBot<digits>` synthetic probes remain excluded. These exclusions do not
+waive admission freeze. Existing cards, supporter cosmetics, mentions, public responses and
+native ACK timing remain unchanged. Ingest/finalize, admin WS, command WS and live-only REST
+carry their original generated UUID and timestamp; REST still creates no canonical history row.
+
+`DiscordRelayJournal` durably retains the protected original arguments and exact link prefix
+before mapping lookup, then appends immutable intent before attempt, attempt before SDK send,
+returned Discord snowflake before local linkage, and completion after link readback. Each write
+flushes its file and directory. The operation key depends on the canonical UUID, so changing
+timestamp, payload, destination or configuration cannot create a fresh retry identity. An existing
+legacy link requires private verification before any new create. A known returned ID with failed
+linkage, an unknown result, held callback, interrupted write, missing protected input, orphan,
+corrupt/partial/unknown record, or failed cleanup remains fenced. Original failures stay retained.
+Ordinary calls cannot resume an incomplete key; identical completed calls make no second create.
+Clearing/truncating evidence cannot manufacture a clean inspection in its owning process.
+
+The journal is bounded to 64 MiB and 2048 bytes per record. Each protected input is bounded to
+64 KiB, with at most 4096 retained files and 64 MiB total. Exhaustion refuses further work;
+there is no automatic journal truncation or rotation. Protected inputs contain only selected
+relay arguments/prefix, never OAuth/interaction bearer tokens or SDK request options. Their
+contents remain private until verified completion permits durable cleanup. Journal/checkpoint
+reports expose safe identifiers, digests and counts; relay rejection and outer logging use fixed
+diagnostics. Preserve the whole control directory, including unresolved protected inputs, in
+encrypted forward/reverse handoff state. Do not delete it to obtain readiness.
+
+If the initial protected-input write itself fails, no Discord create is attempted and the
+failure/restart fence prevents a clean boundary. The existing live-only REST broadcast/HTTP 201
+policy is preserved, so its original body may be unavailable after a crash in that failed-write
+case. This is unresolved accepted work, never clean/recovered success or an approved loss
+exception. An absent payload grants no cold-copy, retry or recovery permission; future repair
+must retain that uncertainty or obtain a specific evidence-linked disposition.
+
+The RAM queue remains accounted through send, durable returned-ID recording, linkage and
+verification. Private plan/status/apply/verify/disposition commands and known-ID link-only repair
+are deferred Task2B2 work; this journal grants no recovery permit, retry, replay or disposition.
+Ticket/voice ownership-link failures remain retained under their existing accounting. Whole
+Task2B and outage/cutover acceptance remain separate, unaccepted gates.
 
 Inbound Discord edit writes retain the canonical ID, observed Discord message/channel IDs,
 and `discord-edit-observed-local-update-unconfirmed` stage on failure. Report/thread binding,
@@ -474,6 +520,14 @@ Backend Jest covers admission/restart inheritance, early HTTP response/client-cl
 uncertainty, detached callback work, both socket transports and close effects, Discord queued/
 in-flight and ambiguous failures, every Bull state and canonical proof, local socket ownership,
 signal/operator races, bounded failure and close ordering.
+`runtimeDiscordDrain.test.js` and `discordRelayCallers.test.js` add ordinary relay routing,
+protected live-only REST input, actual WS/REST caller identity, persistence/cleanup refusal,
+known/unknown result and freeze regressions. `src/runtime/__tests__/discordRelayJournal.test.ts`
+and `discordTransport.test.ts` run through the required recursive TS-unit discovery. The latter
+uses actual installed SDK HTTP transport against a loopback fake provider for lost responses,
+5xx, 429 success/error alternatives, queue/bucket waits, held headers/body/callbacks and caller
+budgets. Focused tests also run with natural process exit; inherited Jest/test-runner force-exit
+settings are not drain or resource-lifetime evidence.
 `runtimeRelayControlReceivers.test.js` executes the actual whole Redis subscription
 adapter, registered control callback and five shared local helpers in source and
 compiled form. Synthetic stores and socket sinks exercise successful delivery,

@@ -9,14 +9,26 @@ import { safeDiscordRoute } from './failureEvidence';
  * independently through the accounted emitter, and each REST effect still has
  * its own admission, awaited completion and required failure disposition. */
 export function createRuntimeDiscordClient(runtime: RuntimeCoordinator, options: ClientOptions): Client {
-  const client = runtime.initializeSdkLifetime(() => new Client(options));
+  // REST retries include lost network results and 5xx; 429 has a separate retry
+  // loop. Never let either repeat a create behind one accounted SDK promise.
+  // Apply once at construction, including desired-state operations and reads;
+  // no concurrent request mutates shared retry options to claim idempotency.
+  const client = runtime.initializeSdkLifetime(() => new Client({ ...options,
+    rest: { ...options.rest, retries: 0, rejectOnRateLimit: () => true },
+  }));
   accountDiscordEmitter(client, runtime);
   // REST uses a typed AsyncEventEmitter with the same synchronous emit contract.
   // Its application response/debug/rate-limit listeners need independent scopes.
   accountSdkCallbackEmitter(client.rest as unknown as EventEmitter, runtime, 'discord-rest-event');
   const request = client.rest.request.bind(client.rest);
   client.rest.request = options => {
-    const operation = async () => await runtime.initializeSdkLifetime(() => request(options));
+    const operation = async () => {
+      // This signal includes SDK bucket/queue waits as well as transport/body
+      // completion. Await the actual request rejection, never a losing race.
+      const budget = AbortSignal.timeout(client.rest.options?.timeout ?? 15_000);
+      const signal = options.signal ? AbortSignal.any([options.signal, budget]) : budget;
+      return await runtime.initializeSdkLifetime(() => request({ ...options, signal }));
+    };
     return options.method === 'GET'
       ? runtime.run('discord-rest:GET', operation)
       : runtime.required(`discord-rest:${options.method}`, operation,

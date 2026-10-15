@@ -125,7 +125,11 @@ Uses `channelsLimiter` (500 req/15min) instead of `apiLimiter`.
 Authenticated administrator WebSocket chat is a separate persisted path using
 `source: "web"`. Its ACK UUID and broadcast timestamp are retained through Bull
 and the composite `(id, created_at)` SQL key. The REST publication above remains
-live-only. Audited mutations resolve the internal actor before changing data;
+live-only and passes that generated UUID/time to the ordinary Discord relay. Its original
+input/prefix is retained privately until verified relay completion, without adding a history
+row. Required relay uncertainty blocks maintenance drain even though the existing HTTP 201
+availability response is preserved; see [runtime maintenance](runtime-maintenance.md).
+Audited mutations resolve the internal actor before changing data;
 unconfirmed attribution returns HTTP 503 under the [audit attribution rules](auth.md).
 
 ---

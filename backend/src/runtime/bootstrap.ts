@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { DiscordRelayJournal } from './discordRelayJournal';
 
 export type ProcessFence = { path: string; content: string; cleared: boolean };
 const filename = 'restart-active.json';
@@ -20,6 +21,7 @@ export function fenceNames(controlDir: string): string[] {
  */
 export function claimProcessFence(controlDir: string, pid: number): ProcessFence | undefined {
   mkdirSync(controlDir, { recursive: true, mode: 0o700 });
+  if (new DiscordRelayJournal(controlDir).inspect().pending) return undefined;
   if (fenceNames(controlDir).length) return undefined;
   const failures = path.join(controlDir, 'failures.jsonl');
   if (existsSync(failures) && readFileSync(failures, 'utf8').length) return undefined;

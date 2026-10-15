@@ -415,3 +415,33 @@ test('private fence/journal and canonical receipt filesystem writes are classifi
     expect(ledger.sourceBindings.some(binding => binding.identity.file === relative && binding.identity.owner === '<module>')).toBe(true);
   }
 });
+
+test('ordinary relay journal, protected input and durable cleanup retain required owner proofs and automatic CI discovery', () => {
+  const ledger = actualLedger(), relative = 'backend/src/runtime/discordRelayJournal.ts';
+  const writes = ledger.rows.filter(row => row.identity.file === relative
+    && ['writeFileSync', 'fsyncSync', 'unlinkSync', 'mkdirSync'].includes(row.identity.callee));
+  expect(writes.length).toBeGreaterThan(6);
+  for (const write of writes) {
+    expect(write.disposition).toBe('required');
+    expect(write.ownerProofs).toContainEqual(expect.objectContaining({
+      identity: { file: 'backend/src/services/discordService.ts', owner: 'relayToDiscord' }, requiredCalls: ['runtime.required'],
+    }));
+  }
+  expect(ledger.sourceBindings).toContainEqual(expect.objectContaining({ identity: { file: relative, owner: '<module>' } }));
+  const runner = fs.readFileSync(path.join(repositoryRoot, 'backend/src/testRunner.ts'), 'utf8');
+  const workflow = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
+  expect(runner).toContain("f.endsWith('.test.ts')"); expect(workflow).toContain('run: npm run test:unit');
+  for (const filename of ['discordRelayJournal.test.ts', 'discordTransport.test.ts']) {
+    expect(fs.existsSync(path.join(repositoryRoot, 'backend/src/runtime/__tests__', filename))).toBe(true);
+  }
+  expect(JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'backend/package.json'), 'utf8')).jest.testMatch).toContain('**/tests/**/*.test.js');
+});
+
+test('removing the actual ordinary-relay required owner invalidates its protected-state writer proof', () => {
+  const ledger = actualLedger(), relative = 'backend/src/services/discordService.ts';
+  const source = fs.readFileSync(path.join(repositoryRoot, relative), 'utf8');
+  const changed = source.replace("runtime.required('discord:relay'", "runtime.run('discord:relay'");
+  expect(changed).not.toBe(source);
+  const owners = repositoryOwners(ledger).filter(owner => owner.identity.file !== relative).concat(sourceOwners(relative, changed));
+  expect(compare(inventory(repositoryRoot), ledger, owners)).toContainEqual(expect.objectContaining({ reason: 'required-disposition-boundary-missing' }));
+}, 20000);
