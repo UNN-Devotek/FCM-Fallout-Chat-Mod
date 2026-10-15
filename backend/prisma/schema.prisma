@@ -143,7 +143,7 @@ model Message {
   userId          String    @map("user_id") @db.Uuid
   channelId       String    @map("channel_id") @db.Uuid
   parentChannelId String?   @map("parent_channel_id") @db.Uuid
-  source          String    @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
+  source          String    @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws' | 'web' | 'bot'
   isDeleted       Boolean   @default(false) @map("is_deleted")
   editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
   metadata        Json? // optional structured payload (e.g. party_invite embed)

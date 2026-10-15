@@ -1,3 +1,4 @@
+import { runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
  * ║  SECURITY NOTICE — RAW DATABASE ACCESS                                   ║
@@ -20,14 +21,21 @@ import { spawn } from 'child_process';
 import tar from 'tar-stream';
 import { ListObjectsV2Command, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { Readable } from 'stream';
+import { finished, pipeline } from 'node:stream/promises';
 import { s3, BUCKET } from '../config/storage';
 import { query } from '../config/database';
 import logger from '../config/logger';
 import prisma from '../config/prisma';
+import { randomUUID } from 'node:crypto';
+import { runtime } from '../runtime';
 import { isAllowedImageHost, fetchRemoteImage, putToMinio } from '../lib/imageStorage';
 
 const MAX_SQL_ROWS = 1000;
 const SQL_PREVIEW_LENGTH = 200;
+
+function canRespond(res: Response): boolean {
+  return !res.destroyed && !res.writableEnded && !res.headersSent;
+}
 
 // Parse a postgres:// or postgresql:// DATABASE_URL into spawn env vars for
 // pg_dump / pg_restore / psql.  We never shell-interpolate the URL — we pass
@@ -56,6 +64,7 @@ function pgEnvFromUrl(url: string): Record<string, string> | null {
  * Intended for owner-driven schema migrations (ALTER TABLE, UPDATE, etc.).
  */
 async function runSql(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'migrationController:9678444ae0fa', async () => {
   const { sql } = req.body as { sql?: string };
 
   if (!sql || typeof sql !== 'string' || !sql.trim()) {
@@ -77,7 +86,7 @@ async function runSql(req: Request, res: Response, next: NextFunction): Promise<
   );
 
   try {
-    const result = await query(sql);
+    const result = await runRequiredMutation('domain', 'daed229f825ed1f7f2bee475', { stage: 'primary-write-unconfirmed' }, () => query(sql), undefined, undefined, undefined);
     const rows = Array.isArray(result.rows) ? result.rows.slice(0, MAX_SQL_ROWS) : [];
     res.json({
       rowCount: result.rowCount ?? 0,
@@ -87,6 +96,8 @@ async function runSql(req: Request, res: Response, next: NextFunction): Promise<
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -126,48 +137,48 @@ async function dumpDatabase(req: Request, res: Response, next: NextFunction): Pr
   res.setHeader('Content-Type', 'application/sql');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-  const child = spawn(
-    'pg_dump',
-    ['--no-password', '--format=plain', '--no-owner', '--no-acl'],
-    {
-      env: { ...process.env, ...pgEnv },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
-
-  child.stdout.pipe(res);
-
-  let stderrOutput = '';
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderrOutput += chunk.toString();
-  });
-
-  child.on('error', (err: NodeJS.ErrnoException) => {
-    logger.error({ err, action: 'dump' }, 'Migration: pg_dump spawn error');
-    if (err.code === 'ENOENT') {
-      // Headers may already be sent (streaming started); just destroy.
-      res.destroy();
-      return;
-    }
-    next(err);
-  });
-
-  child.on('close', (code) => {
-    if (code !== 0) {
-      logger.error(
-        { code, stderrOutput, action: 'dump' },
-        'Migration: pg_dump exited with non-zero code',
-      );
-      // If headers not yet sent, send an error.  Otherwise just end.
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'pg_dump failed', details: stderrOutput.slice(0, 500) });
-      } else {
-        res.end();
-      }
-    } else {
-      logger.info({ action: 'dump' }, 'Migration: pg_dump completed successfully');
-    }
-  });
+  await runtime.run('migration:database-dump', () => new Promise<void>(resolve => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn('pg_dump', ['--no-password', '--format=plain', '--no-owner', '--no-acl'], {
+        env: { ...process.env, ...pgEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) { if (canRespond(res)) next(err); resolve(); return; }
+    let stderrOutput = '';
+    let closed = false;
+    let cancelled = false;
+    const cancel = () => {
+      if (closed || cancelled) return;
+      cancelled = true;
+      child.stdout!.unpipe(res);
+      // This is a read-only export. Disconnect cancels it; child close, rather
+      // than kill's return value or exit, verifies that its DB read has stopped.
+      try { child.kill('SIGTERM'); } catch (err) { logger.error({ err, action: 'dump' }, 'Migration: pg_dump termination unconfirmed'); }
+    };
+    const responseClose = () => { if (!res.writableFinished) cancel(); };
+    res.on('close', responseClose); res.on('error', cancel);
+    child.stdout!.on('error', err => { cancel(); if (!res.destroyed) res.destroy(err); });
+    child.stderr!.on('error', err => { cancel(); if (!res.destroyed) res.destroy(err); });
+    child.stderr!.on('data', (chunk: Buffer) => { stderrOutput = (stderrOutput + chunk.toString()).slice(0, 1000); });
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (closed) return;
+      logger.error({ err, action: 'dump' }, 'Migration: pg_dump spawn error');
+      if (err.code === 'ENOENT') res.destroy();
+      else if (canRespond(res)) next(err);
+    });
+    child.on('close', code => {
+      if (closed) return;
+      closed = true;
+      res.off('close', responseClose); res.off('error', cancel);
+      if (!cancelled && code !== 0) {
+        logger.error({ code, stderrOutput, action: 'dump' }, 'Migration: pg_dump exited with non-zero code');
+        if (canRespond(res)) res.status(500).json({ error: 'pg_dump failed', details: stderrOutput.slice(0, 500) });
+        else if (!res.destroyed && !res.writableEnded) res.end();
+      } else if (!cancelled) logger.info({ action: 'dump' }, 'Migration: pg_dump completed successfully');
+      resolve();
+    });
+    child.stdout!.pipe(res);
+  }));
 }
 
 /**
@@ -204,56 +215,86 @@ async function restoreDatabase(req: Request, res: Response, next: NextFunction):
     'Migration: starting psql restore',
   );
 
-  const child = spawn(
-    'psql',
-    ['--no-password', '--single-transaction', '--set=ON_ERROR_STOP=1'],
-    {
-      env: { ...process.env, ...pgEnv },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    },
-  );
-
-  // Feed the dump into psql's stdin. The route mounts express.raw, which BUFFERS
-  // the body into req.body — so the stream is already consumed and req.pipe()
-  // would send nothing (silent 0-row "success"). Write the buffer when present;
-  // fall back to piping the raw stream (e.g. a non-matching Content-Type that
-  // express.raw skipped).
-  if (Buffer.isBuffer((req as any).body) && (req as any).body.length > 0) {
-    child.stdin.write((req as any).body);
-    child.stdin.end();
-  } else {
-    req.pipe(child.stdin);
-  }
-
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-  child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-
-  child.on('error', (err: NodeJS.ErrnoException) => {
-    logger.error({ err, action: 'restore' }, 'Migration: psql spawn error');
-    if (!res.headersSent) {
-      if (err.code === 'ENOENT') {
-        res.status(503).json({ error: 'psql binary not found in container PATH.' });
-      } else {
-        next(err);
-      }
-    }
-  });
-
-  child.on('close', (code) => {
-    if (code !== 0) {
-      logger.error({ code, stderr: stderr.slice(0, 1000), action: 'restore' }, 'Migration: psql restore failed');
-      res.status(500).json({
-        error: 'psql restore failed',
-        code,
-        details: stderr.slice(0, 500),
+  const operationId = randomUUID();
+  await runtime.run('migration:database-restore', () => new Promise<void>(resolve => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn('psql', ['--no-password', '--single-transaction', '--set=ON_ERROR_STOP=1'], {
+        env: { ...process.env, ...pgEnv }, stdio: ['pipe', 'pipe', 'pipe'],
       });
-    } else {
-      logger.info({ action: 'restore' }, 'Migration: psql restore completed successfully');
-      res.json({ ok: true, output: stdout.slice(0, 2000) });
+    } catch (err) {
+      runtime.recordFailure('migration:database-restore', new Error('Database restore child could not start'),
+        { operationId, stage: 'spawn-threw' });
+      if (canRespond(res)) next(err);
+      resolve(); return;
     }
-  });
+    let closed = false;
+    let inputFinished = false;
+    let failed = false;
+    let terminationRequested = false;
+    let stdout = '';
+    let stderr = '';
+    const failure = (stage: string, detail: Record<string, unknown> = {}) => {
+      failed = true;
+      runtime.recordFailure('migration:database-restore', new Error('Database restore completion could not be verified'),
+        { operationId, childPid: child.pid, stage, ...detail });
+    };
+    const stopIncompleteInput = (stage: string) => {
+      if (closed) return;
+      failure(stage);
+      if (terminationRequested) return;
+      terminationRequested = true;
+      req.unpipe(child.stdin!);
+      child.stdin?.destroy();
+      // An incomplete SQL stream is unsafe. Request termination, but retain the
+      // restore lease until close verifies the child has actually stopped.
+      try { child.kill('SIGTERM'); } catch { failure('child-termination-unconfirmed'); }
+    };
+    const aborted = () => stopIncompleteInput('request-input-incomplete');
+    const requestError = () => stopIncompleteInput('request-input-error');
+    const requestClose = () => { if (!req.complete && !req.readableEnded) aborted(); };
+    req.on('aborted', aborted); req.on('error', requestError); req.on('close', requestClose);
+    child.stdin!.on('finish', () => { inputFinished = true; });
+    child.stdin!.on('error', () => { if (!closed) stopIncompleteInput('stdin-write-unconfirmed'); });
+    child.stdout!.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(0, 2000); });
+    child.stderr!.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(0, 1000); });
+    child.stdout!.on('error', () => { if (!closed) failure('stdout-incomplete'); });
+    child.stderr!.on('error', () => { if (!closed) failure('stderr-incomplete'); });
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (closed) return;
+      failure('child-error', { code: err.code });
+      logger.error({ err, action: 'restore' }, 'Migration: psql child error');
+      if (canRespond(res)) {
+        if (err.code === 'ENOENT') res.status(503).json({ error: 'psql binary not found in container PATH.' });
+        else next(err);
+      }
+      // error/exit is not close: an unknown live child still blocks drain.
+    });
+    child.on('exit', (code, signal) => {
+      if (!closed && (code !== 0 || signal)) failure('child-exit-failed', { code, signal });
+    });
+    child.on('close', (code, signal) => {
+      if (closed) return;
+      closed = true;
+      req.off('aborted', aborted); req.off('error', requestError); req.off('close', requestClose);
+      if (code !== 0 || signal) failure('child-close-failed', { code, signal });
+      if (!inputFinished) failure('stdin-completion-unconfirmed');
+      if (failed) {
+        logger.error({ code, stderr, action: 'restore', operationId }, 'Migration: psql restore failed');
+        if (canRespond(res)) res.status(500).json({ error: 'psql restore failed', code, details: stderr.slice(0, 500) });
+      } else {
+        logger.info({ action: 'restore', operationId }, 'Migration: psql restore completed successfully');
+        if (canRespond(res)) res.json({ ok: true, output: stdout });
+      }
+      resolve();
+    });
+    // express.raw has already consumed the body. Empty buffered input still
+    // needs an explicit stdin end; fallback streams must finish without abort.
+    try {
+      if (Buffer.isBuffer(req.body)) child.stdin!.end(req.body);
+      else req.pipe(child.stdin!);
+    } catch { stopIncompleteInput('stdin-write-threw'); }
+  }));
 }
 
 const ALLOWED_STORAGE_PREFIXES = ['wiki-images/', 'camp-images/'] as const;
@@ -294,8 +335,27 @@ async function dumpStorage(req: Request, res: Response, next: NextFunction): Pro
   res.setHeader('Content-Disposition', `attachment; filename="storage-dump-${timestamp}.tar"`);
 
   const pack = tar.pack();
+  const controller = new AbortController();
+  let cancelled = false;
+  let activeBody: Readable | undefined;
+  let activeBodyCompletion: Promise<void> | undefined;
+  let packed = false;
+  const packing = new Promise<void>(resolve => {
+    // streamx propagates response/entry errors to the pack. Always observe them;
+    // the controller's ordinary read-error path reports the request failure.
+    pack.on('error', () => {});
+    pack.on('end', () => { packed = true; resolve(); });
+    pack.on('close', resolve);
+  });
+  const cancel = () => {
+    if (res.writableFinished || cancelled) return;
+    cancelled = true;
+    controller.abort();
+    activeBody?.destroy();
+    pack.destroy();
+  };
+  res.on('close', cancel); res.on('error', cancel);
   pack.pipe(res);
-
   let totalObjects = 0;
 
   try {
@@ -305,6 +365,7 @@ async function dumpStorage(req: Request, res: Response, next: NextFunction): Pro
     );
 
     for (const prefix of requestedPrefixes) {
+      if (cancelled) break;
       let continuationToken: string | undefined;
 
       do {
@@ -312,48 +373,53 @@ async function dumpStorage(req: Request, res: Response, next: NextFunction): Pro
           Bucket: BUCKET,
           Prefix: prefix,
           ContinuationToken: continuationToken,
-        }));
+        }), { abortSignal: controller.signal });
 
         for (const obj of listResp.Contents ?? []) {
+          if (cancelled) break;
           const key = obj.Key;
           if (!key) continue;
 
           // Fetch the object from S3/MinIO
-          const getResp = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+          const getResp = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }), { abortSignal: controller.signal });
           const bodyStream = getResp.Body as Readable | undefined;
           if (!bodyStream) continue;
+          activeBody = bodyStream;
+          activeBodyCompletion = finished(bodyStream, { cleanup: true }).catch(() => {});
+          if (cancelled) { bodyStream.destroy(); break; }
 
           const size = getResp.ContentLength ?? obj.Size ?? 0;
 
           // Create a tar entry and stream the S3 body into it — one object at a time
-          await new Promise<void>((resolve, reject) => {
-            const entry = pack.entry({ name: key, size }, (err) => {
-              if (err) reject(err); else resolve();
-            });
-            bodyStream.on('error', reject);
-            bodyStream.pipe(entry);
-          });
-
+          await pipeline(bodyStream, pack.entry({ name: key, size }));
+          await activeBodyCompletion;
+          activeBody = undefined;
+          activeBodyCompletion = undefined;
           totalObjects++;
         }
 
         continuationToken = listResp.NextContinuationToken;
-      } while (continuationToken);
+      } while (continuationToken && !cancelled);
     }
-
-    pack.finalize();
-
-    logger.info(
+    if (!cancelled) pack.finalize();
+    await packing;
+    if (!cancelled && !packed) throw new Error('Storage dump archive output was incomplete');
+    if (!cancelled) logger.info(
       { audit: 'migration-key', action: 'storage-dump', totalObjects },
       'Migration: storage dump completed',
     );
   } catch (err) {
-    logger.error({ err, action: 'storage-dump' }, 'Migration: storage dump error');
-    if (res.headersSent) {
-      res.destroy();
-    } else {
-      next(err);
+    if (!cancelled) {
+      logger.error({ err, action: 'storage-dump' }, 'Migration: storage dump error');
+      if (res.headersSent) res.destroy();
+      else if (canRespond(res)) next(err);
     }
+  } finally {
+    res.off('close', cancel); res.off('error', cancel);
+    activeBody?.destroy();
+    pack.destroy();
+    await packing;
+    await activeBodyCompletion;
   }
 }
 
@@ -374,57 +440,58 @@ async function restoreStorage(req: Request, res: Response, _next: NextFunction):
     'Migration: starting storage restore',
   );
 
-  const extract = tar.extract();
-
-  extract.on('entry', (header, stream, next) => {
-    const name = header.name;
-
-    // Security: strict allowlist — reject anything that doesn't match exactly
-    if (!OBJECT_KEY_RE.test(name)) {
-      rejected++;
-      stream.resume(); // drain + move to next entry
-      next();
-      return;
+  const operationId = randomUUID();
+  await runtime.run('migration:storage-restore', async () => {
+    const extract = tar.extract();
+    let finished = false;
+    let inputFailed = false;
+    let currentObjectKey: string | undefined;
+    extract.on('finish', () => { finished = true; });
+    const incompleteInput = () => {
+      if (inputFailed || finished) return;
+      inputFailed = true;
+      runtime.recordFailure('migration:storage-restore', new Error('Storage restore input was incomplete'),
+        { operationId, objectKey: currentObjectKey, stage: 'request-input-incomplete' });
+      extract.destroy(new Error('Storage restore request input was incomplete'));
+    };
+    const requestClose = () => { if (!req.complete && !req.readableEnded) incompleteInput(); };
+    req.on('aborted', incompleteInput); req.on('error', incompleteInput); req.on('close', requestClose);
+    // The iterator is installed before piping. It keeps archive/entry lifetimes
+    // awaited and advances only after this entry's PUT is confirmed or recorded.
+    const entries = extract[Symbol.asyncIterator]();
+    try {
+      req.pipe(extract);
+      for await (const stream of entries) {
+        const name = stream.header.name;
+        const allowed = OBJECT_KEY_RE.test(name);
+        currentObjectKey = allowed ? name : undefined;
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) { if (allowed) chunks.push(chunk); }
+        if (!allowed) { rejected++; continue; }
+        const buf = Buffer.concat(chunks);
+        if (buf.length !== (stream.header.size ?? 0)) throw new Error('Storage restore entry size was incomplete');
+        try {
+          await runtime.required('migration:storage-restore:put', async () => s3.send(new PutObjectCommand({
+            Bucket: BUCKET, Key: name, Body: buf, ContentType: contentTypeForKey(name),
+          })), { operationId, objectKey: name, stage: 'object-put-result-unknown' });
+          restored++;
+        } catch { failed++; }
+      }
+      if (!finished) throw new Error('Storage restore archive completion was not verified');
+      logger.info({ audit: 'migration-key', action: 'storage-restore', operationId, restored, rejected, failed },
+        'Migration: storage restore completed');
+      if (canRespond(res)) res.json({ data: { restored, rejected, failed } });
+    } catch (err) {
+      if (!inputFailed) runtime.recordFailure('migration:storage-restore', new Error('Storage restore archive or entry was incomplete'),
+        { operationId, objectKey: currentObjectKey, stage: 'archive-or-entry-incomplete' });
+      logger.error({ err, action: 'storage-restore', operationId }, 'Migration: tar extract error');
+      if (canRespond(res)) res.status(400).json({ error: 'Failed to parse tar stream', detail: (err as Error).message });
+    } finally {
+      req.off('aborted', incompleteInput); req.off('error', incompleteInput); req.off('close', requestClose);
+      req.unpipe(extract);
+      extract.destroy();
     }
-
-    // Collect the entry into a Buffer (individual objects are small images; 9 GB is the aggregate)
-    const chunks: Buffer[] = [];
-    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-    stream.on('error', () => {
-      failed++;
-      next();
-    });
-    stream.on('end', () => {
-      const buf = Buffer.concat(chunks);
-      s3.send(new PutObjectCommand({
-        Bucket: BUCKET,
-        Key: name,
-        Body: buf,
-        ContentType: contentTypeForKey(name),
-      }))
-        .then(() => { restored++; next(); })
-        .catch(() => { failed++; next(); });
-    });
   });
-
-  extract.on('finish', () => {
-    logger.info(
-      { audit: 'migration-key', action: 'storage-restore', restored, rejected, failed },
-      'Migration: storage restore completed',
-    );
-    if (!res.headersSent) {
-      res.json({ data: { restored, rejected, failed } });
-    }
-  });
-
-  extract.on('error', (err) => {
-    logger.error({ err, action: 'storage-restore' }, 'Migration: tar extract error');
-    if (!res.headersSent) {
-      res.status(400).json({ error: 'Failed to parse tar stream', detail: (err as Error).message });
-    }
-  });
-
-  req.pipe(extract);
 }
 
 // ── Image backfill ─────────────────────────────────────────────────────────────
@@ -471,6 +538,7 @@ async function headExists(key: string): Promise<boolean> {
  */
 async function backfillImages(req: Request, res: Response, _next: NextFunction): Promise<void> {
   const includeCamp = Boolean((req.body as { camp?: boolean } | undefined)?.camp);
+  const operationId = randomUUID();
 
   logger.info(
     { audit: 'migration-key', action: 'backfill-images', includeCamp, sourceIp: req.ip, timestamp: new Date().toISOString() },
@@ -479,7 +547,7 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
 
   res.status(202).json({ data: { status: 'started' } });
 
-  void (async () => {
+  void runtime.required('migration:backfill-images', async () => {
     // ── 1. Wiki images ─────────────────────────────────────────────────────────
     let wikiTotal    = 0;
     let wikiMirrored = 0;
@@ -514,26 +582,30 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
             // normal backfillWikiImages pass.
             logger.warn({ id: row.id, url: row.url }, '[backfillImages] wiki row has no mirrored url — skip (run backfillWikiImages.ts first)');
             wikiFailed++;
-            return;
+            runtime.recordFailure('migration:backfill-images:wiki', new Error('Accepted image has no deterministic object key'),
+              { operationId, rowId: row.id, stage: 'object-key-unresolved' });
+            continue;
           }
 
           try {
             if (await headExists(key)) {
               wikiSkipped++;
-              return;
+              continue;
             }
 
             if (!isAllowedImageHost(sourceUrl)) {
               logger.warn({ id: row.id, sourceUrl }, '[backfillImages] wiki source_url host not in SSRF allowlist — skip');
               wikiSkipped++;
-              return;
+              continue;
             }
 
             const result = await fetchRemoteImage(sourceUrl, BACKFILL_MAX_BYTES);
             if (!result) {
               logger.warn({ id: row.id, sourceUrl }, '[backfillImages] wiki fetch failed — skip');
               wikiFailed++;
-              return;
+              runtime.recordFailure('migration:backfill-images:wiki', new Error('Accepted image fetch incomplete'),
+                { operationId, rowId: row.id, objectKey: key, stage: 'source-fetch-incomplete' });
+              continue;
             }
 
             const stored = await putToMinio(key, result.buf, result.contentType);
@@ -541,8 +613,12 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
               wikiMirrored++;
             } else {
               wikiFailed++;
+              runtime.recordFailure('migration:backfill-images:wiki', new Error('Accepted image store unconfirmed'),
+                { operationId, rowId: row.id, objectKey: key, stage: 'object-put-result-unknown' });
             }
           } catch (err) {
+            runtime.recordFailure('migration:backfill-images:wiki', new Error('Accepted wiki image mirror was not confirmed'), { operationId, rowId: row.id, objectKey: key,
+              stage: 'object-mirror-unconfirmed' });
             logger.warn({ err, id: row.id, sourceUrl }, '[backfillImages] wiki per-row error — skip');
             wikiFailed++;
           }
@@ -551,6 +627,7 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
 
       await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => wikiWorker()));
     } catch (err) {
+      runtime.recordFailure('migration:backfill-images:wiki', new Error('Accepted wiki backfill was incomplete'), { operationId, stage: 'source-query-or-run-incomplete' });
       logger.error({ err, action: 'backfill-images' }, 'Migration: backfill-images wiki query/run failed');
     }
 
@@ -599,6 +676,8 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
           if (!match) {
             logger.warn({ key }, '[backfillImages] camp key format unexpected — skip');
             campFailed++;
+            runtime.recordFailure('migration:backfill-images:camp', new Error('Accepted CAMP object key is invalid'),
+              { operationId, objectKey: key, stage: 'object-key-unresolved' });
             continue;
           }
           const formId = match[1].toLowerCase();
@@ -626,6 +705,8 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
             if (!result) {
               logger.warn({ key, sourceUrl }, '[backfillImages] camp fetch failed — skip');
               campFailed++;
+              runtime.recordFailure('migration:backfill-images:camp', new Error('Accepted CAMP image fetch incomplete'),
+                { operationId, objectKey: key, stage: 'source-fetch-incomplete' });
               continue;
             }
 
@@ -634,8 +715,11 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
               campMirrored++;
             } else {
               campFailed++;
+              runtime.recordFailure('migration:backfill-images:camp', new Error('Accepted CAMP image store unconfirmed'),
+                { operationId, objectKey: key, stage: 'object-put-result-unknown' });
             }
           } catch (err) {
+            runtime.recordFailure('migration:backfill-images:camp', new Error('Accepted CAMP image mirror was not confirmed'), { operationId, objectKey: key, stage: 'object-mirror-unconfirmed' });
             logger.warn({ err, key }, '[backfillImages] camp per-row error — skip');
             campFailed++;
           }
@@ -644,6 +728,7 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
 
       await Promise.all(Array.from({ length: BACKFILL_CONCURRENCY }, () => campWorker()));
     } catch (err) {
+      runtime.recordFailure('migration:backfill-images:camp', new Error('Accepted CAMP backfill was incomplete'), { operationId, stage: 'source-query-or-run-incomplete' });
       logger.error({ err, action: 'backfill-images' }, 'Migration: backfill-images camp query/run failed');
     }
 
@@ -651,7 +736,7 @@ async function backfillImages(req: Request, res: Response, _next: NextFunction):
       { audit: 'migration-key', action: 'backfill-images', camp: { total: campTotal, mirrored: campMirrored, skipped: campSkipped, failed: campFailed } },
       'Migration: backfill-images camp phase complete',
     );
-  })();
+  }, { operationId, includeCamp }).catch(err => logger.error({ err, operationId }, 'Migration: accepted image backfill failed'));
 }
 
 export { runSql, dumpDatabase, restoreDatabase, dumpStorage, restoreStorage, backfillImages };

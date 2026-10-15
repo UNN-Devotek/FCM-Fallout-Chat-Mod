@@ -250,9 +250,21 @@ class TestFcmCommand {
         check("unsafe synchronous transport suppresses automatic roster work",
             !FcmCommand.shouldSendRoster(false, false, 60000, false));
         check("ready roster does not renew before the boundary",
-            !FcmCommand.shouldSendRoster(true, true, 29999, true));
-        check("ready roster renews only at the keepalive boundary",
-            FcmCommand.shouldSendRoster(true, true, 30000, true));
+            !FcmCommand.shouldSendRoster(true, true, 9999, true));
+        check("ready roster reports before cosmetic evidence expires",
+            FcmCommand.shouldSendRoster(true, true, 10000, true));
+        // Five-second timer drift and async delivery must leave time for the
+        // next private reply inside the backend's 30-second observation bound.
+        var rosterSentAt:Float = 0;
+        var rosterMaxGap:Float = 0;
+        for (pollAt in [5001.0, 10002.0, 15003.0, 20004.0, 25005.0, 30006.0, 35007.0, 40008.0]) {
+            if (FcmCommand.shouldSendRoster(true, true, pollAt - rosterSentAt, true)) {
+                rosterMaxGap = Math.max(rosterMaxGap, pollAt - rosterSentAt);
+                rosterSentAt = pollAt;
+            }
+        }
+        check("poll drift and private reply delay stay inside cosmetic evidence deadline",
+            rosterMaxGap > 0 && rosterMaxGap + 1000 + 5000 + 1000 < 30000);
         check("unconfirmed roster retries only after its retry boundary",
             !FcmCommand.shouldSendRoster(true, false, 9999, true)
             && FcmCommand.shouldSendRoster(true, false, 10000, true));

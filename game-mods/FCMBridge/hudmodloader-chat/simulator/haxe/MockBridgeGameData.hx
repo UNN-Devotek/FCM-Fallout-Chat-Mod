@@ -5,9 +5,14 @@ class MockBridgeGameData {
     public static var onRead:Void->Void = null;
     public static var readErrorKey:String = "";
     public static var subscribeErrorKey:String = "";
+    public static var readCount:Int = 0;
     public static function publish(key:String, data:Dynamic):Void {
-        providers.set(key, new MockBridgeProvider(data));
-        push(key, providers.get(key));
+        publishProvider(key, new MockBridgeProvider(data));
+    }
+    /** Register the exact accessor-backed envelope before delivering its event. */
+    public static function publishProvider(key:String, provider:Dynamic):Void {
+        providers.set(key, provider);
+        push(key, provider);
     }
     /** A fresh event may arrive while GetDataFromClient still serves its old envelope. */
     public static function push(key:String, provider:Dynamic):Void {
@@ -31,7 +36,8 @@ class MockBridgeGameData {
         map(["PeerA", "PeerB"]);
         publish("TeamMarkers", {Markers:[{name:"PeerA"}]});
         return {
-            GetDataFromClient:function(key:String):Dynamic {
+            GetDataFromClient:function(key:String, create:Bool = true):Dynamic {
+                readCount++;
                 if (onRead != null) { var callback = onRead; onRead = null; callback(); }
                 if (key == readErrorKey) throw new flash.errors.Error("Private getter payload", 1014);
                 return providers.get(key);

@@ -1,6 +1,102 @@
 # Automated HUD-mod test harness plan
 
-## Blue overhead names — HUD 2.10.138 / bridge 0.2.10
+## Blue overhead names — sources HUD 2.10.150 / bridge 0.2.18
+
+Fresh 149 native runs progress private requests/replies on both providers with no
+1014 or paint errors, but intermittent colors remain. Some losses follow native
+push gaps; the user confirms movement restores still-visible names. 150 separates
+source acquisition expiry from an already admitted visible association's continuation
+under exact current identity/eligibility and fresh private presence.
+
+The actual production painter and private parser scenario must keep blue across
+two modeled stationary minutes of bounded private renewals without another push
+or source timestamp change. It must reject new/reacquired associations after
+source expiry, restore on hiding, recycling, renaming, hostile/wanted disposition,
+row removal, invalid flags, duplicate IDs, private withdrawal/deadline and same-context
+reset, and preserve teardown and native redraw checks. Pure tests cover current
+private-identity corroboration and ambiguity. Counts/fixed source states remain
+private. Logical clocks accelerate only the fixture; they do not establish GFx
+acceptance. Full required gates and fresh two-client stationary acceptance remain required.
+
+Final 150 / 0.2.18 source passes 31 pure suites, nine source/package checks,
+empty widget/scenario compiler diagnostics and 93/93 Ruffle cases (8.8 minutes).
+Full backend, overlay and dashboard gates pass; all 150 source hashes verify and
+owned Redis/harness services are removed. The verified DEV archive is installed
+on both machines with backups and settings/login preserved. Native acceptance
+and hosted CI remain pending.
+
+## Previous diagnostic sources HUD 2.10.149 / bridge 0.2.17
+
+Fresh 148 native acceptance still fails with zero requests and error 1014.
+The 149 experiment separates clock/session reads and the request's pruning,
+queueing and encoding methods. Fixed call/entered phases distinguish remaining
+boundaries; world catches report bounded error IDs and allowlisted class names
+without exception messages or stacks. Both provider scenarios inject faults
+through the actual widget and its world-catch formatter, requiring unchanged
+private lease, native room, marker age and observation counts. The pure pending
+window/timing tests remain in place. Injected errors do not emulate native GFx
+verification. Both focused providers pass again on final source (20.0 seconds),
+followed by 31 pure suites, nine source/package checks, empty compiler diagnostics
+and 93/93 Ruffle cases (8.0 minutes). Full backend/overlay/dashboard gates pass;
+all 150 frozen source hashes verify and the harness listener is removed. 149 is
+installed on both machines; native acceptance remains pending.
+
+Native 147 fails with repeated 1014 before requests on both providers despite
+passing the full harness. Compiled comparison shows new request-method Array
+coercions; JSON printer bytecode is unchanged from native-working 145. Candidate
+148 uses indexed pending pruning and adds fixed request/timer phases. Pure tests
+retain the timer-order, original deadline, replay/withdrawal/reset and four-request
+bounds, add full-window expiry after a stall and verify fixed phase privacy.
+This is a native compatibility hypothesis; Ruffle cannot prove GFx verification.
+
+The 148 / 0.2.16 rerun passes all 31 pure suites, nine source/package checks,
+empty compiler diagnostics, 93/93 Ruffle cases (8.4 minutes), and full
+backend/overlay/dashboard gates. The owned Redis and harness listener are removed;
+all 149 frozen source hashes verify. The DEV ZIP is packaged; native acceptance
+requires fresh two-client game evidence after installation with both games closed.
+
+The 2.10.147 pure suite exercises independent five-second request and reply timers
+in both orders and four phases over 60 modeled seconds, plus overlapping replies,
+per-request submission expiry, newer positive/empty precedence, replay, reset and
+a four-request memory bound. The 2.10.146 parser fails the prior-reply assertion
+in both compiled provider scenarios. The corrected scenario passes through the
+actual widget's private-event parser and registered frame/RENDER callbacks, and
+must preserve source age while accepting a still-valid older reply, restore on
+a newer withdrawal and reject older overrides. Twelve deferred native redraws
+alternate vanilla colors and must finish blue before expiry/unload checks.
+All required local verification passes, including 93/93 Ruffle cases (7.7 minutes).
+HUD 2.10.147 is installed with verified archives, backups and preserved settings
+on both providers; native acceptance remains pending.
+
+The 2.10.146 native-nameplate scenario makes the fixture-owned paint array's
+dynamic Haxe `remove` helper throw numeric error 1006, modeling the unavailable
+Flash 19 `removeAt` path without altering global prototypes or sealed Ruffle
+builtins. The old painter fails for both lease expiry and a recycled name on both
+providers. The compatible painter must restore expiry, repaint the recycled
+label and avoid the helper entirely without incrementing frame errors. The pure
+lease suite models alternating early/late five-second ticks, overlapping bounded
+leases, rapid-call throttling, old-reply fencing and a stall with no catch-up
+burst. All required local gates pass, including 93/93 Ruffle cases (7.6 minutes),
+and 2.10.146 is installed on both machines with verified archives, backups and
+preserved settings. Native availability still
+requires a fresh two-client run; genuine 30-second marker push gaps still expire.
+
+The 2.10.145 recovery regression dispatches the actual registered ENTER_FRAME
+and RENDER callbacks with a one-shot fixture lease-read error. Both providers
+must restore vanilla colors on failure, preserve original source age/context/
+generation/envelope, and repaint on a successful callback without another native
+push. Expired sources, private leases and reset generations cannot be revived.
+Persistent numeric error counters, fixed hook/phase/clear reasons and bounded
+source age are checked for privacy and saturation. The pure command suite tests
+the ten-second confirmed-roster boundary and timer/reply headroom before the
+backend's unchanged 30-second cosmetic evidence deadline. Previous 2.10.144
+fails the recovery assertions on both providers. The focused new cases pass on
+both providers, and all 31 pure suites, nine source/package checks, empty compiler
+diagnostics, full backend/overlay/dashboard gates and 93/93 Ruffle cases pass.
+The preceding 2.10.145 archives were installed with verified backups and settings;
+fresh logs now confirm repeated cleanup error 1006 and private-lease gaps.
+Native acceptance is pending; see the
+[2026-10-12 investigation](blue-nameplates-2026-10-12-recovery.md).
 
 The provider-paired `nameplates` HUD scenario uses the production private-event
 parser and shared painter. It checks ordinary player exclusion, color restoration,
@@ -12,9 +108,113 @@ hostility, world hops, lease expiry and unload. Existing automatic teardown rema
 required. The pure `test-nameplates.hxml` suite and backend Jest pairing/private
 delivery tests run in the existing required CI gates.
 
+The HUD scenario also exercises the actual request gates and submit path, valid
+private-reply counters, a privacy-safe renderer-status log, log throttling and
+silence after shutdown. Pure Haxe tests verify diagnostic privacy, request/reply
+counts, expiry reporting and lifetime counters across resets.
+The painter now receives marker fixtures through its actual subscription, using
+sealed accessor-backed provider/event envelopes. Tests cover valid pushes,
+unready/test/throwing envelopes, fresh pushes while the getter retains an older
+snapshot, numeric subscription/read errors without private error text, owned
+listener removal and the additional fixed/count-only source diagnostics.
+
+Candidate 2.10.141 adds host-domain discovery tests to the existing pure lease
+suite. The Ruffle nameplate scenario defines a harness-only accessor-backed BSUI
+class in the actual host ApplicationDomain and supplies a different unready/test
+child manager. It verifies host-source subscription, no repeated rebind, normal
+painting and continued rejection of unready/test/missing/throwing host envelopes.
+The harness class is excluded from production. Pure tests cover absent/throwing
+domains, incomplete callables, same-manager detection and zero provider reads
+during discovery. These tests establish selection behavior, not a native manager
+mismatch. Fresh 2.10.141 logs select the same supplied manager on both providers
+and retain the zero-marker failure.
+
+Installed diagnostic 2.10.142 compares public event/provider/getter
+payload ownership, without retaining native objects or logging names. The
+CharacterInfoData ownership fixture incorrectly exposes a public HUD field:
+the active HUDMenu declares it private. That comparison has no native ownership
+acceptance value; 2.10.143 removes it and corrects the fixture.
+Pure tests cover same/divergent/missing payloads,
+bounded lists, numeric failures, zero watch creation/mutation and privacy.
+Compiled Ruffle tests use the native Vector nameplate collection and sealed provider/event accessors, verify public method
+argument shape, diagnose populated placeholder envelopes while still rejecting
+painting, preserve stale-getter/fresh-push separation, and bound cached reads to
+two per ten-second sample. Production painting and world/lease gates are unchanged.
+Fresh 2.10.142 native logs confirm matching visible plates and populated marker
+payloads on both providers, but unready/test envelopes still prevent painting.
+
+**2.10.143 correlated-source regression coverage:** retain the strict
+`dataReady=true` / `isTest=false` generic source and test the separate cosmetic
+native-HUD-correlated source through its real subscription and paint lifecycle.
+Add or extend pure Haxe tests and compiled scenarios for:
+
+- Genuine post-bind events from the host-domain manager; matching event/provider/
+  canonical cache envelope and payload identity; explicit `false`/`true` anomaly
+  flags. Fallback sources, snapshots, missing/throwing flags, divergent objects
+  and diagnostic probes cannot authorize this source.
+- Complete bounded scalar copies with unique finite numeric uint IDs (excluding
+  the unassigned `4294967295` sentinel; numeric `0` remains valid) and
+  nonempty normalized names. Reject duplicate IDs and malformed rows rather than
+  partially accepting a snapshot. Preserve current normalization and privacy;
+  only owned envelope identity may be retained, with no row/payload/event
+  references retained as marker records.
+- Current visible native entity/name matches through sealed provider/event
+  accessors, native Vector collections and the full TextField/ancestor visibility
+  chain, including `NamePlateNameGroup_mc`. Recheck nonlocal, nonhostile and
+  not-wanted eligibility each paint; reject recycled and stale labels.
+- Host rebinds, stale callbacks, unload, current private presence context and
+  reset generation, including leaving and returning to the same context. Test
+  push-only correlated source expiry at 29,999 and 30,000 ms independently of
+  the private presence lease. A strict generic first-bind snapshot may establish
+  initial bounded time; later getters, snapshots, probes and frames never renew
+  source age or lease. Terminal HUD auth/link failures retire colors immediately.
+- Packaged bridge 0.2.11 stable first-snapshot behavior: establish cosmetic
+  context before binding/taking the ready/non-test generic snapshot, then obtain
+  valid private presence without requiring another marker push. Verify initial
+  painting and bounded expiry, with no repeated getter renewal.
+- Native-style deferred redraw: a default-priority stage RENDER listener resets
+  the real TextField's native name/color after ENTER_FRAME; the production
+  priority `-10000` painter applies blue in the same render cycle afterward.
+  Verify native hostile/wanted colors, expiry/restoration, no `SetIsDirty` during
+  drawing, no ghost labels and removal of both stage hooks during teardown.
+
+Exercise the actual deferred-render lifecycle for **both xScal and ZFE**, rather
+than manually calling paint after a color change. Run all pure/source/package
+checks and the complete Playwright Ruffle suite in the existing CI coverage before
+packaging or local installation. The distributed DEV bridge **0.2.10** ZIP remains
+unchanged, but bridge source **0.2.11** uses the shared painter and corrected
+first-bind ordering and successful-export-world fence. Pure export tests cover
+failed/deferred saves; actual packaged provider tests cover startup, reset and
+hops without authorizing an unpublished world. The local 2.10.143 gate completed:
+31 pure suites, nine source/package checks, empty diagnostics and **93/93** Ruffle
+cases (7.7 minutes). Both exact HUD archives are installed with verified backups
+and preserved settings. This new evidence is separate from the historical
+2.10.142 record and does not establish native acceptance. Existing required CI
+jobs discover these tests; no new hosted CI run was triggered.
+
+The 2.10.144 follow-up review reproduced and fixed immediate link-notice
+retirement and recovery after a failed subscription to the exact same manager.
+Both providers also pass sealed UInt upper-range matching and explicit rejection
+of conversation suffixes. Healthy bindings preserve source age; old pending
+replies stay rejected after relinking. Native acceptance remains pending.
+The full 144 rerun passes 93/93 cases. The artifact smoke now validates the SWF
+fetched by Ruffle against production bytes and the compiled source version, so
+current metadata cannot hide a stale archive. The initial full run passed 91 cases
+but rejected two hardcoded preceding-version assertions; expected versions now
+come from the respective Haxe source constants, with strict semver/escaped build
+matching. Exact artifact equality, timing bounds and teardown assertions remain.
+The pure/source/compiler and backend/overlay/dashboard gates pass. Existing CI
+coverage discovers these regressions; hosted CI was not triggered.
+
 Native GFx frame ordering, provider permission forwarding, real canonical-room
-discovery and performance remain pending in the
+discovery, performance and stationary source availability remain pending in the
 [bounded in-game acceptance matrix](blue-nameplates-2026-10-06.md).
+Existing native captures include stationary push-count gaps longer than
+30 seconds. Measure them with the new source while both characters stand still.
+A gap of 30 seconds must expire the cosmetic source; blue-name disappearance is a known
+availability risk to evaluate, never a reason to renew freshness from polling.
+The [2026-10-07 review](blue-nameplates-2026-10-07-review.md) grades the evidence
+and documents the source contract. Native acceptance and publication are pending.
 
 ## Channel navigation and sends — candidate 2.10.137
 
@@ -809,8 +1009,9 @@ remain throttled. These are deterministic deadline tests, not a real-time native
 
 The same scenario rejects unlinked controls and ZFE without async-control capability,
 requires missing confirmations to expire at 60 seconds, and requires expired roster
-observations to send LEAVE even during typing. Pure `test-command.hxml` covers 29,999/30,000
-and 9,999/10,000 millisecond scheduling boundaries and unsafe transports. Existing world-hop,
+observations to send LEAVE even during typing. From 2.10.145, pure `test-command.hxml`
+covers the 9,999/10,000 millisecond scheduling boundary for both confirmed and
+unconfirmed rooms, timer/reply deadline headroom, and unsafe transports. Existing world-hop,
 stale-confirmation, roster and packaged-bridge suites remain required.
 
 Native acceptance: stay in the same populated world with fresh roster observations, keep

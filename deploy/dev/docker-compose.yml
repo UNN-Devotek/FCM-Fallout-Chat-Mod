@@ -127,6 +127,7 @@ services:
         # use the explicit target flag so the hosted Dev buttons are included.
         VITE_DEV_PERSONAS: "true"
     restart: unless-stopped
+    stop_grace_period: 180s
     depends_on:
       postgres-dev:
         condition: service_healthy
@@ -141,6 +142,9 @@ services:
       # mount these routes.
       ENABLE_DEV_LOGIN: "true"
       PORT: 7676
+      # Dedicated durable control state survives backend replacement.
+      FCM_RUNTIME_CONTROL_DIR: /app/runtime-control
+      FCM_DRAIN_TIMEOUT_MS: 120000
 
       # --- Data stores (all internal on fcm-dev-network) ---
       DB_HOST: postgres-dev
@@ -258,6 +262,7 @@ services:
 
     volumes:
       - releases_dev_downloads:/app/downloads
+      - runtime_dev_control:/app/runtime-control
     security_opt: ["no-new-privileges:true"]
     cap_drop:
       - ALL
@@ -307,6 +312,7 @@ volumes:
   redis_dev_data:
   minio_dev_data:
   releases_dev_downloads:
+  runtime_dev_control:
 
 # Private, project-local network. NOT external, NOT dokploy-network. Dev
 # containers therefore have no route to prod containers (membership is not

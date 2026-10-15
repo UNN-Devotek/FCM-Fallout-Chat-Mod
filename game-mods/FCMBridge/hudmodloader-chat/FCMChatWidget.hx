@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.138"; // shared cosmetic presence and blue in-world FCM names
+    static inline var VERSION:String  = "2.10.150"; // retain already admitted visible plates under fresh private presence
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -234,7 +234,7 @@ class FCMChatWidget extends MovieClip {
     // the next authenticated roster/world bind confirms the new room.
     static inline var HISTORY_RESYNC_PREFIX:String = "FCMCTL/1/RESYNC";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
-    static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
+    static inline var ROSTER_SEND_MS:Float  = 10000;   // renew before the 30s cosmetic evidence deadline
     // Server controls use the synchronous native RPC surface. Do not retry a rejected or
     // timed-out control on every 5s world tick; older ZFE builds can block the HUD for the
     // full socket timeout while the relay is unavailable or the account is still unlinked.
@@ -366,6 +366,7 @@ class FCMChatWidget extends MovieClip {
     var _serverSession:FcmServerSession = new FcmServerSession();
     var _nameplatePresence:FcmNameplates;
     var _nameplatePainter:FcmNameplatePainter;
+    var _lastNameplateDiagnosticAt:Float = -1e12;
     var _serverAtMainMenu:Bool = false;
     var _serverSessionError:String = "";
     var _lastRoomDiagnosticBody:String = "";
@@ -3576,6 +3577,7 @@ class FCMChatWidget extends MovieClip {
         else if (code != null && code.length > 0) text += ": " + code;
         setLogText(FcmConfig.htmlEscape(text));
         if (code == "auth_token_invalid" || code == "auth_token_revoked" || code == "user_banned" || code == "user_kicked") {
+            retireNameplateEvidence();
             _connected = false;
             stopPollTimer();
             scheduleConnectRetry();
@@ -3962,6 +3964,7 @@ class FCMChatWidget extends MovieClip {
                         // their own codes below, so this no longer fires for filtered messages).
                         // A denied send confirms we're NOT linked → drive the persistent gate.
                         _needsLink = true;
+                        retireNameplateEvidence();
                         setLogText(linkHint());
                     case "message_blocked":
                         setLogText("Message blocked by the chat filter.");
@@ -4530,7 +4533,7 @@ class FCMChatWidget extends MovieClip {
                 && authDecision == FcmAuthFlow.AUTHENTICATED;
             _authState = authDecision == FcmAuthFlow.AUTHENTICATED
                 ? "authenticated" : "limited";
-            if (_authState != "authenticated") _linkedUserId = "";
+            if (_authState != "authenticated") { _linkedUserId = ""; retireNameplateEvidence(); }
             _canModerate = extractJsonBool(state, "canDeleteMessage")
                 || extractJsonBool(state, "canKickUser")
                 || extractJsonBool(state, "canMuteUser")
@@ -5398,6 +5401,7 @@ class FCMChatWidget extends MovieClip {
                 } else {
                     _pinnedSystemBody    = body;
                     _needsLink           = true;
+                    retireNameplateEvidence();
                     _linkNoticeAt        = flash.Lib.getTimer();
                     _linkRefreshPending  = false;
                     zfeLog("info", "system", "link notice received -> needsLink");
@@ -5521,6 +5525,7 @@ class FCMChatWidget extends MovieClip {
             switch (code) {
                 case "permission_denied":
                     _needsLink = true;
+                    retireNameplateEvidence();
                     setLogText(linkHint());
                 case "message_blocked": setLogText("Message blocked by the chat filter.");
                 case "slash_ignored": setLogText("Slash commands work in the dashboard, not in-game.");
@@ -5947,7 +5952,7 @@ class FCMChatWidget extends MovieClip {
         var changed:Bool = (_serverSessionReady != ready);
         _serverSessionReady = ready;
         _serverSessionError = ready ? "" : ((error == null) ? "" : error);
-        if (!ready) { _nameplatePresence.reset(); _nameplatePainter.clear(); }
+        if (!ready) { _nameplatePresence.reset(); _nameplatePainter.clear("room"); }
         if (!ready) stopServerHistoryDrain();
         if (!ready && _chanIdx == 5) _chanIdx = 0;
         if (changed) {
@@ -5971,25 +5976,84 @@ class FCMChatWidget extends MovieClip {
         _worldPollPhase = "timer";
         try {
             checkWorldId();
+            _worldPollPhase = "nameplates";
             updateNameplates();
         } catch (e:Dynamic) {
-            zfeLog("warn", "world", "isolated timer exception phase=" + _worldPollPhase
-                + " error=" + clip200(Std.string(e)));
+            try { logWorldPollFailure(e); }
+            catch (_:Dynamic) {
+                zfeLog("warn", "world", "isolated timer exception phase=" + _worldPollPhase
+                    + " requestPhase=" + (_nameplatePresence == null ? "missing" : _nameplatePresence.requestPhase)
+                    + " errorID=unavailable missingClass=not-reported");
+            }
         }
         _worldPollPhase = "idle";
     }
+    function logWorldPollFailure(error:Dynamic):Void {
+        var code = "unavailable", missing = "not-reported";
+        try {
+            code = FcmRuntimeError.errorCode(error);
+            var identifier = FcmRuntimeError.missingClass(error);
+            if (identifier != "" && identifier != "not reported") missing = identifier;
+        } catch (_:Dynamic) {}
+        zfeLog("warn", "world", "isolated timer exception phase=" + _worldPollPhase
+            + " requestPhase=" + (_nameplatePresence == null ? "missing" : _nameplatePresence.requestPhase)
+            + " errorID=" + code + " missingClass=" + missing);
+    }
+    /** Terminal link/auth changes must retire colors before the next world timer. */
+    function retireNameplateEvidence():Void {
+        if (_nameplatePresence != null) _nameplatePresence.reset();
+        if (_nameplatePainter != null) _nameplatePainter.clear("auth");
+    }
     function updateNameplates():Void {
         if (_disposed) return;
+        logNameplateDiagnostic();
         _nameplatePainter.enabled = _cfg.blueNameplates;
         if (!_cfg.blueNameplates || !_serverSessionReady || !_inWorld || _serverAtMainMenu
             || !_connected || _needsLink || _authState != "authenticated" || _api == null
             || !_api.supportsNonBlockingControl() || !_api.supportsNonBlockingSend()) {
-            _nameplatePresence.reset(); _nameplatePainter.clear(); return;
+            _nameplatePresence.reset(); _nameplatePainter.clear("gated"); return;
         }
-        _nameplatePainter.bind(_bsui);
         if (!_nameplatePainter.hasSurface()) return;
-        var body = _nameplatePresence.request(flash.Lib.getTimer(), _serverSession.requestId);
+        _worldPollPhase = "nameplates-clock";
+        var now:Float = flash.Lib.getTimer();
+        _worldPollPhase = "nameplates-session";
+        var nativeRequestId:String = _serverSession.requestId;
+        _worldPollPhase = "nameplates-request";
+        var body = _nameplatePresence.request(now, nativeRequestId);
+        // Establish the confirmed context/reset epoch before binding its first snapshot.
+        _worldPollPhase = "nameplates-bind";
+        _nameplatePainter.bind(_bsui);
+        _worldPollPhase = "nameplates-send";
         if (body.length > 0) _api.call("chat.v1.sendMessage", haxe.Json.stringify({channel:"server", targetUserId:"", body:body}));
+    }
+
+    /** Read-only request gate diagnosis. Values are fixed enums, never identity evidence. */
+    function nameplateDiagnosticGate():String {
+        if (_cfg == null) return "configuration";
+        if (!_cfg.blueNameplates) return "disabled";
+        if (!_connected || _api == null) return "connection";
+        if (_needsLink || _authState != "authenticated") return "authentication";
+        if (!_inWorld || _serverAtMainMenu) return "world";
+        if (!_serverSessionReady) return "room";
+        if (!_api.supportsNonBlockingControl() || !_api.supportsNonBlockingSend()) return "capability";
+        if (!_nameplatePainter.hasSurface()) return "surface";
+        return "active";
+    }
+
+    /** One fixed/count-only record per ten seconds; diagnostics cannot change membership or painting. */
+    function logNameplateDiagnostic():Void {
+        if (_disposed || _api == null) return;
+        var now = flash.Lib.getTimer();
+        if (now - _lastNameplateDiagnosticAt < 10000) return;
+        _lastNameplateDiagnosticAt = now;
+        try {
+            zfeLog("info", "nameplates", "gate=" + nameplateDiagnosticGate()
+                + " " + _nameplatePresence.diagnostic(now)
+                + " frames=" + _nameplatePainter.automaticFrames
+                + " painter=" + _nameplatePainter.diagnostic
+                + " source=" + _nameplatePainter.sourceDiagnostic()
+                + " rosterManager=" + _nameplatePainter.isBoundTo(_rosterManager));
+        } catch (_:Dynamic) {} // A diagnostic failure must never interrupt the normal control path.
     }
 
     /**

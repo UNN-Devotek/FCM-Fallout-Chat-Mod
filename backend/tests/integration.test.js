@@ -14,6 +14,7 @@ jest.mock('../src/config/database', () => ({
 }));
 
 jest.mock('../src/config/redis', () => ({
+  client: {},
   getRedisClient: jest.fn().mockResolvedValue({
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),

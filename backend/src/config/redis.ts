@@ -1,6 +1,7 @@
 import { createClient, RedisClientType } from 'redis';
 import env from './environment';
 import logger from './logger';
+import { runtime } from '../runtime';
 
 // Build client options once. Prefer REDIS_URL (e.g. redis://:pass@host:6379)
 // when set; otherwise host/port + optional password. Redis now requires a
@@ -33,20 +34,30 @@ client.on('reconnecting', () => logger.warn('Redis reconnecting'));
 // a separate instance exclusively for subscriptions.
 const subscriberClient = createClient(redisOptions());
 
+// Each subscription delivery is a producer boundary rather than a descendant
+// of the long-finished startup/connect request that created the Redis socket.
+const subscribe = subscriberClient.subscribe.bind(subscriberClient);
+subscriberClient.subscribe = ((channels: string | string[], listener: (message: string | Buffer, channel: string | Buffer) => unknown,
+  bufferMode?: boolean) => subscribe(channels, (message: string | Buffer, channel: string | Buffer) => {
+    if (runtime.isFrozen()) return;
+    void runtime.required(`pubsub:${channel}`, async () => await listener(message, channel), undefined, true)
+      .catch(() => {});
+  }, bufferMode)) as typeof subscriberClient.subscribe;
+
 subscriberClient.on('error', (err: Error) => logger.error({ err }, 'Redis subscriber client error'));
 subscriberClient.on('connect', () => logger.info('Redis subscriber connected'));
 subscriberClient.on('reconnecting', () => logger.warn('Redis subscriber reconnecting'));
 
 async function getRedisClient(): Promise<typeof client> {
   if (!client.isOpen) {
-    await client.connect();
+    await runtime.initializeSdkLifetime(() => client.connect());
   }
   return client;
 }
 
 async function getSubscriberClient(): Promise<typeof subscriberClient> {
   if (!subscriberClient.isOpen) {
-    await subscriberClient.connect();
+    await runtime.initializeSdkLifetime(() => subscriberClient.connect());
   }
   return subscriberClient;
 }

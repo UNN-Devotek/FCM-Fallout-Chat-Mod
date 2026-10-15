@@ -5,13 +5,108 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
-**Blue-name testing candidate:** HUD 2.10.138 and Server Bridge 0.2.10 share a
-renderer for existing overhead names, backed by fresh private FCM presence.
-See [blue nameplates](blue-nameplates.md) and the
-[native test matrix](../../testing/blue-nameplates-2026-10-06.md). This requires a
-matching backend; public release and native acceptance are pending.
+**Blue-name candidate 2.10.150:** all required local gates pass, including 93/93
+Ruffle cases. Installed archive/backup hashes and settings/login verify on both
+machines; native stationary acceptance remains pending. The preceding
+149 receives private replies on both providers without 1014 or paint errors but
+still intermittently drops blue. 150 closes source acquisition at its original
+30-second deadline while continuing an already admitted exact visible association
+under current eligibility and fresh private presence. Hidden/recycled/ineligible
+or withdrawn associations retire and cannot be reacquired from expired evidence.
+Source timestamps, private leases and room/world authority are unchanged. See
+[the acquisition/continuation policy](blue-nameplates.md).
 
-**Current local typing setup (2026-09-26):** The Steam/Proton game has xScal
+**Previous diagnostic candidate 2.10.149:** the shared renderer retains strict
+ready/non-test generic markers and adds a separate cosmetic source for native
+HUD-correlated pushes. The source requires host-domain binding, matching current
+event/provider/cache ownership, explicit unready/test flags, validated scalar
+rows, current visible native ID/name and eligibility, private presence context
+and reset generation, and a push-only correlated source age below 30 seconds. A
+ready/non-test first-bind snapshot can establish an initial bounded generic source
+time; getter/frame/probe reads never renew it. Numeric entity ID `0` is valid;
+the unassigned uint sentinel is excluded. Only owned envelope identity is retained,
+with scalar marker copies and no row/payload/event retention. It paints
+after native redraw at stage RENDER priority `-10000`, checks the full name-field
+visibility chain and removes the invalid private CharacterInfoData probe. It
+cannot change rooms, authentication, leases, provider flags or watches. Terminal
+HUD auth/link failures retire presence and blue colors immediately. Stationary
+push gaps can expire cosmetic names and require an in-game availability check.
+See [blue nameplates](blue-nameplates.md), the
+[evidence review](../../testing/blue-nameplates-2026-10-07-review.md) and
+[native test matrix](../../testing/blue-nameplates-2026-10-06.md). Candidate
+2.10.145 passed all required local gates and was installed on both machines;
+fresh native logs confirm repeated restore-phase error 1006 and lease gaps.
+Candidate 2.10.146 passed all required local gates and was installed on both machines.
+The 2.10.147 follow-up retains up to four unexpired requests so independent timer
+ordering cannot discard a valid prior reply. Newer accepted replies fence older
+ones, and every reply keeps its own original TTL. All required local gates pass,
+including 93/93 Ruffle cases, and 2.10.147 is installed on both machines with
+verified archives, backups, settings and MSI login. Fresh native 147 acceptance
+fails with repeated 1014 and zero requests on both clients. Candidate 148 removes
+new local Array coercions using indexed pending pruning and adds fixed phases;
+all required local gates pass, including 93/93 Ruffle cases (8.4 minutes), and its
+DEV ZIP verifies. Fresh 148 native acceptance fails at `nameplates-request` with
+zero requests. The 149 experiment separates clock/session reads and the pruning,
+queueing and encoding methods. Fixed call/entered phases and bounded error/class
+diagnostics locate remaining failures without changing leases or source age.
+All required local gates pass, including 93/93 Ruffle cases; fresh native acceptance is required.
+It retains `indexOf`/`splice` for compatible
+paint cleanup and three-second minimum private-request spacing, leaving headroom
+below the five-second HUD timer. It retains transient
+paint recovery, persistent numeric errors and fixed clear reasons, and ten-second
+HUD roster renewal before the unchanged backend evidence deadline. Source age,
+private lease bounds and authentication gates remain unchanged. See the
+[recovery investigation](../../testing/blue-nameplates-2026-10-12-recovery.md).
+Bridge source **0.2.18** shares the
+painter, establishes cosmetic context before first binding/snapshot and requires
+the current successfully saved export world. Its required local regression rerun passes;
+the distributed DEV **0.2.10** ZIP is unchanged.
+
+**Current DEV installs (2026-10-13):** Both machines use HUD 2.10.150, with
+matching tested-archive hashes and verified prior-archive backups. Desktop xScal
+0.2.20 retains Home/Delete; MSI ZFE 0.21.1 retains Period/Delete, its recreated
+native login cache and `D:\SteamLibrary\steamapps\common\Fallout76` install.
+All six desktop/seven laptop provider/config/profile files are unchanged.
+Both game processes were independently confirmed closed before replacement.
+147 and fresh 148 native acceptance failed with zero requests and error 1014.
+The preceding 149 requests and leases progress on both providers without paint
+errors, but its native stability fails with intermittent colors. 150 native
+stability and publication remain pending.
+
+**Previous DEV installs (2026-10-07):** Desktop xScal 0.2.20 and laptop ZFE
+0.21.1 use HUD 2.10.144, with Home/Delete and Period/Delete respectively.
+The incompatible laptop ZFE 0.15.0 was replaced with the official 0.21.1 matching
+Steam runtime 1.7.26.22. With both games independently confirmed closed, the
+2.10.144 candidate replaced only the HUD archive after 31 pure suites, nine
+source/package checks, empty compiler diagnostics and a complete 93/93 Ruffle
+pass. Both installed hashes, prior-archive backups and all six desktop/seven
+laptop preserved-file hashes are verified. Historical 2.10.142 logs show eligible markers
+matching a visible native plate and identical sampled event/provider/getter
+payloads on both clients, but `dataReady=false isTest=true` still blocks painting.
+Host-domain selection found the same supplied manager. The old CharacterInfoData
+comparison is invalid because the active HUD field is private. These observations
+confirm the earlier rejection, not its native registration cause. Fresh 2.10.144
+native color acceptance and public publication remain pending. See the
+[installed-machine evidence](../../testing/blue-nameplates-2026-10-06.md#installed-test-machines--2026-10-06).
+
+The 2.10.144 follow-up review reproduced and fixed immediate link-notice
+retirement and recovery after a failed subscription to the exact same manager.
+Both providers also pass sealed UInt upper-range matching and explicit rejection
+of conversation suffixes. Healthy bindings preserve source age; old pending
+replies stay rejected after relinking. Native acceptance remains pending.
+
+**MSI complete reinstall (2026-10-12):** Steam now uses
+`D:\SteamLibrary\steamapps\common\Fallout76` with the same 1.7.26.22 runtime.
+The complete HUD 2.10.144 / ZFE 0.21.1 / HUDModLoader v70 setup and saved
+configuration were restored from verified sources with the game closed. All
+seven installed files match; Period/Delete, DEV endpoints and the profile
+archive list are preserved. The old native login cache is unavailable, so the
+game required a fresh DEV link, which succeeded. Fresh 2.10.144 logs were captured;
+blue-name stability remains unaccepted. The later 2.10.147 install preserves
+the recreated native authentication cache;
+see the [reinstallation record](../../testing/blue-nameplates-2026-10-06.md#msi-complete-zfe-reinstall--2026-10-12).
+
+**Historical local typing setup (2026-09-26):** The Steam/Proton game had xScal
 0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.134 BA2.
 `Data/FCMChat.ini` sets `xscalInputMode=shared` for
 the SharedHUDTools text editor and points its link prompt at hosted Dev; root
@@ -329,8 +424,9 @@ BSUIDataManager-to-`SERVER-READY` observation remains bounded in-game acceptance
 drive and inspect that private state.
 
 The current unreleased typing-renewal candidate keeps automatic membership controls running
-while the chat editor is open. Confirmed rooms renew at the existing 30-second interval;
-unconfirmed attempts retain the 10-second retry interval. Editor ownership no longer suppresses
+while the chat editor is open. From 2.10.145, confirmed rooms renew every ten seconds
+to leave headroom before the 30-second cosmetic evidence deadline; unconfirmed
+attempts retain the ten-second retry interval. Editor ownership no longer suppresses
 these capability-gated nonblocking calls. Authentication, fresh roster evidence, world-generation
 checks and the 60-second relay-confirmation timeout remain unchanged. A native send receipt
 cannot renew the confirmation, and unchanged cached observations cannot become fresh merely

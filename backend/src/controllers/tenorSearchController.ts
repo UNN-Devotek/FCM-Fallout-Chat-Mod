@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 import { Request, Response, NextFunction } from 'express';
 import env from '../config/environment';
 import logger from '../config/logger';
@@ -120,6 +121,7 @@ async function tenorSearch(req: Request, res: Response, next: NextFunction): Pro
     const tenorRes = await fetch(url, { signal: AbortSignal.timeout(8000) });
 
     if (!tenorRes.ok) {
+      await discardRuntimeResponse(tenorRes);
       logger.warn({ status: tenorRes.status }, 'Tenor API returned non-200');
       res.status(502).json({ data: [], error: 'tenor_upstream_error', message: `Tenor returned ${tenorRes.status}` });
       return;

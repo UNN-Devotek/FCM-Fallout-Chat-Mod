@@ -55,6 +55,15 @@ test.each(kinds.flatMap(viewer => kinds.map(peer => [viewer, peer])))('%s sees %
   rooms.set('peer', 'r:other');
   expect((await nameplateReply(request, { userId:'viewer', linkedUserId:'viewer-account' })).names).toEqual([]);
 });
+test('separate HUD identities linked to one FCM account can see each other', async () => {
+  prisma.hudPairingToken.findFirst.mockResolvedValue({ linkedUserId:'shared-account' });
+  const request = await actor('viewer','hud:xscal','Viewer',['Viewer','Peer']);
+  await actor('peer','hud:zfe','Peer',['Viewer']);
+  const identity = { userId:'viewer', linkedUserId:'shared-account' };
+  expect((await nameplateReply(request,identity)).names).toEqual(['peer']);
+  rosters.get('viewer').seen = ['Viewer','UnrelatedPlayer'];
+  expect((await nameplateReply(request,identity)).names).toEqual([]);
+});
 test('private control and replica replies have strict bounded schemas', () => {
   const request = { mode:'bridge',requestId:'a',sessionId:'b',worldGeneration:'c' };
   expect(parseNameplateRequest(NAMEPLATE_CONTROL + JSON.stringify(request))).toEqual(request);

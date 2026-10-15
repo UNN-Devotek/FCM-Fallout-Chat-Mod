@@ -13,6 +13,7 @@ import logger from '../config/logger';
 import env from '../config/environment';
 import { runIncrementalSync, WIKI_INGEST_LOCK_HELD_MESSAGE } from '../services/wikiIngestionService';
 import { makeJobTracker } from './jobTracker';
+import { producerInterval } from '../runtime';
 
 export function startWikiSyncSchedule(): void {
   const hours = env.WIKI_SYNC_INTERVAL_HOURS;
@@ -26,7 +27,7 @@ export function startWikiSyncSchedule(): void {
 
   const tracker = makeJobTracker('[wikiSyncSchedule]');
   let running = false;
-  setInterval(() => {
+  producerInterval('wiki-sync', () => {
     // Overlap guard: skip if the previous tick is still in flight.
     if (running) {
       logger.warn('[wikiSyncSchedule] previous tick still running — skipping this tick');
@@ -35,7 +36,7 @@ export function startWikiSyncSchedule(): void {
     running = true;
     // Tracker swallows the rejection (counting it for escalation) so this
     // promise always resolves; .finally clears the running flag.
-    void tracker(async () => {
+    return tracker(async () => {
       logger.info('[wikiSyncSchedule] incremental sync tick starting');
       try {
         const result = await runIncrementalSync();

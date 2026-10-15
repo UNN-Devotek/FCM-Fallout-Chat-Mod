@@ -5,9 +5,10 @@
  */
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand, CreateBucketCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import env from '../config/environment';
 import logger from '../config/logger';
+import { runRequiredMutation, isConfirmedObjectRefusal, isConfirmedBucketOwnership } from '../lib/requiredEffects';
 
 const BUCKET = 'ban-evidence';
 
@@ -16,17 +17,24 @@ const s3 = new S3Client({
   region: 'us-east-1',
   credentials: { accessKeyId: env.MINIO_ROOT_USER, secretAccessKey: env.MINIO_ROOT_PASSWORD },
   forcePathStyle: true,
+  expectContinueHeader: false,
 });
 
 let bucketReady: Promise<void> | null = null;
-async function ensureBucket(): Promise<void> {
+async function ensureBucket(required = false): Promise<void> {
   if (bucketReady) return bucketReady;
   bucketReady = (async () => {
     try {
       await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
     } catch {
-      await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
-      logger.info({ bucket: BUCKET }, 'Created ban-evidence bucket');
+      const create = async () => {
+        try { return await s3.send(new CreateBucketCommand({ Bucket: BUCKET })); }
+        catch (error) { if (isConfirmedBucketOwnership(error)) return null; throw error; }
+      };
+      if (required) await runRequiredMutation('object', 'f9ac55fe8f9c155b2c548a21', { stage: 'evidence-bucket-create-unconfirmed' }, create,
+        isConfirmedObjectRefusal, undefined, result => result === null);
+      else await create();
+      logger.info({ bucket: BUCKET }, 'Ban-evidence bucket available');
     }
   })();
   return bucketReady;
@@ -74,13 +82,15 @@ export async function uploadEvidence(buf: Buffer, _clientMime: string): Promise<
   if (!actualMime) {
     throw new Error('Uploaded file is not a valid PNG/JPEG/GIF/WebP image');
   }
-  await ensureBucket();
+  await ensureBucket(true);
   const ext = actualMime === 'image/png' ? 'png'
             : actualMime === 'image/gif' ? 'gif'
             : actualMime === 'image/webp' ? 'webp'
             : 'jpg';
   const objectKey = `${randomUUID()}.${ext}`;
-  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: objectKey, Body: buf, ContentType: actualMime }));
+  await runRequiredMutation('object', 'b8f5020ed902a981abbe2df1', { objectKey,
+    sha256: createHash('sha256').update(buf).digest('hex'), stage: 'ban-evidence-put-unconfirmed' },
+    () => s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: objectKey, Body: buf, ContentType: actualMime })), isConfirmedObjectRefusal);
   return { objectKey, mime: actualMime, sizeBytes: buf.length };
 }
 
@@ -96,7 +106,8 @@ export async function downloadEvidence(objectKey: string): Promise<{ stream: Rea
 }
 
 export async function deleteEvidence(objectKey: string): Promise<void> {
-  await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: objectKey })).catch(() => {});
+  await runRequiredMutation('object', 'a80de8af6b97bc4923bf2019', { objectKey, stage: 'ban-evidence-delete-unconfirmed' },
+    () => s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: objectKey })), isConfirmedObjectRefusal).catch(() => {});
 }
 
 export default { uploadEvidence, downloadEvidence, deleteEvidence };

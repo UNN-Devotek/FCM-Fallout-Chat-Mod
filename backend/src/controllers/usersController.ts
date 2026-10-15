@@ -1,3 +1,5 @@
+import { resolveInternalActorId } from '../utils/resolveActorId';
+import { bindRequiredTransactionClient, createRequiredAudit, isPrismaAtomicRefusal, isPrismaNotFound, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
@@ -7,6 +9,7 @@ import { createError } from '../middleware/errorHandler';
 import { paramStr, paramsOf } from '../utils/reqParams';
 import env from '../config/environment';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 import { computeDiscriminator } from '../utils/discriminator';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { SHORT_ALPHA_BLACKLIST, LOOKS_LIKE_PROVIDER, LOOKS_LIKE_CAMELCASE_METHOD } from '../utils/nameBlacklist';
@@ -134,6 +137,7 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
  * Returns { data: { userId, token } }
  */
 async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'usersController:e90fe75064d6', async () => {
   const { username, installToken } = req.body;
 
   // ── Device-keypair auth gate ────────────────────────────────────────────────
@@ -192,11 +196,11 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
       const pk = (req.body as { publicKey?: unknown }).publicKey;
       if (typeof pk === 'string' && pk && typeof installToken === 'string' && installToken) {
         if (!isValidP256Spki(pk)) return next(createError(422, 'publicKey must be a P-256 SPKI DER (base64)'));
-        await prisma.device.upsert({
+        await runRequiredMutation('identity', 'd47366771627bf29c93ac5c0', { stage: 'primary-write-unconfirmed' }, () => prisma.device.upsert({
           where: { installToken },
           create: { installToken, publicKey: pk },
           update: { publicKey: pk, revokedAt: null, enrolledAt: new Date() },
-        });
+        }), isPrismaAtomicRefusal, undefined, undefined);
       }
     }
   }
@@ -228,10 +232,10 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     //  (a) The installToken already belongs to a linked row → allow (existing users).
     //  (b) discordId is supplied in the request body (legacy re-register right after OAuth) → allow.
     {
-      const existingRow = await prisma.user.findUnique({
+      const existingRow = await runRequiredLookup('identity', 'register:provider-discovery', () => prisma.user.findUnique({
         where: { installToken },
         select: { discordId: true, discordAuthedAt: true, steamId: true },
-      });
+      }));
       const incomingDiscordId = discordIdRaw && /^\d{15,22}$/.test(discordIdRaw) ? discordIdRaw : null;
       // Linked for this load = JUST completed OAuth (incoming discordId), a
       // server-linked Steam identity, OR an existing Discord link whose last auth is
@@ -267,10 +271,10 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     }
 
     // Check if another user already has this username
-    const existing = await prisma.user.findFirst({
+    const existing = await runRequiredLookup('identity', 'register:name-conflict-discovery', () => prisma.user.findFirst({
       where: { username, NOT: { installToken } },
       select: { id: true, discordId: true, discordUsername: true },
-    });
+    }));
     if (existing) {
       // Allow self-reclaim: same Discord user registering from a new install.
       // The link/callback transfers installToken but if it didn't complete, we
@@ -279,10 +283,10 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
       // Self-reclaim matches ONLY on discordId (the OAuth-anchored, server-verified
       // identity). Matching on discordUsername was an account-takeover vector —
       // Discord usernames are public and changeable; they are not an auth factor.
-      const requestingUser = await prisma.user.findUnique({
+      const requestingUser = await runRequiredLookup('identity', 'register:reclaim-requester', () => prisma.user.findUnique({
         where: { installToken },
         select: { discordId: true },
-      });
+      }));
       const isSelfReclaim =
         existing.discordId != null &&
         requestingUser?.discordId != null &&
@@ -303,13 +307,14 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
       // existing row (re-points ALL FK tables via mergeUserInto), then claim the
       // installToken. Sequential transaction so the unique install_token is never
       // doubly held.
-      const placeholder = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
-      await prisma.$transaction(async (tx) => {
+      const placeholder = await runRequiredLookup('identity', 'register:reclaim-placeholder', () => prisma.user.findUnique({ where: { installToken }, select: { id: true } }));
+      await runRequiredTransaction('identity', '7cc2396aef7c2eacd3f6ecca', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
         if (placeholder && placeholder.id !== existing.id) {
           await mergeUserInto(existing.id, placeholder.id, tx);
         }
-        await tx.user.update({ where: { id: existing.id }, data: { installToken } });
-      });
+        await runRequiredMutation('identity', '60389f6bc7e3f7fbb8f35ef5', { stage: 'primary-write-unconfirmed', rowId: existing.id }, () => tx.user.update({ where: { id: existing.id }, data: { installToken } }), isPrismaAtomicRefusal, tx, undefined);
+      }), { confirmedRollback: isPrismaAtomicRefusal });
     }
 
     // Decide what Discord fields to apply safely. Rules:
@@ -320,17 +325,17 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     //    established via the OAuth callback or impersonating another user.
     const safePatch: typeof discordPatch = { ...discordPatch };
     if (safePatch.discordId) {
-      const currentRow = await prisma.user.findUnique({
+      const currentRow = await runRequiredLookup('identity', 'register:linked-owner', () => prisma.user.findUnique({
         where: { installToken },
         select: { discordId: true },
-      });
+      }));
       if (currentRow?.discordId) {
         delete safePatch.discordId; // already linked via callback — never overwrite
       } else {
-        const conflict = await prisma.user.findFirst({
+        const conflict = await runRequiredLookup('identity', 'register:provider-conflict', () => prisma.user.findFirst({
           where: { discordId: safePatch.discordId, NOT: { installToken } },
           select: { id: true },
-        });
+        }));
         if (conflict) delete safePatch.discordId; // another row owns this id
       }
     }
@@ -387,10 +392,10 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     }
 
     if (typeof username === 'string' && (username.startsWith('pending-') || looksLikeProviderLeak || dbBlacklistHit)) {
-      const existingRow = await prisma.user.findUnique({
+      const existingRow = await runRequiredLookup('identity', 'register:stored-name-discovery', () => prisma.user.findUnique({
         where: { installToken },
         select: { username: true },
-      });
+      }));
       if (existingRow?.username && !isBadStoredUsername(existingRow.username)) {
         effectiveUsername = existingRow.username;
       } else if (looksLikeProviderLeak || dbBlacklistHit) {
@@ -452,13 +457,13 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     // Fetch the current row before upsert so we can detect a username rename
     // and record the old name in user_aliases.
-    const preUpsertRow = await prisma.user.findUnique({
+    const preUpsertRow = await runRequiredLookup('identity', 'register:alias-source', () => prisma.user.findUnique({
       where: { installToken },
       select: { username: true },
-    });
+    }));
 
     // Upsert user by install token.
-    const user = await prisma.user.upsert({
+    const user = await runRequiredMutation('identity', 'a909ce026063cb5b4004d743', { stage: 'primary-write-unconfirmed' }, () => prisma.user.upsert({
       where: { installToken },
       update: {
         username: effectiveUsername,
@@ -474,7 +479,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         ...safePatch,
       },
       select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true, steamId: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Record previous username in alias history when it changes to a new real name.
     // Only record if the old name was a real name (not a placeholder).
@@ -490,11 +495,11 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     ) {
       // Use raw query so the call compiles before `prisma generate` has been run
       // in the deployment pipeline (the Prisma client is regenerated at startup).
-      (prisma as any).$executeRaw`
+      runRequiredEffect('account:alias', { userId: user.id, stage: 'previous-name-history-write-unconfirmed' }, () => (prisma as any).$executeRaw`
         INSERT INTO user_aliases (user_id, alias)
         VALUES (${user.id}::uuid, ${preUpsertRow.username})
         ON CONFLICT (user_id, alias) DO NOTHING
-      `.catch(() => { /* non-fatal */ });
+      `).catch(() => { /* non-fatal */ });
     }
 
     if (Object.keys(safePatch).length > 0) {
@@ -591,13 +596,13 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     // Issue a new session token
     const token = uuidv4();
-    const redis = await getRedisClient();
-    await redis.set(`session:${token}`, user.id, { EX: SESSION_TTL_SECONDS });
+    const redis = await runRequiredLookup('session', 'register:session-client', () => getRedisClient());
+    await runRequiredMutation('session', '473188e809c7c597c4c82d73', { stage: 'primary-write-unconfirmed' }, () => redis.set(`session:${token}`, user.id, { EX: SESSION_TTL_SECONDS }), undefined, undefined, undefined);
 
-    // Persist session record to DB (best-effort, non-blocking)
-    prisma.session.create({
+    // Keep login non-blocking, while retaining any unconfirmed accepted write.
+    void runtime.required('session:persist', () => prisma.session.create({
       data: { token, userId: user.id, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000) },
-    }).catch((err: Error) => logger.warn({ err }, 'Failed to persist session to DB'));
+    }), { userId: user.id, source: 'register' }).catch((err: Error) => logger.warn({ err }, 'Failed to persist session to DB'));
 
     // Resolve admin/mod role (if any) for the overlay tray menu. Additive — older clients ignore it.
     let userRole: string | null = null;
@@ -644,20 +649,25 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/auth/session -- graceful logout, purge Redis session immediately
  */
 async function deleteSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('session', 'usersController:d4684be6f7da', async () => {
   try {
     const redis = await getRedisClient();
-    await redis.del(`session:${req.sessionToken}`);
-    await prisma.session.delete({ where: { token: req.sessionToken! } }).catch(() => {});
+    await runRequiredMutation('session', '7fc844585e71465b2be3b1a6', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${req.sessionToken}`), undefined, undefined, isRowCountNoChange);
+    await runRequiredEffect('auth:session-delete', { userId: req.user?.id, stage: 'session-row-delete-unconfirmed' }, () => prisma.session.delete({ where: { token: req.sessionToken! } }), isPrismaNotFound).catch(() => {});
     res.status(204).send();
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -786,18 +796,20 @@ async function getUserMessages(req: Request, res: Response, next: NextFunction):
  * POST /api/users/:id/mute -- moderator+
  */
 async function muteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'usersController:b4fece25a352', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { duration, reason } = req.body;
   const muteExpiresAt = new Date(Date.now() + duration * 60 * 1000);
 
   try {
-    await prisma.user.update({
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
+    await runRequiredMutation('identity', '9498707a4fb888f9cff53268', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isMuted: true, muteExpiresAt },
-    });
-    await prisma.auditLog.create({
+    }), isPrismaAtomicRefusal, undefined, undefined);
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'mute',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -808,6 +820,8 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -815,17 +829,19 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
  * Reverses a mute and grants 60-minute spam immunity window.
  */
 async function unmuteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'usersController:bb4eaa3bab81', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
-    await prisma.user.update({
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
+    await runRequiredMutation('identity', 'ce8b838f6799746efaa1aa36', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isMuted: false, muteExpiresAt: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Grant spam immunity so the user isn't immediately re-flagged
     await setSpamImmunity(paramStr(req, 'id'));
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'unmute',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -836,25 +852,29 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/users/:id/kick -- moderator+
  */
 async function kickUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('session', 'usersController:47c269e6cfe9', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Invalidate all active Redis sessions for this user
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
       where: { userId: paramStr(req, 'id'), expiresAt: { gt: new Date() } },
       select: { token: true },
     });
-    await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
-    await prisma.auditLog.create({
+    await Promise.all(sessions.map((s) => runRequiredMutation('session', 'd84a18de83e33f4e7e642bc3', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${s.token}`), undefined, undefined, isRowCountNoChange)));
+    await runRequiredMutation('session', '65ada479590ef0000959ac84', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'kick',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -864,30 +884,34 @@ async function kickUser(req: Request, res: Response, next: NextFunction): Promis
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/users/:id/ban -- admin+
  */
 async function banUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('session', 'usersController:294daaed5a91', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { reason } = req.body;
   try {
-    await prisma.user.update({
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
+    await runRequiredMutation('identity', '2cd3def01499b57e8d1b0fdc', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isBanned: true, banReason: reason },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Kick active sessions
-    const redis = await getRedisClient();
-    const sessions = await prisma.session.findMany({
+    const redis = await runRequiredLookup('session', 'ban:session-client', () => getRedisClient());
+    const sessions = await runRequiredLookup('session', 'ban:session-discovery', () => prisma.session.findMany({
       where: { userId: paramStr(req, 'id') },
       select: { token: true },
-    });
-    await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
-    await prisma.auditLog.create({
+    }));
+    await Promise.all(sessions.map((s) => runRequiredMutation('session', '03514fb80342242efb7f2e6d', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${s.token}`), undefined, undefined, isRowCountNoChange)));
+    await runRequiredMutation('session', '54c9c946fcbc862e23365c7f', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'ban',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -898,21 +922,25 @@ async function banUser(req: Request, res: Response, next: NextFunction): Promise
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/users/:id/ban -- owner+
  */
 async function unbanUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'usersController:d62826d17498', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
-    await prisma.user.update({
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
+    await runRequiredMutation('identity', '21d198fa263251e418ac6bb0', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
       where: { id: paramStr(req, 'id') },
       data: { isBanned: false, banReason: null },
-    });
-    await prisma.auditLog.create({
+    }), isPrismaAtomicRefusal, undefined, undefined);
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'unban',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -922,6 +950,8 @@ async function unbanUser(req: Request, res: Response, next: NextFunction): Promi
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -929,27 +959,33 @@ async function unbanUser(req: Request, res: Response, next: NextFunction): Promi
  * Clears PII in users table; message content is preserved for context.
  */
 async function wipeUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('session', 'usersController:bb2b8623a589', async () => {
   if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     // Use raw query for gen_random_uuid() in the update
-    await prisma.$executeRaw`
+    await runRequiredMutation('identity', 'ad07403b99b54aeee4d82c9d', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE users
       SET username = 'Anonymized User', steam_id = NULL, install_token = gen_random_uuid()::text,
           is_banned = TRUE, ban_reason = 'Account wiped by admin', updated_at = NOW()
-      WHERE id = ${paramStr(req, 'id')}::uuid`;
+      WHERE id = ${paramStr(req, 'id')}::uuid`, undefined, undefined, isRowCountNoChange);
 
     // Purge all active Redis sessions immediately so wiped user cannot continue chatting
-    const redis = await getRedisClient();
-    const sessions = await prisma.session.findMany({
+    const redis = await runRequiredMutation('session', 'wipe-user-session-client-discovery', {
+      userId: paramStr(req, 'id'), stage: 'session-cleanup-client-discovery-unconfirmed',
+    }, () => getRedisClient(), undefined, undefined, () => true);
+    const sessions = await runRequiredMutation('session', 'wipe-user-session-row-discovery', {
+      userId: paramStr(req, 'id'), stage: 'session-cleanup-row-discovery-unconfirmed',
+    }, () => prisma.session.findMany({
       where: { userId: paramStr(req, 'id') },
       select: { token: true },
-    });
-    await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
+    }), undefined, undefined, () => true);
+    await Promise.all(sessions.map((s) => runRequiredMutation('session', '18f43270cf05ae569346a14e', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${s.token}`), undefined, undefined, isRowCountNoChange)));
+    await runRequiredMutation('session', 'e88dc7b4a6d04c5519805208', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || null,
+        actorId,
         action: 'wipe',
         targetId: paramStr(req, 'id'),
         targetType: 'user',
@@ -960,45 +996,59 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('session', 'usersController:b51f6dce2589', async () => {
   try {
-    const { id } = paramsOf(req);
-    if (!validateUuid(id)) { next(createError(400, 'Invalid user ID')); return; }
+    const { id: requestedId } = paramsOf(req);
+    if (!validateUuid(requestedId)) { next(createError(400, 'Invalid user ID')); return; }
+    // SQL UUIDs, Redis ownership and self-audit must share one semantic identity.
+    const id = requestedId.toLowerCase();
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
 
     // Delete all related data first (messages, reports, sessions)
-    await prisma.message.deleteMany({ where: { userId: id } });
-    await prisma.report.deleteMany({ where: { OR: [{ reporterUserId: id }, { targetUserId: id }] } });
-    await prisma.session.deleteMany({ where: { userId: id } });
+    await runRequiredMutation('identity', 'e20b8c4fe5e9b363cc80a71c', { stage: 'primary-write-unconfirmed', userId: id }, () => prisma.message.deleteMany({ where: { userId: id } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    await runRequiredMutation('identity', '63463811d8035de0984f164d', { stage: 'primary-write-unconfirmed' }, () => prisma.report.deleteMany({ where: { OR: [{ reporterUserId: id }, { targetUserId: id }] } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    await runRequiredMutation('session', '9e8e9eabbb4799296b684aef', { stage: 'primary-write-unconfirmed', userId: id }, () => prisma.session.deleteMany({ where: { userId: id } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
     // Purge Redis sessions
-    const redis = await getRedisClient();
-    const keys = await redis.keys('session:*');
+    const redis = await runRequiredMutation('session', 'delete-user-session-client-discovery', {
+      userId: id, stage: 'session-cleanup-client-discovery-unconfirmed',
+    }, () => getRedisClient(), undefined, undefined, () => true);
+    const keys = await runRequiredMutation('session', 'delete-user-session-key-discovery', {
+      userId: id, stage: 'session-cleanup-scan-unconfirmed',
+    }, () => redis.keys('session:*'), undefined, undefined, () => true);
     for (const key of keys) {
-      const val = await redis.get(key);
-      if (val === id) await redis.del(key);
+      const val = await runRequiredMutation('session', 'delete-user-session-owner-discovery', {
+        userId: id, stage: 'session-cleanup-owner-discovery-unconfirmed',
+      }, () => redis.get(key), undefined, undefined, () => true);
+      if (val === id) await runRequiredMutation('session', '5c184b46226da1b7dea76b81', { stage: 'primary-write-unconfirmed' }, () => redis.del(key), undefined, undefined, isRowCountNoChange);
     }
 
-    const deleted = await prisma.user.delete({ where: { id } }).catch(() => null);
+    const deleted = await runRequiredEffect('account:delete', { userId: id, stage: 'account-delete-after-cleanup-unconfirmed' }, () => prisma.user.delete({ where: { id } }), isPrismaNotFound).catch(() => null);
     if (!deleted) { next(createError(404, 'User not found')); return; }
 
     // Audit log
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: req.adminUser?.id || 'api-key',
+        actorId: actorId === id ? null : actorId,
         action: 'user_deleted',
         targetId: id,
         targetType: 'user',
-        metadata: { username: deleted.username },
+        metadata: { username: deleted.username, ...(actorId === id ? { deletedActorId: actorId } : {}) },
       },
     }).catch(() => {});
 
     logger.info({ userId: id, username: deleted.username, actor: req.adminUser?.username }, 'User deleted');
-    res.json({ data: { deleted: true, id, username: deleted.username } });
+    res.json({ data: { deleted: true, id: requestedId, username: deleted.username } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**

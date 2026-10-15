@@ -21,7 +21,11 @@ class PackagedBridgeHost extends Sprite {
     var cosmeticSends:Int = 0;
     var cosmeticConnects:Int = 0;
     var cosmeticReplies:Bool = true;
+    var cosmeticAuthState:String = "limited";
     var cosmeticPlate:IsolatedNameplate = null;
+    var cosmeticSurface:IsolatedNameplateSurface = null;
+    var markerPublications:Int = 0;
+    var markerPushes:Int = 0;
     public var BRG_OBJ:Dynamic;
     var storageCapability:Bool = true;
     var runtimeProbes:Int = 0;
@@ -62,15 +66,15 @@ class PackagedBridgeHost extends Sprite {
         scenario = flash.Lib.current.loaderInfo.parameters.scenario;
         if (scenario == "packaged-nameplates") {
             cosmeticPlate = new IsolatedNameplate(11, "PeerA");
-            addChild(cosmeticPlate);
-            TeammateMarkerBase = {TeamNameplates:new Vector<IsolatedNameplate>()};
-            TeammateMarkerBase.TeamNameplates.push(cosmeticPlate);
+            cosmeticSurface = new IsolatedNameplateSurface(cosmeticPlate);
+            TeammateMarkerBase = cosmeticSurface;
+            addChild(cosmeticSurface);
         }
         if (scenario == "packaged-probe-throw") probeFault = "throw";
         if (scenario == "packaged-probe-malformed") probeFault = "malformed";
         if (scenario == "packaged-probe-oversized") probeFault = "oversized";
         BSUIDataManager = {
-            GetDataFromClient:function(key:String):Dynamic {
+            GetDataFromClient:function(key:String, create:Bool = true):Dynamic {
                 reads++;
                 if (disposed) { violation = true; violationReason = "read after unload"; }
                 if (key == "MenuStackData") polls++;
@@ -170,7 +174,8 @@ class PackagedBridgeHost extends Sprite {
       chatInterface:{
         getRuntimeInfo:function():String return '{"success":true,"runtime":"xScal Chat","protocol":1}',
         connect:function(_:Dynamic):String { cosmeticConnects++; return '{"success":true}'; },
-        getAuthState:function(_:Dynamic):String return scenario == "packaged-nameplates" ? '{"success":true,"state":"limited"}' : '{"success":true,"state":"authenticated"}',
+        getAuthState:function(_:Dynamic):String return scenario == "packaged-nameplates"
+            ? haxe.Json.stringify({success:true,state:cosmeticAuthState}) : '{"success":true,"state":"authenticated"}',
         getConnectionState:function():String return '{"success":true,"state":"authenticated"}',
         pollEvents:function(_:Dynamic):String { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); },
         sendMessage:function(args:Dynamic):String {
@@ -217,7 +222,7 @@ class PackagedBridgeHost extends Sprite {
         if (scenario == "packaged-nameplates") {
             if (verb == "chat.v1.getRuntimeInfo") return '{"success":true,"capabilities":["zfe-chat-online-v1","zfe-chat-async-connect-v1","zfe-chat-async-send-v1","zfe-chat-async-control-v1"]}';
             if (verb == "chat.v1.connect") { cosmeticConnects++; return '{"success":true}'; }
-            if (verb == "chat.v1.getAuthState") return '{"success":true,"state":"limited"}';
+            if (verb == "chat.v1.getAuthState") return haxe.Json.stringify({success:true,state:cosmeticAuthState});
             if (verb == "chat.v1.pollEvents") { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); }
             if (verb == "chat.v1.sendMessage") return cosmeticSend(haxe.Json.parse(payload));
         }
@@ -244,11 +249,15 @@ class PackagedBridgeHost extends Sprite {
             isHostile:hostile,playerState:hostile ? "hostile" : "teammate",wantedState:"notWanted"}]});
     }
     function publish(key:String, data:Dynamic, ready:Bool = true):Void {
+        if (key == "TeamMarkers") markerPublications++;
         var value = new IsolatedProvider(data, ready);
         var found = false;
         for (entry in providers) if (entry.key == key) { entry.value = value; found = true; }
         if (!found) providers.push({key:key,value:value});
-        for (entry in listeners.copy()) if (entry.key == key) entry.callback(new IsolatedEvent(value));
+        for (entry in listeners.copy()) if (entry.key == key) {
+            if (key == "TeamMarkers") markerPushes++;
+            entry.callback(new IsolatedEvent(value));
+        }
     }
     function roster(names:Array<String>, ready:Bool = true):Void {
         publish("MapMenuData", {MarkerData:[for (name in names) {markerType:"PlayerRemote",text:name}]}, ready);
@@ -265,6 +274,8 @@ class PackagedBridgeHost extends Sprite {
             case "cosmetic-redraw": if (cosmeticPlate != null) cosmeticPlate.Name_tf.textColor = 0xFFCC33;
             case "cosmetic-hostile": if (cosmeticPlate != null) markers(true);
             case "cosmetic-friendly": if (cosmeticPlate != null) markers();
+            case "cosmetic-unready": cosmeticAuthState = "connecting";
+            case "cosmetic-ready": cosmeticAuthState = "limited";
             case "main-menu": publish("MenuStackData", {menuStackA:[{menuName:"MainMenu"}]});
             case "unload":
                 retire(); // Production REMOVED_FROM_STAGE owns shutdown.
@@ -280,6 +291,10 @@ class PackagedBridgeHost extends Sprite {
         var cosmeticDiagnostic = !disposed && child != null ? child.nameplateDiagnostic() : "disposed";
         return haxe.Json.stringify({provider:source,isolated:isolated,registered:registered,registerCalls:registerCalls,namedWrites:namedWrites,
             cosmeticSends:cosmeticSends,cosmeticConnects:cosmeticConnects,nameColor:cosmeticPlate == null ? -1 : cosmeticPlate.Name_tf.textColor,
+            markerPublications:markerPublications,markerPushes:markerPushes,
+            nameplateAttached:cosmeticPlate != null && cosmeticPlate.stage == stage && cosmeticPlate.Name_tf.stage == stage
+                && cosmeticPlate.Name_tf.parent == cosmeticPlate.NamePlateNameGroup_mc
+                && cosmeticPlate.parent == cosmeticSurface && cosmeticSurface.parent == this,
             cosmeticDiagnostic:cosmeticDiagnostic,
             active:active,storageDiagnostic:storageDiagnostic,
             controls:controls,leaves:leaves,polls:polls,reads:reads,writes:writes,runtimeProbes:runtimeProbes,snapshot:snapshot,subscriptions:listeners.length,
@@ -289,10 +304,18 @@ class PackagedBridgeHost extends Sprite {
 }
 @:keep private class IsolatedNameplate extends Sprite {
     public var Name_tf:TextField = new TextField();
+    public var NamePlateNameGroup_mc:Sprite = new Sprite();
     var id:Int;
-    public function new(id:Int, name:String) { super(); this.id = id; Name_tf.text = name; Name_tf.textColor = 0xFFFFFF; addChild(Name_tf); }
+    public function new(id:Int, name:String) {
+        super(); this.id = id; Name_tf.text = name; Name_tf.textColor = 0xFFFFFF;
+        addChild(NamePlateNameGroup_mc); NamePlateNameGroup_mc.addChild(Name_tf);
+    }
     @:getter(entityID) public function readEntity():Int return id;
     public function SetIsDirty():Void {}
+}
+@:keep private class IsolatedNameplateSurface extends Sprite {
+    public var TeamNameplates:Vector<IsolatedNameplate> = new Vector<IsolatedNameplate>();
+    public function new(plate:IsolatedNameplate) { super(); TeamNameplates.push(plate); addChild(plate); }
 }
 
 /** Separate-domain, accessor-backed objects. No production helpers are linked here. */
@@ -308,4 +331,5 @@ class PackagedBridgeHost extends Sprite {
     var provider:Dynamic;
     public function new(provider:Dynamic) { this.provider = provider; }
     @:getter(fromClient) public function readProvider():Dynamic return provider;
+    @:getter(data) public function readData():Dynamic return provider.data;
 }

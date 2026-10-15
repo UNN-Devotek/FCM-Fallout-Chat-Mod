@@ -3,12 +3,92 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**2.10.138 testing candidate:** existing overhead names turn blue for fresh FCM
-peers in the same confirmed Server room. The shared renderer also ships in the
-optional Server Bridge 0.2.10. Set `blueNameplates=false` in `Data/FCMChat.ini`
-to disable it. Hostile/wanted colors and vanilla visibility remain authoritative.
-The matching backend must be deployed; native acceptance/public release are pending.
-See [configuration and presence](../../../docs/overlay/zfe/blue-nameplates.md).
+**2.10.150 stationary-retention candidate:** all required local gates pass,
+including 93/93 Ruffle cases. It is installed on both machines with verified
+archives, backups, settings and MSI login; native stability remains unaccepted.
+The preceding 149 accepts private replies on both providers without paint errors,
+but still intermittently drops blue. 150 retains an already admitted exact visible
+field/plate/entity/name while current eligibility and fresh private presence agree.
+At 30 seconds it closes source acquisition without renewing the timestamp.
+Hidden, recycled, renamed, ineligible or withdrawn fields retire, and expired
+evidence cannot reacquire them. Context/generation, private submission deadlines
+and backend authority are unchanged. Fixed source state and matching counts
+diagnose other losses. See the
+[complete policy](../../../docs/overlay/zfe/blue-nameplates.md).
+
+**Previous 2.10.149 diagnostic candidate:** blue names target fresh private FCM peers in the
+same confirmed Server room. Generic markers still require ready/non-test data.
+A separate cosmetic source requires an actual post-bind host-domain push with
+matching event/provider/cache envelopes and payloads, explicit unready/test
+flags, validated unique uint/name scalar rows, current visible native ID/name
+and safety eligibility, current private presence context/reset generation and a
+push-only correlated source age below 30 seconds. The strict generic first-bind
+snapshot can establish an initial bounded time; getters, frames and probes cannot
+renew it. Numeric ID `0` is valid; the unassigned uint sentinel is excluded. Owned
+envelope identity may be retained, with no row/payload/event retention. Stationary
+push gaps can expire blue names. It changes no room/auth/lease/provider state.
+The painter runs after vanilla redraw at RENDER priority `-10000`, checks the
+full name-field visibility chain, avoids `SetIsDirty` during RENDER and removes
+both hooks on teardown. Terminal HUD auth/link failures immediately retire private
+presence and colors. The invalid private CharacterInfoData probe is removed.
+Set `blueNameplates=false` in `Data/FCMChat.ini` to disable this optional feature.
+
+The candidate renews confirmed HUD rosters every ten seconds, before the backend's
+unchanged 30-second cosmetic evidence deadline. A frame/RENDER fault restores
+vanilla colors and preserves still-valid source evidence for the next callback
+to revalidate. It does not renew source age or revive expired leases or contexts.
+Persistent numeric error counters, fixed hook/phase/clear reasons and bounded
+source age are logged without identities or error text. Fresh 2.10.145 native logs
+confirm repeated restore-phase error 1006 and gaps in private leases. The 2.10.146
+painter uses `indexOf`/`splice` instead of the newer Flash `Array.remove` helper.
+Private requests have a three-second minimum interval so timer jitter cannot skip
+a five-second HUD renewal. Submission-based private TTLs and push-only source age
+remain unchanged. All required local gates pass, including 93/93 Ruffle cases;
+2.10.146 was installed on both machines with archive, backup and preserved-file
+hashes verified. Its follow-up timing review finds that submitting a renewal can
+reject a still-valid prior reply before polling it. The 2.10.147 candidate retains
+at most four unexpired requests; only a newer accepted reply fences older replies.
+Every reply keeps its own original TTL, and context/auth resets clear all requests.
+All required 2.10.147 local gates pass, including 93/93 Ruffle cases, and it is
+installed on both machines with settings and MSI login preserved. Both providers
+pass twelve consecutive deferred redraws. Fresh 147 native acceptance now fails
+on both clients with repeated 1014 and zero requests before painter binding.
+The 148 compatibility candidate uses indexed in-place pending pruning, removing
+the new local Array coercions found in compiled comparison, and adds fixed
+request/timer phases. All required 148 local gates pass, including 93/93 Ruffle
+cases (8.4 minutes), and its DEV ZIP verifies. The fresh native run fails with
+zero requests and error 1014. See the
+[2026-10-12 recovery investigation](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+
+2.10.148 is installed on desktop/xScal and MSI/ZFE with both game processes
+confirmed closed at replacement. Installed archives, prior-147 backups and all
+provider/config/profile files verify; keybinds and MSI login are preserved. Fresh
+148 native acceptance fails with zero requests and error 1014 on both clients.
+The 149 experiment separates clock/session argument reads and the request's
+pruning, queueing and encoding methods, with fixed call/entered phases and
+bounded error/class diagnostics. Both focused provider tests pass, preserving
+lease/room/source timestamps. All required final local gates pass, including
+93/93 Ruffle cases, and 149 is installed on both machines with verified hashes,
+backups, settings and MSI login. Native acceptance remains required. No named
+missing class or native resolution is claimed.
+
+Previous 2.10.144 verification and packaging passed: 31 pure suites, nine source/package
+checks, empty compiler diagnostics and 93/93 Ruffle cases. Desktop/xScal and
+laptop/ZFE previously used **2.10.144**, with exact archive and preserved-setting hashes
+verified. Native acceptance remains pending. Historical 2.10.142 logs show eligible
+visible-plate matches and identical sampled payloads, but reject the unready/test flags.
+Bridge source **0.2.18** shares the painter and establishes cosmetic context
+before its first binding/generic snapshot and fences cosmetic requests to the
+current successfully saved export world. Its required local regression rerun passes. The distributed
+DEV **0.2.10** ZIP is unchanged. No public release is claimed. See
+[configuration and presence](../../../docs/overlay/zfe/blue-nameplates.md) and
+[the evidence review](../../../docs/testing/blue-nameplates-2026-10-07-review.md).
+
+The 2.10.144 follow-up review reproduced and fixed immediate link-notice
+retirement and recovery after a failed subscription to the exact same manager.
+Both providers also pass sealed UInt upper-range matching and explicit rejection
+of conversation suffixes. Healthy bindings preserve source age; old pending
+replies stay rejected after relinking. Native acceptance remains pending.
 
 **2.10.136 test candidate:** xScal 0.2.17+ saves F11 appearance through its named
 `modStorage` document, independent of the relay layout permission omitted by

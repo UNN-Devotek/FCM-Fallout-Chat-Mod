@@ -62,9 +62,12 @@ describe('MCP OAuth discovery and client validation', () => {
 
   function transport(responses) {
     const request = jest.fn((_url, _options, callback) => {
-      const req = new EventEmitter(); req.setTimeout = jest.fn(); req.destroy = error => { if (error) req.emit('error', error); }; req.end = () => {
-        const item = responses.shift(); const response = new EventEmitter(); response.statusCode = item.status ?? 200; response.headers = item.headers ?? { 'content-type': 'application/json' }; response.resume = jest.fn(); response.destroy = error => { if (error) response.emit('error', error); }; callback(response);
-        queueMicrotask(() => { if (item.body) response.emit('data', Buffer.from(item.body)); response.emit('end'); });
+      const req = new EventEmitter(); let response; req.setTimeout = jest.fn();
+      req.destroy = error => { if (req.destroyed) return; req.destroyed = true; queueMicrotask(() => { if (error) req.emit('error', error); response?.destroy(error); req.emit('close'); }); };
+      req.end = () => {
+        const item = responses.shift(); response = new EventEmitter(); response.statusCode = item.status ?? 200; response.headers = item.headers ?? { 'content-type': 'application/json' }; response.resume = jest.fn();
+        response.destroy = error => { if (response.destroyed) return; response.destroyed = true; queueMicrotask(() => { if (error) response.emit('error', error); response.emit('close'); req.destroy(); }); }; callback(response);
+        queueMicrotask(() => { if (response.destroyed) return; if (item.body) response.emit('data', Buffer.from(item.body)); if (response.destroyed) return; response.emit('end'); response.destroy(); });
       }; return req;
     });
     return request;
@@ -100,7 +103,7 @@ describe('MCP OAuth discovery and client validation', () => {
       lookup: async () => ++lookups === 1 ? [{ address: '8.8.8.8', family: 4 }] : [{ address: '127.0.0.1', family: 4 }],
       request: transport([{ status: 302, headers: { location: 'https://internal.example/meta' } }]),
     })).rejects.toThrow('redirects are not allowed'); expect(lookups).toBe(1);
-    const timeoutRequest = jest.fn(() => { const req = new EventEmitter(); req.setTimeout = (_ms, callback) => queueMicrotask(callback); req.destroy = error => req.emit('error', error); req.end = jest.fn(); return req; });
+    const timeoutRequest = jest.fn(() => { const req = new EventEmitter(); req.setTimeout = (_ms, callback) => queueMicrotask(callback); req.destroy = error => { queueMicrotask(() => { req.emit('error', error); req.emit('close'); }); }; req.end = jest.fn(); return req; });
     await expect(fetchClientMetadataJson(new URL('https://client.example/meta'), { lookup, request: timeoutRequest })).rejects.toThrow('timed out');
   });
 

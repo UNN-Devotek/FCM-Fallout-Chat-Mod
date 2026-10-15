@@ -160,3 +160,6 @@ admin-dashboard/public/promo/*.gif
 
 # Local dev launcher (machine-specific) — never commit
 cross-platform-overlay/dev-overlay-launch.cmd
+
+# Private backend operator controls and accepted-work journals (local development).
+backend/.fcm-runtime/

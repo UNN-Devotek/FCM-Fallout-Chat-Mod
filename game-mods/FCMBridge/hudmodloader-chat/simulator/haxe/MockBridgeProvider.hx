@@ -10,6 +10,7 @@ class MockBridgeProvider {
     @:getter(data) public function readData():Dynamic return payload;
     @:getter(dataReady) public function readReady():Bool return ready;
     @:getter(isTest) public function readTest():Bool return !live;
+    public function SetReady(dispatch:Bool):Void throw new flash.errors.Error("Probe must not change readiness", 1014);
 }
 
 @:keep

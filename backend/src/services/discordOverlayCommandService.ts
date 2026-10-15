@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Discord application-command surface for overlay slash commands.
  *
@@ -451,6 +452,7 @@ async function handleReportAutocomplete(interaction: AutocompleteInteraction): P
 }
 
 async function handleReportCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  return runRequiredBundle('domain', 'discordOverlayCommandService:4af3c7a2ceeb', async () => {
   const reporter = await requireLinkedUser(interaction);
   if (!reporter) return;
   const type = interaction.options.getSubcommand(true) as 'bug' | 'player';
@@ -462,7 +464,7 @@ async function handleReportCommand(interaction: ChatInputCommandInteraction): Pr
   }
   const involvedPlayers = target ? (target.chatName ?? target.discordDisplayName ?? target.discordUsername ?? target.username) : null;
   const content = target ? `${involvedPlayers}: ${description}` : description;
-  const report = await prisma.playerReport.create({ data: { userId: reporter.id, content, reportType: type, involvedPlayers } });
+  const report = await runRequiredMutation('domain', '87b8a5ee8b1ffe62f2f2b09d', { stage: 'primary-write-unconfirmed', userId: reporter.id }, () => prisma.playerReport.create({ data: { userId: reporter.id, content, reportType: type, involvedPlayers } }), isPrismaAtomicRefusal, undefined, undefined);
   try {
     // Lazy import avoids the discordService -> command service initialization cycle.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -470,6 +472,8 @@ async function handleReportCommand(interaction: ChatInputCommandInteraction): Pr
     void postModAlert({ title: `${type === 'bug' ? 'Bug' : 'Player'} Report Submitted`, color: '#FF8C00', fields: [{ name: 'Reporter', value: reporter.chatName ?? reporter.username, inline: true }, { name: 'Content', value: content.slice(0, 1500) }], footerText: `Report ID: ${report.id}`, timestamp: true });
   } catch { /* bot alert is best-effort; the report is persisted first */ }
   await interaction.reply({ content: type === 'bug' ? 'Bug report submitted. Thank you.' : 'Player report submitted to the moderation team.', flags: MessageFlags.Ephemeral });
+
+  });
 }
 
 async function handleModeration(interaction: ChatInputCommandInteraction): Promise<void> {

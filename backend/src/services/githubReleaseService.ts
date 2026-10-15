@@ -17,6 +17,7 @@
  */
 
 import logger from '../config/logger';
+import { beginRuntimeFetch as fetch } from '../runtime/nativeFetch';
 import {
   releaseDownloadFieldValue,
   nexusEndorseFieldValue,
@@ -138,11 +139,15 @@ export async function createGitHubRelease(
       if (existing.ok) {
         const { id } = (await existing.json()) as { id: number };
         const res = await f(`${base}/releases/${id}`, { method: 'PATCH', headers, body: JSON.stringify(payload) });
+        await res.text();
         if (!res.ok) throw new Error(`PATCH /releases/${id} -> ${res.status}`);
       } else if (existing.status === 404) {
+        await existing.text();
         const res = await f(`${base}/releases`, { method: 'POST', headers, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error(`POST /releases -> ${res.status} ${(await res.text()).slice(0, 200)}`);
+        await res.text();
+        if (!res.ok) throw new Error(`POST /releases -> ${res.status}`);
       } else {
+        await existing.text();
         throw new Error(`GET /releases/tags/${tag} -> ${existing.status}`);
       }
       logger.info({ version, tag, prerelease: payload.prerelease }, '[githubRelease] published GitHub release');

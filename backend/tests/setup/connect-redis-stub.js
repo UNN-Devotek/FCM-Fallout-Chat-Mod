@@ -7,8 +7,9 @@ class RedisStore extends EventEmitter {
   set(sid, session, cb) { cb && cb(null); }
   destroy(sid, cb) { cb && cb(null); }
   touch(sid, session, cb) { cb && cb(null); }
+  clear(cb) { cb && cb(null); }
 }
 
-// server.ts does `import RedisStore from 'connect-redis'` (default import).
-// esbuild interop reads .default when __esModule is set.
+// Keep both forms for existing unit fixtures. Runtime SDK acceptance tests
+// bypass this mapper and load the actual installed connect-redis module.
 module.exports = { __esModule: true, default: RedisStore, RedisStore };
