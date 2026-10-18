@@ -78,6 +78,7 @@ class TestFcmBridgeExport {
         storageDiagnostics();
         legacyDiscovery();
         coalescedXscalWrites();
+        publishedWorldFence();
         var state = new FcmBridgeState(function() return "world-1");
         state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
         var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
@@ -94,7 +95,7 @@ class TestFcmBridgeExport {
         check(exporter.update(1000, state, "Self", "xscal", save), "initial snapshot written");
         check(documents[0].state == "active" && documents[0].observationAgeMs == 0, "active evidence age");
         #if bridge_perf
-        check(StringTools.startsWith(documents[0].build, "0.2.9-c5-perf:p") && documents[0].build.length <= 64,
+        check(StringTools.startsWith(documents[0].build, FcmBridgeExport.BUILD + "-c5-perf:p") && documents[0].build.length <= 64,
             "diagnostic export keeps the strict schema and bounded build label");
         #else
         check(documents[0].build == FcmBridgeExport.BUILD, "normal export retains its exact build marker");
@@ -194,6 +195,50 @@ class TestFcmBridgeExport {
         selectedExport.update(31000, selected, "Self", "zfe", save);
         check(documents[documents.length - 1].state == "inactive", "loading cannot preserve map beyond actual observation expiry");
         Sys.println("PASS FcmBridgeExport: " + count + " checks");
+    }
+    static function publishedWorldFence():Void {
+        for (provider in ["zfe", "xscal"]) {
+            var worlds = 0;
+            var state = new FcmBridgeState(function() return "world-published-" + (++worlds));
+            state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
+            var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
+            observation.names = ["Peer"]; observation.revision = 1;
+            state.observe(observation); state.settle(1000);
+            var exporter = new FcmBridgeExport("movie-published", "dev");
+            var documents:Array<Dynamic> = [];
+            var succeed = true;
+            var save = function(text:String):Bool { documents.push(haxe.Json.parse(text)); return succeed; };
+            check(exporter.publishedWorld == "" && !exporter.lastSuccess, "no cosmetic world before any successful export");
+            check(exporter.update(1000, state, "Self", provider, save), "initial world export attempted");
+            var firstWorld = state.session.requestId;
+            check(exporter.lastSuccess && exporter.publishedWorld == firstWorld,
+                "successful fresh export publishes its own world");
+            observation.names = ["NewPeer"]; observation.at = 1250; observation.revision++;
+            state.observe(observation); state.settle(1250);
+            var nextWorld = state.session.requestId;
+            check(nextWorld != firstWorld, "disjoint settled roster establishes a new world");
+            check(!exporter.heartbeat(1250, provider, save) && exporter.publishedWorld == firstWorld,
+                "live world change cannot authorize an unpublished heartbeat world");
+            check(!exporter.update(1250, state, "Self", provider, save) && exporter.lastSuccess
+                && exporter.publishedWorld == firstWorld && exporter.publishedWorld != nextWorld,
+                "rate-deferred new sample preserves only the previous successful world");
+            succeed = false;
+            check(exporter.update(2000, state, "Self", provider, save) && !exporter.lastSuccess
+                && documents[documents.length - 1].worldGeneration == nextWorld
+                && exporter.publishedWorld == firstWorld,
+                "failed new-world save neither authorizes nor relabels the previous export");
+            check(!exporter.update(2250, state, "Self", provider, save) && !exporter.lastSuccess
+                && exporter.publishedWorld == firstWorld, "failed save retry remains deferred and inactive");
+            succeed = true;
+            check(exporter.update(3000, state, "Self", provider, save) && exporter.lastSuccess
+                && exporter.publishedWorld == nextWorld, "successful retry authorizes the new exported world");
+            check(!exporter.update(3500, state, "Self", provider, save, true)
+                && exporter.publishedWorld == nextWorld, "pending inactive sample cannot rewrite the successful export");
+            check(exporter.update(4000, state, "Self", provider, save, true) && exporter.lastSuccess
+                && exporter.publishedWorld == "", "successful inactive export retires cosmetic world authority");
+            check(exporter.heartbeat(9000, provider, save) && exporter.publishedWorld == "",
+                "inactive heartbeat cannot restore a retired cosmetic world");
+        }
     }
     static function coalescedXscalWrites():Void {
         var state = new FcmBridgeState(function() return "world-coalesce");

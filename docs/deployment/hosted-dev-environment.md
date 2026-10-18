@@ -799,3 +799,31 @@ broke the dev deploy once already:
 A failed compose deploy in Dokploy does **not** roll the site back or take it down — it just leaves
 the old container up. Check `composeStatus` (or `/etc/dokploy/logs/<compose>/`) rather than trusting
 that the site responding means the deploy worked.
+
+## Durable backend runtime control
+
+The checked-in Dev Compose definition mounts the dedicated project-local named volume
+`runtime_dev_control` at `/app/runtime-control`. `FCM_RUNTIME_CONTROL_DIR` names that path,
+`FCM_DRAIN_TIMEOUT_MS=120000` bounds the drain, and `stop_grace_period: 180s` leaves time
+for a normal signal shutdown. The backend restricts the control directory to mode 0700 and
+its socket/journal files to 0600. Keep this volume across backend replacement: removing it
+would erase restart fences and accepted-effect evidence. It is separate from downloads and
+all Dev stores and never shares a production volume.
+
+Reconcile this mount/environment/grace contract into the actual hosted custom Dokploy
+Compose before deploying the runtime-enabled image. Applying that reconciliation is a
+separate deployment step; this source definition does not change the running stack. Keep
+existing stores, connector, private network and their volumes intact. A forced Docker kill
+is not a successful drain; inspect the retained checkpoint and actual container state.
+See [runtime maintenance](../backend/runtime-maintenance.md).
+
+Other checked-in container definitions still need review before they can run this new
+runtime image: root `docker-compose.yml` and `deploy/laptop-cutover/docker-compose.yml` do not yet mount
+persistent control state or set its shutdown grace. The local development override runs
+`tsx` directly and retains its default `/app/.fcm-runtime` under the existing source bind;
+it still lacks an explicit drain/grace contract and its pre-start development schema push
+is not guarded by the production entrypoint. Laptop deployment remains disabled. Do not use those definitions
+for this promotion without reconciling the same control-state contract. The pinned
+`deploy/return-mothership/docker-compose.yml` already defines its protected control bind,
+explicit drain timeout and shutdown grace. No historical deployment script is activated
+by this documentation change.

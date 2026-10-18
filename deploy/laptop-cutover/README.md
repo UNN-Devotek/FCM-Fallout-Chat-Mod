@@ -1,5 +1,11 @@
 # Laptop cutover runtime
 
+For the current **Hostinger → Mothership production return**, use
+[`docs/deployment/return-production-to-mothership.md`](../../docs/deployment/return-production-to-mothership.md).
+It records the code promotion, deployment fencing, freeze/drain, physical restore,
+state-preserving rollback and 48-hour retirement gates. The historical laptop
+rehearsal below does not establish readiness for that return.
+
 This stack is the production-equivalent cold-failover runtime for the temporary
 Windows laptop host. It does not use `docker-compose.dev.yml`, publish data-store
 ports, or join the VPS-only `dokploy-network`. Its connector is an `edge` Compose
@@ -122,6 +128,13 @@ health, and restores the previous image on failure. It requires both
 `/opt/fcm-cutover/prod/HOSTINGER_AUTODEPLOY_ACTIVE` marker. Remove the marker
 before any laptop failover or manual cutover.
 
+This workflow does **not** wait for `CI Summary`, and its rollback restores only
+the image/config reference, not schema or data changes made during startup. Fence
+both gates and reconcile already-running/queued deployments before promoting or
+moving production. A marker removed after a job passed its initial check does
+not stop that job. Use the production-return plan's tested deployment and recovery
+gates; do not treat an image rollback or HTTP 200 as complete recovery.
+
 When restoring a physical Postgres volume onto a smaller host, inspect the
 restored `postgresql.conf` before startup. The source host's `shared_buffers`
 can exceed target RAM and cause an immediate `could not map anonymous shared
@@ -148,6 +161,11 @@ fail-closed checkpoint in future rehearsals and in Production:
   result. The Dev backend exhausted that window and exited with code 137. Record
   the forced exit, prove all source writers and connectors are stopped, and run
   database/object checks before taking the cold volume copies.
+  This historical forced exit was a discrepancy, not a verified drain. For future
+  production moves, require the tested freeze/drain contract in the return plan:
+  queued and in-flight Discord sends, durable links, accepted Bull jobs and active
+  producers must be accounted for before shutdown. A longer timeout alone does
+  not close the gap.
 - Windows ACLs that correctly restrict backup ciphertext to the cutover account
   and `SYSTEM` can prevent Docker Desktop's Linux VM from bind-mounting or
   `docker cp`-ing it. Grant `BUILTIN\Users` read access to ciphertext only for
@@ -226,6 +244,13 @@ fail-closed checkpoint in future rehearsals and in Production:
   must not be used against a Compose ID. Until that MCP capability exists, this
   flag is an explicit Dokploy UI checkpoint; do not substitute a direct database
   edit or an undocumented shell/API call.
+- For the 2026-10-13 Mothership return, this UI checkpoint is complete: the existing
+  signed-in Chrome tab saved production Compose `3GsIKasZFoGsbum6d9XoZ`
+  `autoDeploy=false`; MCP readback and the UI agree. The Dev service was unchanged.
+  Keep the Prod trigger off while the
+  [pinned return definition](../return-mothership/README.md), drain/recovery and
+  native/timing acceptance are prepared. Current state and remaining gates live
+  in the [return runbook](../../docs/deployment/return-production-to-mothership.md).
 - After the Production laptop restart, GitHub ticket creation returned an HTTP
   401 while core Discord/chat relay remained healthy. Treat outbound GitHub
   automation as a separate acceptance check: validate the configured GitHub

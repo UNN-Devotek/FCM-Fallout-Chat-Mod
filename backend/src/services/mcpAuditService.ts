@@ -1,3 +1,5 @@
+import { runRequiredMutation } from '../lib/requiredEffects';
+import { runtime } from '../runtime';
 import { createHash, randomUUID } from 'crypto';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
@@ -121,14 +123,15 @@ export interface McpAuditIntent { id: string; createdAt: Date; startedAt: number
 export async function beginMcpMutationAudit(actor: McpActor, action: string, targetType: string, target: string | number | null, details: Record<string, unknown> = {}): Promise<McpAuditIntent> {
   const correlationId = actor.correlationId ?? randomUUID();
   const user = await prisma.user.findUnique({ where: { discordId: actor.discordId }, select: { id: true } }).catch(() => null);
-  const audit = await prisma.auditLog.create({ data: {
+  const audit = await runRequiredMutation('audit', '3f6d9d39b4be17e63eab51b1', { auditId: correlationId, discordId: actor.discordId, stage: 'mutation-audit-intent-unconfirmed' }, () => prisma.auditLog.create({ data: {
     id: correlationId, actorId: user?.id ?? null, action: `mcp_${action}`, targetType,
     reason: `${action} attempted`, metadata: redactMcpData({ correlationId, actorDiscordId: actor.discordId, clientId: actor.clientId, grant: pseudonymizeMcpId(actor.grantId), tool: action, outcome: 'attempt', target, ...details }),
-  }, select: { id: true, createdAt: true } });
+  }, select: { id: true, createdAt: true } }));
   return { ...audit, startedAt: Date.now() };
 }
 
 export async function finalizeMcpMutationAudit(audit: McpAuditIntent, actor: McpActor, action: string, target: string | number | null, outcome: 'success' | 'failure' | 'partial', details: Record<string, unknown> = {}): Promise<boolean> {
+  return runtime.required('mcp:audit-finalize', async () => {
   const latencyMs = Date.now() - audit.startedAt;
   recordMcpMetric('tool_call', { tool: action, outcome }, latencyMs);
   if (outcome === 'failure') noteMcpSecurityEvent('mutation_error');
@@ -138,8 +141,11 @@ export async function finalizeMcpMutationAudit(audit: McpAuditIntent, actor: Mcp
     } });
     logger.info(redactMcpData({ event: 'mcp_mutation', correlationId: audit.id, clientId: actor.clientId, actorDiscordId: actor.discordId, grant: pseudonymizeMcpId(actor.grantId), tool: action, target, outcome, latencyMs }), 'MCP mutation completed');
     return true;
-  } catch {
+  } catch (error) {
+    if (attempt === 2) runtime.recordFailure('mcp:audit-finalize', error, { auditId: audit.id, discordId: actor.discordId,
+      action, targetId: typeof target === 'string' ? target : undefined, outcome, stage: 'mutation-audit-finalization-unconfirmed' });
     if (attempt === 2) logger.error({ correlationId: audit.id, tool: action, outcome }, 'MCP mutation audit finalization failed');
   }
   return false;
+  });
 }

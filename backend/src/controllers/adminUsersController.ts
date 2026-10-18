@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -27,6 +28,7 @@ async function listAdminUsers(_req: Request, res: Response, next: NextFunction):
  * Update an admin user's role.
  */
 async function updateAdminUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('authority', 'adminUsersController:f68d1cde0a7a', async () => {
   const { discordId } = paramsOf(req);
   const { role } = req.body;
 
@@ -40,13 +42,13 @@ async function updateAdminUser(req: Request, res: Response, next: NextFunction):
   }
 
   try {
-    const updated = await prisma.adminUser.update({
+    const updated = await runRequiredMutation('authority', '60ff132cb3b5f31b55e6e047', { stage: 'primary-write-unconfirmed', discordId: discordId }, () => prisma.adminUser.update({
       where: { discordId },
       data: { role },
       select: { id: true, discordId: true, username: true, role: true, updatedAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
         action: 'admin_role_changed',
         targetType: 'admin_user',
@@ -60,6 +62,8 @@ async function updateAdminUser(req: Request, res: Response, next: NextFunction):
     if (err.code === 'P2025') return next(createError(404, 'Admin user not found'));
     next(err);
   }
+
+  });
 }
 
 /**
@@ -67,6 +71,7 @@ async function updateAdminUser(req: Request, res: Response, next: NextFunction):
  * Remove an admin user record.
  */
 async function deleteAdminUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('authority', 'adminUsersController:7f47dbb48cd5', async () => {
   const { discordId } = paramsOf(req);
 
   // Prevent owners from deleting themselves
@@ -75,12 +80,12 @@ async function deleteAdminUser(req: Request, res: Response, next: NextFunction):
   }
 
   try {
-    const deleted = await prisma.adminUser.delete({
+    const deleted = await runRequiredMutation('authority', '0470219d94c766ca976b903a', { stage: 'primary-write-unconfirmed', discordId: discordId }, () => prisma.adminUser.delete({
       where: { discordId },
       select: { id: true, discordId: true, username: true, role: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
         action: 'admin_user_removed',
         targetType: 'admin_user',
@@ -94,6 +99,8 @@ async function deleteAdminUser(req: Request, res: Response, next: NextFunction):
     if (err.code === 'P2025') return next(createError(404, 'Admin user not found'));
     next(err);
   }
+
+  });
 }
 
 export { listAdminUsers, updateAdminUser, deleteAdminUser };

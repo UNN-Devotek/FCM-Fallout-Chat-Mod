@@ -1,5 +1,24 @@
 # FCMChatWidget build, install, and verification
 
+## Production-return integration candidate (2026-10-13)
+
+This worktree combines the local 2.10.150 nameplate source with current remote Dev,
+including the adaptive flood receipt/retry changes below. Rebuild the SWF/BA2 and
+manifest from the combined source. Earlier 150 hashes, automated results and
+installed native observations belong to that earlier source snapshot; they do not
+accept this integration artifact. Full automated and native gates remain required.
+
+Local integration verification passes the 31 pure Haxe suites, source/package
+checks, empty widget/bridge compiler diagnostics and all 93 Ruffle cases (7.7
+minutes), with listener and owned backend-store teardown verified. Required backend,
+dashboard and overlay local gates pass. The rebuilt SWF is 7,231,749 bytes,
+SHA-256 `8a32f101a7b3237a01097d12a376c663cc219be86681973adeff2feea6de7de2`;
+the BA2 is 7,231,838 bytes,
+SHA-256 `5c768944d2c9986c2a30d325bf7a5e193eb9561406c76149cce88ded4a0c3efe`.
+Decoded payload/source manifest and target-stamped packaging checks pass. The DEV
+integration ZIP is retained in conversation evidence; it is not installed,
+native-accepted or published. Hosted CI remains a separate gate.
+
 ## Adaptive flood cooldown candidate (2026-10-08)
 
 The current development widget supports the shared three-in-thirty-seconds flood
@@ -14,16 +33,256 @@ release-version bump. Earlier hashes and native acceptance below describe those
 dated candidates, not this adaptive change. Full hosted Ruffle/CI and fresh native
 acceptance are required before distribution; this candidate is native-unverified.
 
-## Blue-name candidate 2.10.138
+## Stationary-retention candidate 2.10.150
 
-**Widget version:** 2.10.138. Testing candidate; native acceptance/public release pending.
+**Widget version:** 2.10.150. Verified locally, packaged and installed on both machines.
+Fresh 149 native logs on both providers show successful private replies and no
+1014/paint errors, but intermittent colors remain. Some losses follow 30-second
+native push gaps; others occur with fresh source data and require the new guard counts.
+The user confirms labels stay visible and movement restores blue.
 
-This candidate adds the shared cosmetic presence renderer, retains 2.10.137's
-channel behavior and targets the matching backend nameplate protocol. The bridge
-candidate is 0.2.10. Native acceptance and public release are pending. Follow
+150 expires source acquisition at the original deadline while allowing an already
+admitted exact visible field/plate/entity/name to continue under current owned
+eligibility, private presence and context/generation. Hidden, recycled, renamed,
+ineligible or withdrawn associations retire; expired sources cannot acquire or
+reacquire them. Source timestamps, private TTLs and room/world authority are unchanged.
+Shared bridge 0.2.18 is local regression source only. See the
+[cosmetic policy](../../../docs/overlay/zfe/blue-nameplates.md) and
+[investigation](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+All 31 pure suites, nine source/package checks, empty compiler diagnostics,
+93/93 Ruffle cases (8.8 minutes), and required backend/overlay/dashboard gates pass.
+All 150 frozen source hashes verify; owned Redis and the harness listener are removed.
+The DEV package has 16 CRC-verified entries and identical provider BA2 copies.
+ZIP: `.build/FCMChatWidget-2.10.150-stationary-retention-DEV-test.zip`, 12,022,898 bytes,
+SHA-256 `7c14cba01115c8bc9f5d314c37aa1bc9873745fb513dd4d8f8ac6d5727939278`.
+BA2 SHA-256: `4abe039cab1d42b5a15d5d5563e168e3f63e4a1d02d0c55b50c83df0b35f970b`.
+Both games were independently confirmed closed at replacement. Archive/backup
+hashes and six desktop/seven MSI preserved files verify; MSI login is unchanged.
+Native stationary acceptance and hosted CI remain pending. Gate/install records
+are in `.build/FCMChatWidget-2.10.150-DEV-GATES.json`.
+
+## Previous request boundary diagnostic candidate 2.10.149
+
+**Widget version:** 2.10.149. Local DEV diagnostic candidate verified, packaged and installed.
+Fresh 148 native acceptance fails on both providers with error 1014 at the
+combined clock/session/request boundary, before any request or painter binding.
+Removing Array coercions did not resolve it; the exact rejected construct or
+missing class is unidentified.
+
+The request now delegates pruning, queueing and encoding to separate small
+methods. Fixed call/entered phases distinguish rejection before a helper body
+from errors inside it. The widget separates clock and owned-session reads before
+calling the request. World catches record the current request phase, bounded
+error code and only an allowlisted class identifier from the VM's canonical
+1014 template; arbitrary exception messages and stacks are excluded. A fixed
+fallback remains if diagnostic code cannot run. Four-request bounds, newer-reply
+precedence, submission deadlines, resets and push-only source age are unchanged.
+Shared bridge source is 0.2.17 for local regression packaging only.
+
+The pure nameplate suite and both focused provider scenarios pass (18.2 seconds).
+Injected errors verify diagnostic privacy and unchanged live lease/room/evidence;
+they do not reproduce native GFx verification. Complete required gates remain
+mandatory before packaging or installation, followed by fresh native acceptance.
+See the [failure and experiment record](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+
+Final source passes 31 pure suites, nine source/package checks, empty compiler
+diagnostics and all 93 Ruffle cases (8.0 minutes). Both focused provider cases
+pass again in 20.0 seconds after the shared-parser extraction. Full backend,
+overlay and dashboard gates pass. All 150 frozen source hashes verify and the
+harness listener is removed. The DEV ZIP has 16 verified entries and both tested
+BA2 copies: `.build/FCMChatWidget-2.10.149-request-boundaries-DEV-test.zip`
+(12,021,314 bytes), SHA-256
+`871fc26fd9cfc13bb78b54cbf3f37e8df3e1f00baa4b51a06bab49b50562903b`.
+BA2 SHA-256: `e789bc832362883f0d382e64eee9f63a00e71c51be0830b8d743d959c5c2a646`;
+SWF SHA-256: `412300d5d6150b2f853b236e86f0dadf31d43dccd530c7c10acfcc0e85bb4386`.
+Both games were independently closed before replacing only their archives.
+Installed hashes, prior-148 backups, six desktop/seven MSI preserved files and
+MSI login verify. Home/Delete and Period/Delete remain configured. Gate and install
+records are in `.build/FCMChatWidget-2.10.149-DEV-GATES.json`. Native acceptance
+and hosted CI remain unaccepted; fresh 149 runs resolve request progress but still
+reproduce intermittent colors. See the investigation's fresh 149 evidence.
+
+## Previous native request compatibility candidate 2.10.148
+
+**Previous widget version:** 2.10.148. Local DEV compatibility candidate verified and packaged;
+fresh native acceptance failed. Both 147 and 148 runs fail on both providers:
+active request gate, zero requests/replies, no painter binding and repeated runtime
+1014 before presence submission. Its passing Ruffle results do not accept native use.
+Compiled comparison finds two new `Array` coercions in the 147 request method;
+the JSON printer bytecode is identical to native-working 145. This is a tested
+compatibility hypothesis, not a confirmed named missing class.
+
+The candidate prunes bounded pending requests in place with indexed loops and
+`splice`, retaining original TTLs, reply ordering, resets and source age. Fixed
+request phases and world-timer request/bind/send phases identify any remaining
+native failure. Shared bridge source is 0.2.16; its distribution is unchanged.
+See the [native failure record](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+
+All required local gates pass: 31 pure suites, nine source/package checks, empty
+compiler diagnostics, 93/93 Ruffle cases (8.4 minutes), full backend, overlay and
+dashboard tests. The harness tears down and all 149 frozen source hashes verify.
+The DEV ZIP is `.build/FCMChatWidget-2.10.148-native-request-compat-DEV-test.zip`
+(12,019,584 bytes, 16 entries), SHA-256
+`1dceb626991c8f0c01a2fb302f8a2f583b0ef228b560bea25a917d44c1e6bce4`.
+BA2 SHA-256: `11a4232053a724a68f29c45913397f746c0b78e630a438f9c22253a26ea28bdd`;
+SWF SHA-256: `f7e716eb517e4f974fbf8ca26edf4a166a430e876fd46d3b75575b2a3ae29af1`.
+Gate details are in `.build/FCMChatWidget-2.10.148-DEV-GATES.json`.
+Installed on desktop/xScal and MSI/ZFE with both processes independently confirmed
+closed. Both archive hashes, prior-147 backups and six desktop/seven MSI preserved
+files verify; MSI login is unchanged. Fresh native acceptance failed; hosted CI is pending.
+
+## Previous blue-name overlapping-reply candidate 2.10.147
+
+**Previous widget version:** 2.10.147. Local gates passed and it was installed on
+both machines; fresh native acceptance fails with zero requests and error 1014.
+The timing review reproduces a valid prior reply being rejected when
+a new request precedes the reply poll. The client now retains at most four
+unexpired requests in the exact current context. Every reply keeps its own
+submission deadline. A newer accepted reply, including an empty withdrawal,
+fences all older replies. World/auth/generation resets still clear every request.
+The shared bridge source is 0.2.15; no bridge distribution or installation is requested.
+The pure independent-timer matrix and both compiled-provider regressions cover
+request/poll ordering. Twelve deferred native redraw cycles exercise final blue
+color while retaining expiry and teardown checks. See the
+[2026-10-12 investigation](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+
+All 31 pure suites, nine source/package checks, empty compiler diagnostics and
+93/93 Ruffle cases (7.7 minutes) pass, together with full backend/overlay/dashboard
+gates. All eight 60-second modeled timer-order cases maintain active private
+leases, and both provider cases pass twelve deferred redraws. These are modeled
+and Ruffle results, not native acceptance. All 149 frozen source hashes remain
+unchanged; the owned harness port is closed. Installed archives and prior 2.10.146
+backups verify. Six desktop/seven MSI files and MSI native login remain unchanged.
+The DEV ZIP is `.build/FCMChatWidget-2.10.147-overlapping-replies-DEV-test.zip`
+(12,019,340 bytes, 16 entries), SHA-256
+`2f0ded46318b07c330a6a64bdb88324e3990bcfc1fd70d38fb303bb913326e33`.
+BA2 SHA-256: `68319a2e82eb617edb46c0297e945efae85eca1687f05ab91160c0f3ad0bbea2`;
+SWF SHA-256: `a1390d8028693d0ea1d5b5277249c65ab3d2a767164a5adcc556bc1c9800a287`.
+Detailed gates and installs are in `.build/FCMChatWidget-2.10.147-DEV-GATES.json`.
+No hosted CI run is claimed; fresh 147 native acceptance failed as recorded above.
+
+## Previous blue-name cleanup and renewal candidate 2.10.146
+
+**Previous widget version:** 2.10.146. Local DEV candidate verified, packaged and installed on
+desktop/xScal 0.2.20 and MSI/ZFE 0.21.1 on 2026-10-12; native acceptance is pending.
+It replaces two painter `Array.remove` calls with `indexOf`/`splice`
+because the Flash 19 `removeAt` helper is unavailable in the game runtime. Private
+presence requests have a three-second minimum interval, leaving headroom below the
+existing five-second HUD timer. Private leases still expire from request submission
+within ten seconds, and only genuine pushes renew the 30-second correlated source.
+The shared bridge source is 0.2.14; no bridge installation or distribution is requested.
+Both focused cleanup scenarios reproduce the old failure before the fix; the pure
+timing scenario reproduces skipped renewals. See the
+[2026-10-12 investigation](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md).
+
+All 31 pure suites, nine source/package checks, empty compiler diagnostics and
+93/93 Ruffle cases (7.6 minutes) pass, together with full backend/overlay/dashboard
+gates. All 149 frozen source hashes remain unchanged; the owned harness port is
+closed. Both installed archives and prior-archive backups verify. Six desktop and
+seven MSI provider/config/profile files are unchanged; the MSI login cache is
+present and unchanged. Desktop retains Home/Delete and MSI Period/Delete.
+The DEV ZIP is `.build/FCMChatWidget-2.10.146-cleanup-renewal-DEV-test.zip`
+(12,018,826 bytes, 16 entries), SHA-256
+`56efdb2c347b2a72ebb22c347d6294e0f6b49cf115571ba012b0dc308632f876`.
+BA2 SHA-256: `0c883faeddd426718b489e6196e90e54afdce065025f8f46b48dafb76e35d506`;
+SWF SHA-256: `65888eca7925ff583a8ba209cd0c8c78c833983d581335fbe8e1f6f2adb776b4`.
+Detailed gates and both installs are in `.build/FCMChatWidget-2.10.146-DEV-GATES.json`.
+No hosted CI run or native acceptance is claimed.
+
+## Previous blue-name recovery candidate 2.10.145
+
+**Previous widget version:** 2.10.145. Verified, packaged and installed on both machines
+on 2026-10-12. Native logs now confirm repeated restore-phase error 1006 and lease gaps;
+the user reports recurring blue/vanilla flicker. This candidate is not native-accepted.
+
+This candidate renews confirmed HUD rosters every ten seconds, leaving headroom
+before the backend's unchanged 30-second cosmetic evidence deadline. Existing
+authentication, fresh-observation, world and nonblocking-provider gates still apply.
+Frame/RENDER failures restore vanilla colors while retaining still-valid source
+evidence for revalidation on the next callback, without renewing its timestamp.
+Persistent numeric error counters, fixed hook/phase/clear reasons and bounded
+source age distinguish paint errors from auth/room resets and normal expiry.
+The shared bridge source is 0.2.13; no bridge distribution or installation is requested.
+
+The 2.10.144 regression reproduces source loss after transient frame and RENDER
+faults on both simulated providers. Fresh native 2.10.144 logs also show separate
+private-lease gaps. Those logs cannot identify which clear path caused the reported
+native disappearance. A genuine native push gap of 30 seconds still retires the
+cosmetic source. Follow the
+[2026-10-12 investigation](../../../docs/testing/blue-nameplates-2026-10-12-recovery.md)
+and the complete required gates before packaging or installation.
+
+All 31 pure suites, nine source/package checks, empty compiler diagnostics and
+93/93 Ruffle cases passed. Full backend, overlay and dashboard tests also pass.
+Both games were independently closed for replacement; installed archive hashes,
+prior-archive backups, six desktop/seven laptop preserved files and the recreated
+MSI authentication cache verify. Home/Delete and Period/Delete are retained.
+The DEV ZIP is `.build/FCMChatWidget-2.10.145-paint-recovery-DEV-test.zip`
+(12,018,676 bytes, 16 entries), SHA-256
+`799e0bbc77658a9ae9f2bea0546803ff4f4d6a7af654d7833920f734a37c0d72`.
+BA2 SHA-256: `69292ef3c1354cc9fd0e4a6290d81b862f0bcb7371f6e86a70914bf80668344e`;
+SWF SHA-256: `023ee01772f368b91949e730f871a41124ea6320c246ee0273c03c6b3613a704`.
+Detailed gates and both install manifests are in `.build/FCMChatWidget-2.10.145-DEV-GATES.json`.
+
+## Previous blue-name native HUD correlation candidate 2.10.144
+
+**Previous widget version:** 2.10.144. Local DEV candidate, verified, packaged and installed
+on desktop/xScal 0.2.20 and MSI/ZFE 0.21.1. Native acceptance remains pending.
+The review adds immediate system link-notice retirement and retry after a failed
+subscription to the exact same manager.
+
+Fresh logs from both providers show a visible native plate matching eligible
+markers and the same sampled event/provider/cache payload, while the envelope
+remains `dataReady=false isTest=true`. The candidate retains strict ready/non-test
+generic markers and adds a separate cosmetic source requiring a real post-bind
+host-domain push, identical event/provider/canonical cache envelopes and payloads,
+explicit anomalous flags, complete bounded unique uint/name scalar rows, current
+visible native ID/name and per-paint safety eligibility, private presence context
+and reset generation, and a push-only correlated source age below 30 seconds.
+The strict generic first-bind snapshot may establish an initial bounded source
+time; later getters, frames and probes cannot renew it. Numeric ID `0` is valid,
+only the unassigned uint sentinel is excluded. An owned envelope reference is
+retained for identity/current eligibility; rows, payloads and events are not.
+A stationary push gap may therefore expire blue names.
+
+The painter runs after vanilla deferred redraw at stage RENDER priority `-10000`,
+checks the TextField's complete visibility chain, avoids `SetIsDirty` during
+RENDER, and tears down both render/frame hooks. The invalid private
+CharacterInfoData ownership probe is removed. It cannot change provider flags,
+watches, rooms, authentication or leases, and imports no third-party HUD assets.
+Terminal HUD auth/link failures retire private presence and colors immediately.
+It retains 2.10.137's channel behavior and the existing backend protocol.
+
+Bridge source **0.2.12** shares this painter and establishes its cosmetic context
+before the first bind/generic snapshot and requires the current successfully
+saved export world. Its local regression build covers startup, deferred/failed
+exports and hops; the distributed DEV **0.2.10** ZIP is
+unchanged. Run pure/source/package checks and the complete Ruffle suite,
+including a rebuilt 0.2.12 bridge and provider-paired native-style deferred-render
+scenarios, before packaging or installation. Native GFx ordering, stationary
+source availability and two-client acceptance remain required. Follow
+[the evidence review](../../../docs/testing/blue-nameplates-2026-10-07-review.md),
 [the feature protocol](../../../docs/overlay/zfe/blue-nameplates.md) and
 [the two-client test matrix](../../../docs/testing/blue-nameplates-2026-10-06.md).
-Final gate evidence and artifact hashes are recorded in that test report.
+Candidate gate evidence, final artifact hashes and backups are recorded in that matrix.
+
+**Installed for DEV testing (2026-10-07):** With both games closed, only the
+tested HUD archive was replaced on the desktop (xScal 0.2.20) and MSI laptop
+(ZFE 0.21.1). Both installed copies match the packaged BA2; previous archives
+and native logs are backed up, and provider/config/keybind hashes are preserved.
+The installed 2.10.144 candidate passed all 31 pure suites, nine source/package checks,
+empty compiler diagnostics and the complete 93/93 Ruffle suite (7.5 minutes).
+Only the HUD archive was replaced on both independently confirmed closed games;
+both installed hashes, prior-archive backups and six desktop/seven laptop
+preserved-file hashes pass post-install verification. Historical 2.10.142 logs on both
+clients show one eligible marker matching a visible native plate and identical
+sampled event/provider/getter payloads. That diagnostic painted zero because the
+envelope reported unready/test; native coloring is not accepted for 2.10.144 until its
+own fresh two-client trace. The DEV test ZIP is
+`.build/FCMChatWidget-2.10.144-reviewed-nameplates-DEV-test.zip`, SHA-256
+`c09481dd4839df3c9d6f8807de664ec6f56a3949a8dfdf787382d7aec714a206`.
+BA2 SHA-256: `c6ab4a154c1ec798827257548c4433f66a675c88e48919d099bf712a3067101e`;
+SWF SHA-256: `a4839280d396605dac509c6bb25f8e8e5fa390ac82d46984747f472915963409`.
 
 
 ## Channel navigation and sends candidate (2026-10-06)

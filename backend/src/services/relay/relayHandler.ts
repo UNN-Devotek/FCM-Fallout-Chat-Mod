@@ -1,3 +1,6 @@
+import { bindRequiredTransactionClient, createRequiredAudit, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredMutation, runRequiredPublicationPrerequisite, runRequiredTransaction } from '../../lib/requiredEffects';
+import { cancelProducerTimer, runtime, producerInterval } from '../../runtime';
+import { accountSocket } from '../../runtime/ingress';
 /**
  * relayHandler.ts — ZFE chat.v1 JSON-frame op dispatcher.
  *
@@ -216,10 +219,11 @@ function linkNoticeBody(code: string | null): string {
 }
 
 async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:24e0c904a3c3', async () => {
   const code = await issueLinkCode(relayUserId);
 
   const redis  = await getRedisClient();
-  const cursor = await redis.incr('relay:seq');
+  const cursor = await runRequiredMutation('publication', 'b9fb45a373dfbcc6c668a083', { stage: 'primary-write-unconfirmed' }, () => redis.incr('relay:seq'), undefined, undefined, undefined);
 
   const event = {
     id:                cursor,
@@ -232,6 +236,8 @@ async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void>
     createdAt:         new Date().toISOString(),
   };
   send(ws, { op: 'event', cursor, event });
+
+  });
 }
 
 /** Recover a consumed notice on the surviving native subscription, not the transient RPC. */
@@ -239,6 +245,7 @@ async function pushRecoveredLinkNoticeLocal(relayUserId: string, code: string): 
   const targets = [...subscribers].filter(sub => sub.userId === relayUserId
     && !sub.linkedUserId && sub.ws.readyState === 1);
   if (targets.length === 0) return;
+  return runRequiredPublicationPrerequisite('relay-link-recovery:local-delivery', async () => {
   const cursor = await nextRelaySeq();
   const event = {
     id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
@@ -251,18 +258,22 @@ async function pushRecoveredLinkNoticeLocal(relayUserId: string, code: string): 
     if (!subscribers.has(sub) || sub.linkedUserId) continue;
     if (!sendSubscriberFrame(sub, frame, cursor)) subscribers.delete(sub);
   }
+  });
 }
 
 async function recoverLinkNotice(relayUserId: string): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:c21ca77ac0d9', async () => {
   // Reuse a valid code or mint once, then share it with the subscriber's backend.
   // Minting per replica would invalidate the code already displayed by another replica.
   const code = await issueLinkCode(relayUserId, true);
   if (!code || !/^[0-9A-Z]{8}$/.test(code)) throw new Error('Link code unavailable');
   await pushRecoveredLinkNoticeLocal(relayUserId, code);
-  const redis = await getRedisClient();
-  await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
+  const redis = await runRequiredPublicationPrerequisite('relay-link-recovery:publication-client', () => getRedisClient());
+  await runRequiredMutation('publication', '627a3a5e27d801da42b14f51', { stage: 'primary-write-unconfirmed' }, () => redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
     kind: 'link-required', relayUserId, code, sourceInstanceId: relayInstanceId,
-  }));
+  })), undefined, undefined, undefined);
+
+  });
 }
 
 /**
@@ -272,28 +283,32 @@ async function recoverLinkNotice(relayUserId: string): Promise<void> {
  * "LINK COMPLETE" system body as the authoritative "now linked" signal (clears its link gate).
  */
 export async function notifyLinkComplete(relayUserId: string): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:459f1d5f30f4', async () => {
   const pushed = await pushLinkCompleteLocal(relayUserId);
   try {
-    const redis = await getRedisClient();
-    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
+    const redis = await runRequiredLookup('publication', 'relay-link:publication-client', () => getRedisClient());
+    await runRequiredMutation('publication', '1c9fc4583381067ef3680cda', { stage: 'primary-write-unconfirmed' }, () => redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
       kind: 'link-complete',
       relayUserId,
       sourceInstanceId: relayInstanceId,
-    }));
+    })), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, relayUserId }, '[relayHandler] cross-instance link completion publish failed');
   }
   logger.info({ relayUserId, pushed }, '[relayHandler] notifyLinkComplete pushed');
+
+  });
 }
 
 /** Deliver a link completion only to subscribers owned by this process. */
 async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
+  return runRequiredPublicationPrerequisite('relay-link:local-delivery', () => runRequiredBundle('publication', 'relayHandler:0f748fd68b9c', async () => {
   const linkedToken = await prisma.hudPairingToken.findFirst({
     where: { userId: relayUserId, revokedAt: null },
     select: { linkedUserId: true },
   });
   const redis  = await getRedisClient();
-  const cursor = await redis.incr('relay:seq');
+  const cursor = await runRequiredMutation('publication', '58e429dec37bf4512b1c262f', { stage: 'primary-write-unconfirmed' }, () => redis.incr('relay:seq'), undefined, undefined, undefined);
   const event = {
     id:                cursor,
     kind:              'chat.message',
@@ -318,6 +333,8 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
   }
   void flushLocalPresenceToRedis();
   return pushed;
+
+  }));
 }
 
 // ── Error envelope ────────────────────────────────────────────────────────────
@@ -636,16 +653,19 @@ export async function evictRelayUser(
   linkedUserId: string,
   options: { code: string; message: string },
 ): Promise<number> {
+  return runRequiredBundle('publication', 'relayHandler:4a89a803b561', async () => {
   const evicted = evictLocalRelayUser(linkedUserId, options.code, options.message);
   try {
-    const redis = await getRedisClient();
-    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
+    const redis = await runRequiredLookup('publication', 'relay-eviction:publication-client', () => getRedisClient(), 'required');
+    await runRequiredMutation('publication', '2a051a268660fb1ccb4408eb', { stage: 'primary-write-unconfirmed' }, () => redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
       kind: 'evict', linkedUserId, code: options.code, message: options.message,
-    }));
+    })), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, linkedUserId }, '[relayHandler] cross-instance relay eviction publish failed');
   }
   return evicted;
+
+  });
 }
 
 // A resync may arrive while a player is hopping worlds. Never replay the previous
@@ -678,23 +698,28 @@ function consumeServerHistoryResyncPending(userId: string): boolean {
 
 /** Private settings replies follow the same authenticated device's subscriber across replicas. */
 async function pushHudLayoutLocal(userId: string, requestId: string, layout: unknown): Promise<void> {
+  return runRequiredPublicationPrerequisite('relay-hud-layout:local-delivery', () => runRequiredBundle('publication', 'relayHandler:fdcfa72319a0', async () => {
   const redis = await getRedisClient();
-  const cursor = await redis.incr('relay:seq');
+  const cursor = await runRequiredMutation('publication', 'd1f27c64779241210331a190', { stage: 'primary-write-unconfirmed' }, () => redis.incr('relay:seq'), undefined, undefined, undefined);
   const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
     senderDisplayName: 'FCM', targetUserId: '', createdAt: new Date().toISOString(),
     body: HUD_LAYOUT_EVENT + requestId + ';' + JSON.stringify(parseHudLayout(layout)) };
   for (const sub of subscribers) {
     if (sub.userId === userId) sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor);
   }
+
+  }));
 }
 
 async function pushNameplatePresenceLocal(userId: string, reply: NameplateReply): Promise<void> {
+  return runRequiredPublicationPrerequisite('relay-nameplate:local-delivery', async () => {
   const cursor = await nextRelaySeq();
   const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
     senderDisplayName: 'FCM', targetUserId: '', createdAt: new Date().toISOString(),
     body: NAMEPLATE_EVENT + JSON.stringify(reply) };
   for (const sub of subscribers) if (sub.userId === userId)
     sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor);
+  });
 }
 
 async function allowNameplateRequest(userId: string): Promise<boolean> {
@@ -711,6 +736,7 @@ async function allowNameplateRequest(userId: string): Promise<boolean> {
 async function pushHudSendReceiptLocal(userId: string, accountId: string | null, response: Record<string, unknown>): Promise<void> {
   const targets = [...subscribers].filter(sub => sub.userId === userId && sub.linkedUserId === accountId);
   if (targets.length === 0) return;
+  return runRequiredPublicationPrerequisite('relay-send-receipt:local-delivery', async () => {
   const cursor = await nextRelaySeq();
   const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
     senderDisplayName: 'FCM', targetUserId: response.targetUserId ?? '', createdAt: new Date().toISOString(),
@@ -719,13 +745,17 @@ async function pushHudSendReceiptLocal(userId: string, accountId: string | null,
     const frame = JSON.stringify({ op: 'event', cursor, event });
     sendSubscriberFrame(sub, frame, cursor);
   }
+  });
 }
 
 async function publishHudSendReceipt(userId: string, accountId: string | null, response: Record<string, unknown>): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:9c4800356076', async () => {
   await pushHudSendReceiptLocal(userId, accountId, response);
-  const redis = await getRedisClient();
-  await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-send-receipt',
-    relayUserId: userId, linkedUserId: accountId, response, sourceInstanceId: relayInstanceId }));
+  const redis = await runRequiredPublicationPrerequisite('relay-send-receipt:publication-client', () => getRedisClient());
+  await runRequiredMutation('publication', 'bf598c94969f40296b647164', { stage: 'primary-write-unconfirmed' }, () => redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-send-receipt',
+    relayUserId: userId, linkedUserId: accountId, response, sourceInstanceId: relayInstanceId })), undefined, undefined, undefined);
+
+  });
 }
 
 // Redis pub/sub listener — initialised once per process.
@@ -764,7 +794,7 @@ function replayHistoryToUser(userId: string, worldId: string | null, requestId =
       const count = history.length + (worldId === null || confirmation ? 1 : 0);
       if (count === 0) return;
       const redis = await getRedisClient();
-      const end = await redis.incrBy('relay:seq', count);
+      const end = await runRequiredMutation('publication', '78371529b4f7cc552a93a8c4', { stage: 'primary-write-unconfirmed' }, () => redis.incrBy('relay:seq', count), undefined, undefined, undefined);
       const replay: Array<Record<string, unknown>> = history.map((event, index) => ({ ...event, id: end - count + index + 1 + (confirmation ? 1 : 0) }));
       if (confirmation) replay.unshift({
         id: end - count + 1, kind: 'chat.message', channel: 'system', messageId: uuidv4(),
@@ -1153,6 +1183,7 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
 }
 
 async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:a47870bbea37', async () => {
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
   if (!rawToken) {
     send(ws, errEnvelope('auth_token_invalid', 'token is required'));
@@ -1194,8 +1225,10 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     }
     const reply = await nameplateReply(request, identity);
     await pushNameplatePresenceLocal(identity.userId, reply);
-    await (await getRedisClient()).publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'nameplate-presence',
-      relayUserId: identity.userId, reply, sourceInstanceId: relayInstanceId }));
+    const publicationRedis = await runRequiredPublicationPrerequisite('relay-nameplate:publication-client', () => getRedisClient());
+    await runRequiredMutation('publication', 'a6e8e70b1d0c4cd86853cfab', { relayUserId: identity.userId, stage: 'nameplate-presence-publication-unconfirmed' },
+      () => publicationRedis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'nameplate-presence',
+      relayUserId: identity.userId, reply, sourceInstanceId: relayInstanceId })));
     sendControlAck(ws);
     return;
   }
@@ -1266,9 +1299,9 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     if (control.layout) await writeHudLayout(identity.userId, control.layout);
     const layout = control.layout ?? await readHudLayout(identity.userId);
     await pushHudLayoutLocal(identity.userId, control.requestId, layout);
-    const redis = await getRedisClient();
-    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-layout',
-      relayUserId: identity.userId, requestId: control.requestId, layout, sourceInstanceId: relayInstanceId }));
+    const redis = await runRequiredPublicationPrerequisite('relay-hud-layout:publication-client', () => getRedisClient());
+    await runRequiredMutation('publication', '6508d222a2ee4098d398f068', { stage: 'primary-write-unconfirmed' }, () => redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-layout',
+      relayUserId: identity.userId, requestId: control.requestId, layout, sourceInstanceId: relayInstanceId })), undefined, undefined, undefined);
     sendControlAck(ws);
     return;
   }
@@ -1418,6 +1451,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     await deliver(errEnvelope('send_conflict', 'Message ID was already used for different content')); return;
   }
   const reply = async (response: Record<string, unknown>): Promise<void> => {
+  return runRequiredBundle('session', 'relayHandler:824d9b94a9c6', async () => {
     const result = outbox ? hudSendResponse(response, outbox.id) : response;
     if (claim?.kind === 'claimed' && receiptRedis) {
       // Keep even failed receipts: an ID denotes one immutable attempt. Explicit
@@ -1425,14 +1459,16 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       const error = response.error;
       if (error && typeof error === 'object' && 'code' in error && error.code === 'rate_limited') {
         // Both rate-limit exits happen before any message is queued/published.
-        await receiptRedis.del(claim.key);
+        await runRequiredMutation('session', 'ca4f3dd7cfa594cfedac9903', { stage: 'primary-write-unconfirmed' }, () => receiptRedis.del(claim.key), undefined, undefined, isRowCountNoChange);
       } else {
-        await receiptRedis.set(claim.key, JSON.stringify({ fingerprint: claim.fingerprint, response: result }),
-          { XX: true, EX: HUD_SEND_RECEIPT_SECONDS });
+        await runRequiredMutation('session', 'a042cd1e137948b47fe7a91e', { stage: 'primary-write-unconfirmed' }, () => receiptRedis.set(claim.key, JSON.stringify({ fingerprint: claim.fingerprint, response: result }),
+          { XX: true, EX: HUD_SEND_RECEIPT_SECONDS }), undefined, undefined, reply => reply === null);
       }
     }
     await deliver(response);
-  };
+
+  });
+};
 
   const giveawayCommand = hudGiveawayCommand(body);
   if (giveawayCommand) {
@@ -1614,6 +1650,8 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     logger.warn({ err }, '[relayHandler] HUD send failed; delivery may be uncertain');
     await deliver(errEnvelope('internal_error', 'Send temporarily unavailable; retry with the same message ID'));
   }
+
+  });
 }
 
 /**
@@ -1622,6 +1660,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
  * itself supplies the target user so the client cannot forge either party.
  */
 async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  return runRequiredBundle('publication', 'relayHandler:c185a928e6eb', async () => {
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
   if (!rawToken) {
     send(ws, errEnvelope('auth_token_invalid', 'token is required'));
@@ -1673,7 +1712,8 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
     targetDisplayName: string | null;
   };
   try {
-    submitted = await prisma.$transaction(async (tx) => {
+    submitted = await runRequiredTransaction('publication', 'fdd6de29a049a49a28bcf578', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       // Serialize reports for this exact reporter/message pair. This closes the
       // concurrent double-submit window without relying on a client-generated
       // idempotency key or a second report table.
@@ -1699,7 +1739,7 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
         throw new RelayReportInputError('You cannot report your own message');
       }
 
-      const report = await tx.report.create({
+      const report = await runRequiredMutation('publication', '05bfb908f6ee42535c7bb9fb', { stage: 'primary-write-unconfirmed' }, () => tx.report.create({
         data: {
           reporterUserId: identity.linkedUserId!,
           targetUserId: message.targetUserId,
@@ -1708,9 +1748,9 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
           notes: details || null,
         },
         select: { id: true, createdAt: true },
-      });
+      }), isPrismaAtomicRefusal, tx, undefined);
       return { report, targetUserId: message.targetUserId, targetDisplayName: message.targetDisplayName };
-    });
+    }), { confirmedRollback: error => error instanceof RelayReportInputError || isPrismaAtomicRefusal(error) });
   } catch (err) {
     if (err instanceof RelayReportInputError) {
       send(ws, errEnvelope('invalid_request', err.message));
@@ -1721,7 +1761,7 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
     return;
   }
 
-  await prisma.auditLog.create({
+  await createRequiredAudit(prisma.auditLog, {
     data: {
       actorId: identity.linkedUserId,
       action: 'submit_report',
@@ -1773,6 +1813,8 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
   }
 
   send(ws, { success: true, status: 'reported' });
+
+  });
 }
 
 async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
@@ -2112,7 +2154,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   subscribers.add(state);
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   ws.once('close', () => {
-    if (pingTimer) clearInterval(pingTimer);
+    if (pingTimer) cancelProducerTimer(pingTimer);
     subscribers.delete(state);
     void flushLocalPresenceToRedis();
   });
@@ -2231,7 +2273,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   if (ws.readyState !== 1 || !subscribers.has(state)) return;
   void flushLocalPresenceToRedis();
   pingTimer = pingMs > 0
-    ? setInterval(() => {
+    ? producerInterval('relay-access-heartbeat', () => {
         if (ws.readyState !== 1) return;       // 1 = OPEN
         if (checkingAccess) return;
         checkingAccess = true;
@@ -2284,6 +2326,8 @@ export function isRelayAvailable(opts: { nodeEnv: string; productionEnabled: boo
 }
 
 export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage): void {
+  accountSocket(ws, runtime, 'relay');
+  if (runtime.isFrozen()) { ws.close(1013, 'Server maintenance; retry shortly'); return; }
   if (!isRelayAvailable({ nodeEnv: env.NODE_ENV, productionEnabled: env.RELAY_PRODUCTION_ENABLED })) {
     logger.warn('[relayHandler] /relay connection refused: RELAY_PRODUCTION_ENABLED is false');
     ws.close(1008, 'relay not available in production');

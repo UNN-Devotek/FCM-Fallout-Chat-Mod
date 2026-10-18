@@ -147,7 +147,12 @@ jobs:
       # CI_RUNNER set (self-hosted) => 'docker'; unset (hosted default) => 'localhost'.
       DATABASE_URL: postgresql://fcm:fcm@${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:5432/fcm_test
       REDIS_URL: redis://${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:6379
+      REDIS_HOST: ${{ vars.CI_RUNNER && 'docker' || 'localhost' }}
+      REDIS_PORT: '6379'
       CHAT_SLOWMODE_TEST_REDIS_URL: redis://${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:6379
+      # Explicit synthetic-only transaction and required recovery source/FK
+      # endpoint fixtures; their tests never default to local .env or skip.
+      FCM_RUNTIME_TRANSACTION_TEST_DATABASE_URL: postgresql://fcm:fcm@${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:5432/fcm_test
       NODE_ENV: test
       # express-session requires a secret at boot; integration tests boot the app.
       SESSION_SECRET: ci-test-session-secret

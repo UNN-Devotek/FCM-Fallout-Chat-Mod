@@ -8,7 +8,7 @@
  * (~2016 rows max steady state: 288 rows/day × 7 days).
  */
 
-import cron from 'node-cron';
+import { producerCron } from '../runtime';
 import logger from '../config/logger';
 import { query as dbQuery } from '../config/database';
 import { getGlobalOnlineCount } from '../services/onlinePresenceService';
@@ -34,7 +34,7 @@ export interface OnlineSnapshotDeps {
 }
 
 export function startOnlineSnapshotJob(deps: OnlineSnapshotDeps = {}): void {
-  const schedule: CronScheduler = deps.schedule ?? ((expr, task) => cron.schedule(expr, task));
+  const schedule: CronScheduler = deps.schedule ?? ((expr, task) => producerCron(expr, task));
   const clientCount = deps.getClientCount ?? getGlobalOnlineCount;
   const runQuery = deps.dbQuery ?? dbQuery;
 

@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 import logger from '../config/logger';
 import { cachedFetch } from '../lib/cachedFetch';
 
@@ -37,6 +38,7 @@ async function fetchFromNukaCrypt(): Promise<NukeCodes | null> {
       headers: { 'User-Agent': 'FalloutChatMod/1.x (falloutchatmod.com)' },
     });
     if (!res.ok) {
+      await discardRuntimeResponse(res);
       logger.warn({ status: res.status }, 'NukaCrypt codes endpoint returned non-OK');
       return null;
     }

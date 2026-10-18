@@ -1,3 +1,4 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 import prisma from '../../config/prisma';
 import { getRedisClient } from '../../config/redis';
 import { readRoster } from './worldRosterService';
@@ -25,21 +26,27 @@ export const bridgeBindingId = (binding: BridgeBinding): string =>
 /** Only the authenticated native ROSTER control may renew this lease. Peer room
  * recomputation must never keep an absent bridge alive. No token is sent to web. */
 export async function renewBridgeLease(accountId: string, relayUserId: string, requestId: string): Promise<void> {
+  return runRequiredBundle('session', 'overlayServerBridge:adbb172b960e', async () => {
   const roster = await readRoster(relayUserId);
   if (!requestId || roster?.requestId !== requestId) return;
   const redis = await getRedisClient();
   const now = Date.now();
-  await redis.set(deviceKey(relayUserId), JSON.stringify({ accountId, requestId, expiresAt: now + BRIDGE_LEASE_MS }),
-    { EX: BRIDGE_LEASE_MS / 1000 });
-  await redis.zRemRangeByScore(accountKey(accountId), '-inf', now);
-  await redis.zAdd(accountKey(accountId), { score: now + BRIDGE_LEASE_MS, value: relayUserId });
-  await redis.expire(accountKey(accountId), 90);
+  await runRequiredMutation('session', 'ef705d65334d309e18402ee2', { stage: 'primary-write-unconfirmed' }, () => redis.set(deviceKey(relayUserId), JSON.stringify({ accountId, requestId, expiresAt: now + BRIDGE_LEASE_MS }),
+    { EX: BRIDGE_LEASE_MS / 1000 }), undefined, undefined, undefined);
+  await runRequiredMutation('session', '67a8f26fdca10f50b95aecd1', { stage: 'primary-write-unconfirmed' }, () => redis.zRemRangeByScore(accountKey(accountId), '-inf', now), undefined, undefined, undefined);
+  await runRequiredMutation('session', '173f993ef4755a3fb4447817', { stage: 'primary-write-unconfirmed' }, () => redis.zAdd(accountKey(accountId), { score: now + BRIDGE_LEASE_MS, value: relayUserId }), undefined, undefined, undefined);
+  await runRequiredMutation('session', '5b64574d664c7a5d8c80541e', { stage: 'primary-write-unconfirmed' }, () => redis.expire(accountKey(accountId), 90), undefined, undefined, undefined);
+
+  });
 }
 
 export async function clearBridgeLease(relayUserId: string): Promise<void> {
+  return runRequiredBundle('session', 'overlayServerBridge:9f393efdb1c4', async () => {
   // Index entries expire independently; deleting the device is enough to deny access.
   const redis = await getRedisClient();
-  await redis.del(deviceKey(relayUserId));
+  await runRequiredMutation('session', '66f634a477ad64fb10c00d94', { stage: 'primary-write-unconfirmed' }, () => redis.del(deviceKey(relayUserId)), undefined, undefined, isRowCountNoChange);
+
+  });
 }
 
 /** Fail closed on ambiguous devices, revoked/relinked tokens, absent rosters and

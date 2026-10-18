@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Free self-service chat-name setting.
  *
@@ -42,6 +43,7 @@ export async function setChatName(input: {
   chatName: string | null;
   source: 'website' | 'discord';
 }): Promise<ChatNameChangeResult> {
+  return runRequiredBundle('moderation', 'chatNameService:9ebda3107336', async () => {
   const user = await prisma.user.findUnique({
     where: { id: input.userId },
     select: {
@@ -72,7 +74,7 @@ export async function setChatName(input: {
 
   if (user.chatName === next) return { ok: true, chatName: next, changed: false };
 
-  const updated = await prisma.user.update({
+  const updated = await runRequiredMutation('moderation', '0da29473b532ea51c44f8f1d', { stage: 'primary-write-unconfirmed', rowId: user.id }, () => prisma.user.update({
     where: { id: user.id },
     data: { chatName: next },
     select: {
@@ -84,9 +86,9 @@ export async function setChatName(input: {
       installToken: true,
       discordId: true,
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
-  prisma.auditLog.create({
+  createRequiredAudit(prisma.auditLog, {
     data: {
       actorId: updated.id,
       action: 'chat_name_updated',
@@ -126,6 +128,8 @@ export async function setChatName(input: {
   }
 
   return { ok: true, chatName: updated.chatName, changed: true };
+
+  });
 }
 
 export default { setChatName };

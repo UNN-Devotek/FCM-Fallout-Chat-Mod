@@ -29,10 +29,11 @@ test('post-push patch set is static, ordered, and complete', () => {
 
   assert.match(POST_PUSH_PATCHES[0].sql, /CREATE EXTENSION IF NOT EXISTS pg_trgm/);
   const sourceSql = POST_PUSH_PATCHES[1].sql;
-  for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot']) {
+  for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot', 'web']) {
     assert.match(sourceSql, new RegExp(`'${source}'`));
   }
   assert.match(sourceSql, /position\('bot' IN definition\) = 0/);
+  assert.match(sourceSql, /position\('''web''::text' IN definition\) = 0/);
   assert.match(POST_PUSH_PATCHES[2].sql, /require_target/);
   assert.match(POST_PUSH_PATCHES[3].sql, /ON CONFLICT/);
   assert.match(POST_PUSH_PATCHES[4].sql, /fuck/);
@@ -63,6 +64,13 @@ test('bot giveaway announcements are accepted by the idempotent migration', () =
   for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot']) {
     assert.match(sql, new RegExp(`'${source}'::text`));
   }
+});
+
+test('web-source migration exactly matches the post-push compatibility patch', () => {
+  const sql = readFileSync(join(process.cwd(), 'prisma/migrations/20261015070000_allow_web_message_source/migration.sql'), 'utf8');
+  assert.equal(sql.slice(sql.indexOf('DO $$')).trim(), POST_PUSH_PATCHES[1].sql.trim());
+  assert.match(sql, /position\('''web''::text' IN definition\) = 0/);
+  assert.match(sql, /t\.oid = 'messages'::regclass/);
 });
 
 test('applyPostPushPatches executes every patch exactly once', async () => {

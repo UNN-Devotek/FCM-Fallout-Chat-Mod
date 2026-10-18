@@ -20,7 +20,7 @@ and data-only repairs. After `db push`, `baseline-migrations.sh` runs
 [`src/scripts/applyPostPushPatches.ts`](../../backend/src/scripts/applyPostPushPatches.ts), and
 the server applies the same patch set during startup. These patches are static, idempotent, and
 fail-closed. The current set keeps `messages.source` aligned with all producers (`game`,
-`discord`, `hud`, `relay`, `mcp`, `ws`), repairs only the untouched stock automod rule to
+`discord`, `hud`, `relay`, `mcp`, `ws`, `web`, `bot`), repairs only the untouched stock automod rule to
 target-gated slur protection, removes only the four exact legacy chat-profanity literal rows
 (`fuck`, `shit`, `bastard`, `assh`) once (tracked by a dedicated cleanup marker), and inserts
 disabled/shadow AI moderation defaults. It also restores absent `/acp`, `/bob`, and `/ct`
@@ -110,13 +110,18 @@ The older Prisma-generated migrations (before this rule was established) omit `I
 ## Message source constraint
 
 `messages_source_check` must admit every value written by the message producers:
-`game`, `discord`, `hud`, `relay`, `mcp`, `ws`, and `bot`. Giveaway cards and
-results use `bot`. The idempotent
-`20260925193000_allow_bot_message_source` migration and the matching
+`game`, `discord`, `hud`, `relay`, `mcp`, `ws`, `web`, and `bot`. Authenticated
+administrator WebSocket chat uses `web`; giveaway cards and results use `bot`.
+The idempotent `20261015070000_allow_web_message_source` migration and matching
 `applyPostPushPatches` rule both enforce this set because hosted startup can
 mark migrations applied after `db push` without replaying their SQL. A missing
 `bot` source allowed a giveaway row to be created while its queued announcement
-failed to persist, leaving the HUD feed empty.
+failed to persist, leaving the HUD feed empty. A missing `web` source similarly
+rejected queued administrator chat. The guard resolves the actual `messages`
+relation in the active schema and checks the exact quoted `web` literal, so
+`webhook` cannot mask the omission. Populated old constraints, both upgrade paths,
+repeat application, every allowed source and preserved UUID/time are tested on
+real PostgreSQL by the required backend Jest gate.
 
 ## Generating a New Migration
 

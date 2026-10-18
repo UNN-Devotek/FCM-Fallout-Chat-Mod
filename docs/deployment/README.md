@@ -8,13 +8,13 @@ This section covers production hosting, the Electron overlay release pipeline, p
 
 | Concern | Detail |
 |---------|--------|
-| Hosting | Self-hosted VPS running Docker Compose, managed by **Dokploy** |
+| Hosting | Production currently runs on the **Hostinger VPS** cutover stack; return to **Mothership/Dokploy** is planned, gated by the [production-return plan](return-production-to-mothership.md) |
 | Public URL | `https://falloutchatmod.com` |
 | Edge | **Cloudflare Tunnel** (`cloudflared` → backend container, port 7676) |
 | Reverse proxy | **Not Traefik** — the Cloudflare Tunnel is the only ingress; `traefik.enable=false` is set on the backend service label |
-| Auto-deploy | Every push to `prod` triggers Dokploy to rebuild and redeploy |
+| Auto-deploy | Currently the Hostinger GitHub workflow deploys `prod` pushes when its repository/local gates are enabled. Mothership's dormant Prod Dokploy trigger must be fenced before promotion; see the return plan. |
 | Monitoring | Uptime Kuma |
-| Backups | Dokploy built-in S3-compatible backup job (no manual steps) |
+| Backups | Inventory and verify the authoritative host's backup jobs and complete restore coverage; a configured Dokploy S3 job alone does not prove recovery of the current Hostinger stack |
 
 ### Services (docker-compose.yml)
 
@@ -30,6 +30,12 @@ The backend serves the compiled admin dashboard SPA same-origin (baked into the 
 No host ports are published for the backend in production — it is reachable only through the Cloudflare Tunnel over `dokploy-network`.
 
 ### Standby / Failover
+
+The current [production-return plan](return-production-to-mothership.md) covers
+code integration, validation on Hostinger, fresh-state restoration onto Mothership
+and a 48-hour hold before Hostinger power-off. It identifies unresolved freeze/drain,
+native acceptance, edge-control and restore/timing gates. Do not execute a Prod
+push while dormant Mothership auto-deploy can start a second writer.
 
 For temporary laptop cutovers, use the isolated, fail-closed manifest in
 [`deploy/laptop-cutover/`](../../deploy/laptop-cutover/README.md). Dev and
@@ -75,7 +81,10 @@ If the tunnel goes down:
 
 ## Backend-only vs. Overlay Releases
 
-**Backend / dashboard changes** — push to `prod`; Dokploy rebuilds automatically. No client release needed.
+**Backend / dashboard changes** — the authoritative host's enabled deployment
+trigger handles `prod` pushes. During the production return, fence both hosts'
+triggers and deploy only the accepted revision through the recorded procedure.
+No client release is needed for backend/dashboard-only changes.
 
 > **Promote `dev` → `prod` with a merge commit — never squash or rebase that PR.** Feature PRs are
 > squash-merged into `dev` (fine), but the `dev` → `prod` promotion PR **must** be merged as a *merge
@@ -116,6 +125,7 @@ If the tunnel goes down:
 | [qc2-package-contract.md](qc2-package-contract.md) | FCM ZIP compatibility contract and release checks for the Quick Configuration 2 fork |
 | [code-signing.md](code-signing.md) | AV / SmartScreen situation; Azure Trusted Signing path |
 | [secret-rotation-runbook.md](secret-rotation-runbook.md) | Procedure for rotating a DB credential (consistent backup + minimal downtime) and scrubbing secrets from git history |
+| [return-production-to-mothership.md](return-production-to-mothership.md) | Code promotion and Hostinger → Mothership return: readiness gates, write freeze/drain, complete state transfer, rollback and 48-hour retirement hold |
 | [discord-scheduled-events.md](discord-scheduled-events.md) | Production configuration, permissions, validation, and smoke test for Discord Scheduled Event mirroring |
 
 ### Related docs

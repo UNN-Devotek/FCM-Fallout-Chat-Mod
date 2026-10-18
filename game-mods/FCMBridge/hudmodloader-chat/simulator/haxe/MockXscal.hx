@@ -31,6 +31,7 @@ class MockXscal {
     public static var lastGiveawayChannel(default, null):String = "";
     public static var lastRosterBody(default, null):String = "";
     public static var lastRoomDiagnosticBody(default, null):String = "";
+    public static var lastNameplateControl(default, null):String = "";
     public static var sessionInputEnabled:Bool = false;
     public static var sessionInputBusy:Bool = false;
     public static var sessionEndResult:Dynamic = true;
@@ -54,6 +55,7 @@ class MockXscal {
         cursor = 0;
         pollCount = 0;
         callCount = 0;
+        lastNameplateControl = "";
     }
 
     public static function resetLocalLayout():Void {
@@ -204,6 +206,7 @@ class MockXscal {
                     targetUserId:"FCMHUD/1;g=Event%20announced%20in%20Events."});
             }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
+                if (StringTools.startsWith(body, FcmNameplates.CONTROL)) lastNameplateControl = body;
                 if (StringTools.startsWith(body, "FCMCTL/1/LAYOUT/")) {
                     layoutSendCount++;
                     lastLayoutBody = body;

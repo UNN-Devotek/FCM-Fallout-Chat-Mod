@@ -964,17 +964,24 @@ describe('relay WebSocket ops', () => {
   });
 
   test('register is rate-limited before token hashing', async () => {
-    for (let i = 0; i < 3; i += 1) {
-      const { ws, msgs } = await conn();
-      const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: `RatePlayer${i}` }));
-      expect(res).toMatchObject({ success: true, role: 'user' });
-      ws.close();
-    }
+    // All four attempts must belong to one limiter window. Real wall time can
+    // cross its minute boundary while the asynchronous registrations complete.
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now());
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        const { ws, msgs } = await conn();
+        const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: `RatePlayer${i}` }));
+        expect(res).toMatchObject({ success: true, role: 'user' });
+        ws.close();
+      }
 
-    const { ws, msgs } = await conn();
-    const limited = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: 'RatePlayer4' }));
-    expect(limited).toMatchObject({ success: false, error: { code: 'rate_limited' } });
-    ws.close();
+      const { ws, msgs } = await conn();
+      const limited = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: 'RatePlayer4' }));
+      expect(limited).toMatchObject({ success: false, error: { code: 'rate_limited' } });
+      ws.close();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   // ── hello ────────────────────────────────────────────────────────────────────

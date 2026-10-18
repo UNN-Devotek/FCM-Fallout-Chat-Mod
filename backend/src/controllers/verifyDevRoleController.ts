@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 /**
  * PROD-side narrow developer-role verification endpoint.
  *
@@ -46,8 +47,9 @@ export const defaultProdMemberRolesFetcher: ProdMemberRolesFetcher = async (guil
     `https://discord.com/api/v10/guilds/${guildId}/members/${discordId}`,
     { headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } },
   );
-  if (res.status === 404) return null; // member not in guild
   if (!res.ok) {
+    await discardRuntimeResponse(res);
+    if (res.status === 404) return null; // member not in guild
     throw new Error(`Discord member lookup failed (HTTP ${res.status})`);
   }
   const member = (await res.json()) as { roles?: string[] };

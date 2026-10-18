@@ -1,8 +1,11 @@
+import { beginRuntimeFetch as fetch, discardRuntimeResponse } from '../runtime/nativeFetch';
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, RequestHandler } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 import env from '../config/environment';
 import { verifyQaRole } from '../services/qaAuthService';
 import { captureAvatar } from '../services/avatarService';
@@ -21,12 +24,13 @@ function qaRedirectUri(req: Request): string {
 
 /** GET /auth/discord/qa/start?installToken=... -> redirect to Discord OAuth. */
 export async function qaStart(req: Request, res: Response): Promise<void> {
+  return runRequiredBundle('session', 'qaOAuthController:f68c7c730994', async () => {
   const installToken = String(req.query.installToken || '');
   if (!installToken) { res.status(400).send('Missing installToken'); return; }
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(`qa_oauth_state:${state}`, installToken, { EX: STATE_TTL });
+    await runRequiredMutation('session', '029cfe3541ce42b4da5a96d6', { stage: 'primary-write-unconfirmed' }, () => redis.set(`qa_oauth_state:${state}`, installToken, { EX: STATE_TTL }), undefined, undefined, undefined);
   } catch (err) {
     logger.error({ err }, '[qa-oauth] failed to store state');
     res.status(500).send('Internal error');
@@ -44,6 +48,8 @@ export async function qaStart(req: Request, res: Response): Promise<void> {
   // the user. Never let browsers or intermediary caches reuse this redirect.
   res.setHeader('Cache-Control', 'no-store');
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+
+  });
 }
 
 export interface QaIdentity { id: string; username: string; global_name?: string; avatar?: string | null; }
@@ -124,10 +130,13 @@ export function makeQaCallbackHandler(deps: QaCallbackDeps): RequestHandler {
 /** Real deps wiring. */
 export const defaultQaCallbackDeps: QaCallbackDeps = {
   async consumeState(state) {
+  return runRequiredBundle('identity', 'qaOAuthController:66f376181fba', async () => {
     const redis = await getRedisClient();
-    const it = await redis.getDel(`qa_oauth_state:${state}`);
+    const it = await runRequiredMutation('identity', 'a0def3410121eb448de6e1db', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`qa_oauth_state:${state}`), undefined, undefined, reply => reply === null);
     return it ?? null;
-  },
+
+  });
+},
   async exchangeCode(code, redirectUri) {
     const r = await fetch('https://discord.com/api/oauth2/token', {
       method: 'POST',
@@ -140,25 +149,29 @@ export const defaultQaCallbackDeps: QaCallbackDeps = {
         redirect_uri: redirectUri,
       }),
     });
-    if (!r.ok) throw new Error(`token exchange HTTP ${r.status}`);
+    if (!r.ok) { await r.text(); throw new Error(`token exchange HTTP ${r.status}`); }
     const j = (await r.json()) as { access_token: string };
     return { accessToken: j.access_token };
   },
   async fetchIdentity(accessToken) {
     const r = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!r.ok) throw new Error(`identity HTTP ${r.status}`);
+    if (!r.ok) { await discardRuntimeResponse(r); throw new Error(`identity HTTP ${r.status}`); }
     return (await r.json()) as QaIdentity;
   },
   async fetchDevGuildRoles(_discordUserId, accessToken) {
     const r = await fetch(`https://discord.com/api/v10/users/@me/guilds/${env.DEV_GUILD_ID}/member`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (r.status === 404) return [];
-    if (!r.ok) throw new Error(`dev-guild member HTTP ${r.status}`);
+    if (!r.ok) {
+      await discardRuntimeResponse(r);
+      if (r.status === 404) return [];
+      throw new Error(`dev-guild member HTTP ${r.status}`);
+    }
     const m = (await r.json()) as { roles?: string[] };
     return Array.isArray(m.roles) ? m.roles : [];
   },
   async upsertUser(identity, installToken) {
+  return runRequiredBundle('identity', 'qaOAuthController:efd2ff7f5add', async () => {
     const displayName = String(identity.global_name || identity.username).slice(0, 128);
     const discordProfile = {
       discordId: identity.id,
@@ -181,19 +194,20 @@ export const defaultQaCallbackDeps: QaCallbackDeps = {
         where: { installToken },
         select: { id: true },
       });
-      await prisma.$transaction(async (tx) => {
+      await runRequiredTransaction('identity', '056c6eb149424890f6da5c45', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
         if (placeholder && placeholder.id !== existingAccount.id) {
           await mergeUserInto(existingAccount.id, placeholder.id, tx);
         }
-        await tx.user.update({
+        await runRequiredMutation('identity', 'ca750bf729101a5c9ab2bc27', { stage: 'primary-write-unconfirmed', rowId: existingAccount.id }, () => tx.user.update({
           where: { id: existingAccount.id },
           data: { installToken, ...discordProfile },
-        });
-      });
+        }), isPrismaAtomicRefusal, tx, undefined);
+      }), { confirmedRollback: isPrismaAtomicRefusal });
       return { id: existingAccount.id, displayName };
     }
 
-    const user = await prisma.user.upsert({
+    const user = await runRequiredMutation('identity', 'd3d09f70eb65827d6c3ffd81', { stage: 'primary-write-unconfirmed' }, () => prisma.user.upsert({
       where: { installToken },
       update: discordProfile,
       create: {
@@ -202,22 +216,31 @@ export const defaultQaCallbackDeps: QaCallbackDeps = {
         ...discordProfile,
       },
       select: { id: true, username: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     return { id: user.id, displayName: displayName };
-  },
+
+  });
+},
   async captureAvatar(discordId, avatarHash) {
     return captureAvatar(discordId, avatarHash);
   },
   async mintSession(userId) {
+  return runRequiredBundle('session', 'qaOAuthController:4a71d1f5166f', async () => {
     const token = uuidv4();
     const redis = await getRedisClient();
-    await redis.set(`session:${token}`, userId, { EX: SESSION_TTL_SECONDS });
-    prisma.session.create({ data: { token, userId, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000) } })
+    await runRequiredMutation('session', 'db9e5993fdeb271cfd262d26', { stage: 'primary-write-unconfirmed' }, () => redis.set(`session:${token}`, userId, { EX: SESSION_TTL_SECONDS }), undefined, undefined, undefined);
+    void runtime.required('session:persist', () => prisma.session.create({ data: { token, userId, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000) } }),
+      { userId, source: 'qa' })
       .catch((err: Error) => logger.warn({ err }, '[qa-oauth] failed to persist session to DB'));
     return token;
-  },
+
+  });
+},
   async storeGrant(installToken, grant) {
+  return runRequiredBundle('session', 'qaOAuthController:20429f86aa21', async () => {
     const redis = await getRedisClient();
-    await redis.set(`qa_grant:${installToken}`, JSON.stringify(grant), { EX: GRANT_TTL });
-  },
+    await runRequiredMutation('session', '661594f13f5d443238ee77d1', { stage: 'primary-write-unconfirmed' }, () => redis.set(`qa_grant:${installToken}`, JSON.stringify(grant), { EX: GRANT_TTL }), undefined, undefined, undefined);
+
+  });
+},
 };

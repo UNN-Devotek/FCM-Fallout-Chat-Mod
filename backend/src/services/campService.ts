@@ -1,3 +1,5 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * campService — CAMP item lookup backed by the 76-CAMPDatabase.
  *
@@ -143,6 +145,7 @@ function mapCampRow(r: CampRawRow): CampItemResult {
  *   the network request and parse this text directly.
  */
 export async function ingestCampDatabase(preloadedText?: string): Promise<{ fetched: number; upserted: number; imagesAdded: number }> {
+  return runRequiredBundle('domain', 'campService:63d6b0942011', async () => {
   logger.info('[campService] starting CAMP database ingest');
 
   let raw: RawCampRecord[];
@@ -153,7 +156,7 @@ export async function ingestCampDatabase(preloadedText?: string): Promise<{ fetc
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(CAMP_DB_URL, { signal: controller.signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status} from CAMP DB`);
+      if (!res.ok) { await discardRuntimeResponse(res); throw new Error(`HTTP ${res.status} from CAMP DB`); }
       raw = (await res.json()) as RawCampRecord[];
     } finally {
       clearTimeout(timeout);
@@ -183,11 +186,11 @@ export async function ingestCampDatabase(preloadedText?: string): Promise<{ fetc
 
         const { sourceType, sourceLabel } = deriveCampSource(rec as Record<string, unknown>);
 
-        const row = await prisma.campItem.upsert({
+        const row = await runRequiredMutation('domain', 'ea684f13e6e0a7c739f2a42b', { stage: 'primary-write-unconfirmed' }, () => prisma.campItem.upsert({
           where:  { name_formId: { name, formId: formId ?? '' } },
           create: { name, category, subCategory: subCat, budgetCost: budget, plan, formId, sourceType, sourceLabel, updatedAt: new Date() },
           update: { category, subCategory: subCat, budgetCost: budget, plan, sourceType, sourceLabel, updatedAt: new Date() },
-        });
+        }), isPrismaAtomicRefusal, undefined, undefined);
         upserted++;
         return { row, rec };
       }),
@@ -229,6 +232,8 @@ export async function ingestCampDatabase(preloadedText?: string): Promise<{ fetc
   }
 
   return { fetched: raw.length, upserted, imagesAdded };
+
+  });
 }
 
 // ── Sync service ──────────────────────────────────────────────────────────────
@@ -270,7 +275,7 @@ export async function getCampUpdateStatus(): Promise<CampUpdateStatus> {
       const text  = await res.text();
       const hash  = quickHash(text);
       updatesAvailable = (!storedHash || storedHash !== hash) ? 1 : 0;
-    }
+    } else await discardRuntimeResponse(res);
   } catch (err) {
     logger.warn({ err }, '[campService] getCampUpdateStatus: fetch failed, returning 0');
   }
@@ -303,6 +308,7 @@ export async function runCampSync(): Promise<{ fetched: number; upserted: number
       clearTimeout(timer);
     }
     if (fetchRes.ok) rawText = await fetchRes.text();
+    else await discardRuntimeResponse(fetchRes);
   } catch (err) {
     logger.warn({ err }, '[campService] runCampSync: pre-fetch failed, falling back to ingest fetch');
   }

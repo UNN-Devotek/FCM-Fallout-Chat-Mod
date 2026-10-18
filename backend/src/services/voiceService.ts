@@ -1,3 +1,5 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
+import { runtime, producerInterval } from '../runtime';
 /**
  * Temporary "Join-to-Create" voice channels.
  *
@@ -136,20 +138,27 @@ function buildPanel() {
 // Lifecycle helpers
 // ---------------------------------------------------------------------------
 async function persistOwner(channelId: string, guildId: string, ownerId: string): Promise<void> {
-  await prisma.voiceChannel
+  return runRequiredBundle('domain', 'voiceService:38ef9b073462', async () => {
+  await runRequiredMutation('domain', 'e5be54a36e2fff3f46336b3a', { channelId, guildId, ownerId, stage: 'voice-owner-write-unconfirmed' }, () => prisma.voiceChannel
     .upsert({
       where: { discordChannelId: channelId },
       update: { ownerId },
       create: { discordChannelId: channelId, guildId, ownerId },
-    })
-    .catch((err) => logger.error({ err, channelId }, 'voice: failed to persist owner'));
+    }), undefined, undefined, undefined)
+    .catch((err) => {
+      logger.error({ err, channelId }, 'voice: failed to persist owner'); });
+
+  });
 }
 
 async function forgetChannel(channelId: string): Promise<void> {
+  return runRequiredBundle('domain', 'voiceService:2fe49603a696', async () => {
   owners.delete(channelId);
-  await prisma.voiceChannel
-    .deleteMany({ where: { discordChannelId: channelId } })
-    .catch(() => {});
+  await runRequiredMutation('domain', '55650cb8c7bc197d50a753a3', { channelId, stage: 'voice-owner-delete-unconfirmed' }, () => prisma.voiceChannel
+    .deleteMany({ where: { discordChannelId: channelId } }), undefined, undefined, isRowCountNoChange)
+    .catch(() => { /* Primary helper retained the unresolved deletion. */ });
+
+  });
 }
 
 async function deleteIfEmpty(channel: VoiceChannel | null | undefined): Promise<void> {
@@ -499,7 +508,7 @@ async function startupSweep(client: Client): Promise<void> {
 }
 
 function periodicSweep(): void {
-  setInterval(() => {
+  producerInterval('voice-sweep', () => {
     for (const channelId of [...owners.keys()]) {
       const ch = clientRef?.channels.cache.get(channelId);
       if (ch && ch.type === ChannelType.GuildVoice) {
@@ -512,7 +521,7 @@ function periodicSweep(): void {
 // Poll the lobby for stranded members and (re)create their channels. This is the
 // retry/recovery path for a missed join event or a previously-failed create.
 function periodicLobbyReconcile(): void {
-  setInterval(() => {
+  producerInterval('voice-lobby-reconcile', () => {
     void reconcileLobby();
   }, 15_000).unref?.();
 }

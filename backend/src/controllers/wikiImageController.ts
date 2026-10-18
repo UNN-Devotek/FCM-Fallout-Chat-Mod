@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 /**
  * wikiImageController — proxies a wiki entity image through our own origin.
  *
@@ -53,6 +54,7 @@ async function fetchWithRetry(source: string): Promise<{ buf: Buffer; contentTyp
           return { buf, contentType: upstream.headers.get('content-type') || 'image/webp' };
         }
       }
+      if (!upstream.ok) await discardRuntimeResponse(upstream);
       logger.warn({ source, status: upstream.status, attempt }, '[wikiImage] upstream non-OK');
     } catch (err) {
       logger.warn({ err, source, attempt }, '[wikiImage] upstream fetch error');
