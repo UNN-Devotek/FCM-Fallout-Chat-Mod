@@ -1,5 +1,5 @@
 # ── Dashboard static build ────────────────────────────────────────────────────
-FROM node:22-alpine AS dashboard-builder
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS dashboard-builder
 ARG VITE_DEV_PERSONAS=false
 ENV VITE_DEV_PERSONAS=$VITE_DEV_PERSONAS
 WORKDIR /dashboard
@@ -11,7 +11,7 @@ COPY marketing/promo/src/ /marketing/promo/src/
 RUN npm run build
 
 # ── TypeScript build ──────────────────────────────────────────────────────────
-FROM node:22-alpine AS ts-builder
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS ts-builder
 WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci
@@ -22,7 +22,7 @@ COPY backend/src ./src
 RUN npx tsc
 
 # ── Production image ─────────────────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
 # openssl: Prisma. postgresql-client: pg_dump/psql for the /admin/migration
 # dump+restore data-migration endpoints.
 RUN apk add --no-cache openssl postgresql-client
