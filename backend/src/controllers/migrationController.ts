@@ -389,7 +389,8 @@ async function restoreStorage(req: Request, res: Response, _next: NextFunction):
 
     // Collect the entry into a Buffer (individual objects are small images; 9 GB is the aggregate)
     const chunks: Buffer[] = [];
-    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    // tar-stream emits raw Buffers; this stream never sets a text encoding.
+    stream.on('data', (chunk) => { chunks.push(chunk as Buffer); });
     stream.on('error', () => {
       failed++;
       next();

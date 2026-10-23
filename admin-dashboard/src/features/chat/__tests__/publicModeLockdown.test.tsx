@@ -10,7 +10,7 @@
 // If component seams move, update this file accordingly.
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
@@ -20,7 +20,7 @@ import React from 'react';
 const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiDelete = vi.fn();
-vi.mock('../../services/api', () => ({
+vi.mock('../../../services/api', () => ({
   api: {
     get: (...a: unknown[]) => apiGet(...a),
     post: (...a: unknown[]) => apiPost(...a),
@@ -221,6 +221,11 @@ describe('ChatOverlay — public-mode lockdown', () => {
       </QueryClientProvider>,
     );
   }
+
+  it('loads public channels through the shared API boundary', async () => {
+    renderPublic();
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/api/channels'));
+  });
 
   it('mounts in public mode without opening the authed WebSocket', async () => {
     renderPublic();

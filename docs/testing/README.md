@@ -106,11 +106,18 @@ the mock relay).
 | Workspace | Unit / Component | E2E | Rationale |
 | --------- | ---------------- | --- | --------- |
 | `backend` | **Jest 30.4.2** (existing, supertest) | — | CommonJS suites, Postgres+Redis integration; no Vite. |
-| `admin-dashboard` | **Vitest + @testing-library/react + jsdom** (new `test:unit`) | `@playwright/test` (existing) | Owns the canonical `ChatOverlay.tsx` — highest-value coverage. Vitest reuses the Vite 6 + plugin-react transform with zero extra config. |
+| `admin-dashboard` | **Vitest + @testing-library/react + jsdom** (new `test:unit`) | `@playwright/test` (existing) | Owns the canonical `ChatOverlay.tsx` — highest-value coverage. Vitest reuses the Vite 8 + plugin-react transform with zero extra config. |
 | `cross-platform-overlay` | **Vitest + @testing-library/react + jsdom** (new) | `@playwright/test` `_electron` | Same Vite reuse; jsdom needs no native electron, so units run on `ubuntu-latest`. |
 | repo root `tests/` | — | `@playwright/test` (`_electron` + chromium) | Cross-process E2E driving the real Electron app against the mock relay. |
 
-**Why Vitest, not Jest, for the two frontend packages.** Both already run Vite 6 with
+Both frontend workspaces use Vitest 5 and matching `@vitest/coverage-v8` versions.
+Use Node >=22.12.0 and upgrade the runner and coverage package together. The
+dashboard setup registers jest-dom matchers explicitly and augments
+`vitest.Matchers<R, T>`; Vitest 5 no longer inherits global Jest matcher types.
+Keep the public-mode test's API mock on `src/services/api.ts` and its positive
+channel-load assertion so the lockdown checks observe the real component boundary.
+
+**Why Vitest, not Jest, for the two frontend packages.** Both run Vite 8 with
 `@vitejs/plugin-react`. Vitest reuses that exact transform pipeline (esbuild TS/JSX, path aliases,
 Tailwind), native ESM (both packages are `"type": "module"` posture), jsdom env, RTL compatibility,
 and v8 coverage out of the box. Jest would require babel/ts-jest, a manual `moduleNameMapper` for
