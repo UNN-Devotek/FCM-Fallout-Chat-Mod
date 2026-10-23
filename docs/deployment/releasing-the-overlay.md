@@ -159,6 +159,9 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 >
 > Each build is **artifacts only** and never publishes. Windows requires valid
 > Authenticode signatures and native packaged launch checks before artifact upload.
+> Each gate uses a fresh temporary AppData profile and portable directory, so a
+> reused runner cannot accept an earlier build's log. Failed gates leave no success
+> receipt; the temporary profile is removed after the checks.
 > It preserves the NSIS unpacked payload before portable metadata replaces it and
 > records executable hashes and launch results in `windows-release-gates.json`.
 > Match those receipts to the downloaded executables. VirusTotal remains mandatory
@@ -315,15 +318,14 @@ Keep the validated ZIP: the release pin identifies this exact archive.
 `Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux), and invokes the repeatable HUD package helper:
 
 ```powershell
-.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.9-prod.zip>"
+.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>"
 ```
 
 Produces (in `cross-platform-overlay/dist-electron/`):
 - `Fallout Chat Mod Setup X.Y.Z (Windows).zip` — installer guide plus optional bridge folder.
 - `Fallout Chat Mod Portable X.Y.Z.zip` — portable guide plus optional bridge folder.
-  Packaging fails closed unless the bundled bridge is the reviewed 0.2.9 candidate with ZIP
-  SHA-256 `9c245bcad80b7baf1681d29273fda97008403a047bb941e00622a7210bb465af`
-  and BA2 SHA-256 `9ae03b9e047c5fea221d10a8c805b0fe07cfcadb79af9667c766a4c627b54e44`.
+  Packaging fails closed unless the bundled bridge matches the current version and
+  exact ZIP/BA2 hashes in the pinned bridge block above.
   Native room/lag acceptance is still required before publishing this candidate.
 - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — bundles the AppImage, `.deb`,
   Linux guide, `.kwinrule`, and clearly optional bridge folder.

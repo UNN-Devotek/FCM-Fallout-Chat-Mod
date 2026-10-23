@@ -20,7 +20,9 @@
 //
 // Runner: vitest (environment 'node').
 
-import { readFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { spawnSync } from 'child_process';
 import { resolve, join } from 'path';
 import { describe, it, expect } from 'vitest';
 
@@ -33,7 +35,82 @@ const workflow = readFileSync(
 );
 const pkg = JSON.parse(readFileSync(join(OVERLAY_ROOT, 'package.json'), 'utf8'));
 
+// Execute the actual workflow gate, substituting only signing and native launch.
+// The deliberately stale profiles model a reused self-hosted runner.
+function runNativeGate(installerExit, check) {
+  const temp = mkdtempSync(join(tmpdir(), 'fcm-native-gate-'));
+  try {
+    const dist = join(temp, 'cross-platform-overlay', 'dist-electron');
+    const runnerTemp = join(temp, 'runner');
+    const sharedProfile = join(temp, 'shared-profile');
+    const files = [
+      [join(dist, 'Fallout Chat Mod Setup 1.4.3.exe'), 'installer fixture'],
+      [join(dist, 'Fallout Chat Mod Portable 1.4.3.exe'), 'portable fixture'],
+      [join(dist, 'FCMData', 'logs', 'main.log'), 'stale portable success'],
+      [join(sharedProfile, 'Fallout Chat Mod', 'logs', 'main.log'), 'stale installed success'],
+      [join(runnerTemp, 'fcm-installer-smoke', 'win-unpacked', 'resources', 'app.asar'), 'asar fixture'],
+    ];
+    for (const [file, bytes] of files) {
+      mkdirSync(resolve(file, '..'), { recursive: true });
+      writeFileSync(file, bytes);
+    }
+    const receipt = join(dist, 'windows-release-gates.json');
+    writeFileSync(receipt, 'stale receipt');
+    const eventsFile = join(temp, 'events.jsonl');
+    const body = workflow.match(/- name: Verify Windows signatures and native launch gates[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name: Verify Windows artifact contract)/)?.[1];
+    expect(body, 'native gate must be selected from the release workflow').toBeTruthy();
+    const script = join(temp, 'gate.ps1');
+    writeFileSync(script, `
+$ErrorActionPreference = 'Stop'
+function Get-AuthenticodeSignature { param($LiteralPath) [pscustomobject]@{ Status='Valid' } }
+function powershell.exe {
+  param([switch]$NoProfile, $ExecutionPolicy, $File, $Version, $DistDir, $Artifact='Default')
+  $log = if ($Artifact -eq 'Portable') { Join-Path $DistDir 'FCMData/logs/main.log' } else { Join-Path $env:APPDATA 'Fallout Chat Mod/logs/main.log' }
+  [pscustomobject]@{ artifact=$Artifact; freshLog=(-not (Test-Path $log)); distDir=$DistDir; profile=$env:APPDATA } |
+    ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FCM_TEST_EVENTS -Encoding UTF8
+  $global:LASTEXITCODE = if ($Artifact -eq 'Portable') { 0 } else { [int]$env:FCM_TEST_INSTALLER_EXIT }
+}
+${body.replace(/^ {10}/gm, '')}
+`);
+    const result = spawnSync(process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+        cwd: temp, encoding: 'utf8', timeout: 30000,
+        env: { ...process.env, APPDATA: sharedProfile, RUNNER_TEMP: runnerTemp,
+          RELEASE_VERSION: '1.4.3', RELEASE_TARGET: 'both', FCM_TEST_EVENTS: eventsFile,
+          FCM_TEST_INSTALLER_EXIT: String(installerExit) },
+      });
+    expect(result.error).toBeUndefined();
+    const events = existsSync(eventsFile) ? readFileSync(eventsFile, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line.replace(/^\uFEFF/, ''))) : [];
+    check({ result, receipt, events, dist, sharedProfile });
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+}
+
 describe('Windows release code signing (Azure Trusted Signing)', () => {
+  it('rejects an installer smoke failure even when portable would succeed, with no success receipt', () => {
+    runNativeGate(1, ({ result, receipt, events }) => {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('Installed-edition native launch gate failed');
+      expect(events.map(event => event.artifact)).toEqual(['Default']);
+      expect(existsSync(receipt)).toBe(false);
+    });
+  }, 30000);
+
+  it('uses fresh installed and portable logs and writes receipts only after both pass', () => {
+    runNativeGate(0, ({ result, receipt, events, dist, sharedProfile }) => {
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(events.map(event => event.artifact)).toEqual(['Default', 'Portable']);
+      expect(events.every(event => event.freshLog)).toBe(true);
+      expect(events[0].profile).not.toBe(sharedProfile);
+      expect(events[1].distDir).not.toBe(dist);
+      const receipts = JSON.parse(readFileSync(receipt, 'utf8').replace(/^\uFEFF/, ''));
+      expect(receipts.map(item => [item.artifact, item.signature, item.nativeSmoke])).toEqual([
+        ['Fallout Chat Mod Setup 1.4.3.exe', 'Valid', 'PASS'],
+        ['Fallout Chat Mod Portable 1.4.3.exe', 'Valid', 'PASS'],
+      ]);
+    });
+  }, 30000);
+
   it('offers native GitHub-hosted Windows while retaining the self-hosted default', () => {
     expect(workflow).toContain('options: [self-hosted, github-hosted]');
     expect(workflow).toContain('default: self-hosted');
@@ -45,7 +122,7 @@ describe('Windows release code signing (Azure Trusted Signing)', () => {
     expect(workflow).toContain("$signature.Status -ne 'Valid'");
     expect(workflow).toContain("$installerSmoke 'win-unpacked'");
     expect(workflow).toContain('-DistDir $smokeDist');
-    expect(workflow).toContain('-DistDir $dist -Artifact Portable');
+    expect(workflow).toContain('-DistDir $portableSmoke -Artifact Portable');
     expect(workflow).toContain('windows-release-gates.json');
     expect(workflow.indexOf('Verify Windows signatures and native launch gates'))
       .toBeLessThan(workflow.indexOf('Upload installer artifacts'));
