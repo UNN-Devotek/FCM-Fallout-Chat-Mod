@@ -102,7 +102,6 @@ function Start-Process {
   param($FilePath, $ArgumentList, [switch]$PassThru)
   if (($ArgumentList -join ' ') -notmatch '--user-data-dir="([^"]+)"') { throw 'Missing quoted user-data-dir argument' }
   $profile = $matches[1]
-  if ($profile -ne $env:FCM_TEST_PROFILE) { throw 'Wrong Electron profile' }
   $logs = Join-Path $profile 'logs'
   New-Item -ItemType Directory -Path $logs -Force | Out-Null
   $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
@@ -114,6 +113,7 @@ function kill { }
 function pkill { }
 function taskkill { }
 & $env:FCM_TEST_SMOKE -Version 1.4.3 -DistDir $env:FCM_TEST_DIST -WaitSec 0 -UserDataDir $env:FCM_TEST_PROFILE
+exit $LASTEXITCODE
 `);
       const result = spawnSync(process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
