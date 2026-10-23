@@ -139,6 +139,13 @@ prompt and reinstall. No separate de-list step.
 
 ## Troubleshooting
 
+- **Browser says "QA access granted", but the app later returns to a login error:**
+  QA uses background polling, not a browser-to-app protocol link. Reloading or
+  retrying retires earlier polls; successful login also retires pending callbacks,
+  so an older poll cannot overwrite it with a timeout or restore a session after
+  logout. Check the app's `main.log` for `[qa-login] waiting for browser authorization`
+  followed by `[qa-status] authenticated`. Repeated HTTP 429 responses mean the
+  backend request allowance is exhausted; avoid repeated retries while it resets.
 - **Tester can't connect / "update required":** their build's version != `QA_ACTIVE_VERSION`.
   Re-bless or redistribute the current build. Confirm: `GET /api/admin/qa/active-version`.
 - **"You need the QA role":** the account lacks the `QA` role in the **dev** guild.

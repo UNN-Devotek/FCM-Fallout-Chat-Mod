@@ -2826,9 +2826,13 @@ ipcMain.on('steam:link', () => {
 // ─── QA login (golden dev build) ──────────────────────────────────────────────
 // Opens QA Discord OAuth in the default browser, then polls /api/auth/qa-status until the
 // backend hands back a role-gated session token (or 426 OUTDATED_BUILD).
+let qaOAuthPollGeneration = 0;
+
 function startQaLogin() {
   const st = loadState();
   if (!st || !st.installToken) return;
+  qaOAuthPollGeneration += 1;
+  diag('[qa-login] waiting for browser authorization');
   const startUrl = `${RELAY_HTTP}/auth/discord/qa/start?installToken=${encodeURIComponent(st.installToken)}`;
   sendToRenderer('relay:status', { state: 'qa_required' });
   try {
@@ -2841,7 +2845,9 @@ function startQaLogin() {
   pollQaStatus(0);
 }
 
-function pollQaStatus(attempt = 0) {
+function pollQaStatus(attempt = 0, pollGeneration = qaOAuthPollGeneration, requestGeneration = authGeneration) {
+  const isCurrent = () => pollGeneration === qaOAuthPollGeneration && requestGeneration === authGeneration;
+  if (!isCurrent()) return;
   const st = loadState();
   if (!st || !st.installToken) return;
   const MAX = 200; // Match the backend's five-minute QA OAuth state lifetime.
@@ -2850,8 +2856,10 @@ function pollQaStatus(attempt = 0) {
     { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET',
       headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION } },
     (res) => {
+      if (!isCurrent()) { res.resume(); return; }
       if (res.statusCode === 426) {
         res.resume();
+        qaOAuthPollGeneration += 1;
         diag('[qa-status] 426 OUTDATED_BUILD');
         try { showUpdateNotification(''); } catch { /* ignore */ }
         sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
@@ -2860,23 +2868,34 @@ function pollQaStatus(attempt = 0) {
       let data = '';
       res.on('data', (c) => (data += c));
       res.on('end', () => {
+        if (!isCurrent()) return;
         let d = {};
         try { d = (JSON.parse(data).data) || {}; } catch { /* ignore */ }
         if (d.authorized && d.token) {
+          // A reload/retry may have started another poll while this request was
+          // pending. Successful login must retire every pending QA callback so
+          // none can later overwrite authentication with a timeout/error.
+          qaOAuthPollGeneration += 1;
           setSessionToken(d.token);
           flushPendingWsOpens();
           saveState({ discordLinked: true, displayName: d.displayName || '', userRole: d.role || null });
           userRole = d.role || null;
           rebuildTray();
+          diag('[qa-status] authenticated');
           sendToRenderer('relay:status', { state: 'authenticated', displayName: d.displayName || '', discordLinked: true, role: d.role || null });
           return;
         }
-        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500);
-        else sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1, pollGeneration, requestGeneration), 1500);
+        else {
+          diag('[qa-status] login timed out');
+          sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+        }
       });
     },
   );
-  req.on('error', () => { if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500); });
+  req.on('error', () => {
+    if (isCurrent() && attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1, pollGeneration, requestGeneration), 1500);
+  });
   req.setTimeout(12000, () => req.destroy(new Error('qa-status timeout')));
   req.end();
 }

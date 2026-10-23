@@ -62,6 +62,7 @@ can no longer grow the file without bound, and the prior session is preserved.
 | `[hotkeys]` | On context change | Global-shortcut (un)registration, per-key register failures, and the **recoverability** path (summon key kept when no tray) |
 | `[navigation]` | Next/previous channel command | Command source and old/new conversation IDs; one command has one shared-component navigation owner |
 | `[chat-lifecycle]` | Explicit refresh or account change | Reason for a chat reset; ordinary settings, rename, link-status and role updates do not reset chat |
+| `[qa-login]` / `[qa-status]` | QA browser authorization and its result | Waiting for browser login, successful handoff, timeout or retired build; no tokens or account identifiers |
 | `[ws-gate]` | Connection/gate transitions | Retry attempts, skipped connection gates and recovery; repeated visible events do not interrupt an in-flight connection |
 | `[return-to-game]` | Focus handoff | Requested/skipped return and helper failures/exit; a helper exit alone does not prove game input was restored |
 | `[game-gate]` / `[game-scan]` | Game on/off (transition) | FO76-under-Proton detection; the full candidate-process dump is **verbose-only** except on a transition |

@@ -1,9 +1,85 @@
 import { readFileSync } from 'fs';
 import { resolve, join } from 'path';
-import { describe, it, expect } from 'vitest';
+import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const main = readFileSync(join(ROOT, 'main.js'), 'utf8');
+
+function qaLoginHarness() {
+  const requests = [];
+  const statuses = [];
+  const state = { installToken: 'test-install' };
+  const context = vm.createContext({
+    URL, setTimeout, clearTimeout,
+    RELAY_HTTP: 'https://dev.falloutchatmod.com', APP_VERSION: '1.4.3', authGeneration: 0,
+    loadState: () => state,
+    saveState: patch => Object.assign(state, patch),
+    shell: { openExternal: () => Promise.resolve() },
+    httpModule: () => ({ request(_options, callback) {
+      const request = new EventEmitter();
+      Object.assign(request, { setTimeout() {}, end() {}, destroy() {} });
+      requests.push({ request, callback });
+      return request;
+    } }),
+    sendToRenderer: (event, payload) => { if (event === 'relay:status') statuses.push(payload); },
+    setSessionToken: vi.fn(), flushPendingWsOpens() {}, rebuildTray() {}, diag() {}, showUpdateNotification() {},
+    ipcMain: { handle() {} },
+  });
+  const start = main.indexOf('// ─── QA login (golden dev build)');
+  const end = main.indexOf('// Discord link/supporter-role status refresh:', start);
+  vm.runInContext(main.slice(start, end), context);
+  return {
+    requests, statuses, context,
+    login: () => vm.runInContext('startQaLogin()', context),
+    respond(index, body, statusCode = 200) {
+      const response = new EventEmitter();
+      Object.assign(response, { statusCode, headers: {}, resume() {} });
+      requests[index].callback(response);
+      response.emit('data', JSON.stringify({ data: body }));
+      response.emit('end');
+    },
+  };
+}
+
+afterEach(() => vi.useRealTimers());
+
+describe('QA login session handoff', () => {
+  it('does not let an older pending poll time out after a newer login succeeds', async () => {
+    vi.useFakeTimers();
+    const login = qaLoginHarness();
+    login.login();
+    login.respond(0, { authorized: false });
+    login.login();
+    login.respond(1, { authorized: true, token: 'session', role: 'user' });
+    const signedInRequests = login.requests.length;
+    for (let i = 0; i < 201; i++) {
+      await vi.advanceTimersByTimeAsync(1500);
+      if (login.requests.length > signedInRequests) login.respond(login.requests.length - 1, { authorized: false });
+    }
+    expect(login.statuses.at(-1)?.state).toBe('authenticated');
+    expect(login.requests).toHaveLength(signedInRequests);
+    expect(login.context.setSessionToken).toHaveBeenCalledExactlyOnceWith('session');
+  });
+
+  it('ignores a late failure from the poll superseded by a new login', () => {
+    const login = qaLoginHarness();
+    login.login();
+    login.login();
+    login.respond(1, { authorized: true, token: 'session' });
+    login.respond(0, {}, 426);
+    expect(login.statuses.at(-1)?.state).toBe('authenticated');
+  });
+
+  it('does not restore a session after the user has logged out', () => {
+    const login = qaLoginHarness();
+    login.login();
+    login.context.authGeneration += 1;
+    login.respond(0, { authorized: true, token: 'old-session' });
+    expect(login.context.setSessionToken).not.toHaveBeenCalled();
+  });
+});
 
 describe('overlay QA login flow', () => {
   it('opens the QA OAuth start URL', () => {
