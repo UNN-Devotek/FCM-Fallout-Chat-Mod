@@ -68,7 +68,7 @@ Windows builds run on a **native Windows runner** — no Docker/Wine. The old Wi
 `win-electron-builder` Docker image was retired because Electron 31+ Chromium/Crashpad triggers a
 `STATUS_BREAKPOINT` crash under Wine64 that cannot be worked around.
 
-- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the self-hosted `[self-hosted, windows, unn]` runner. Release workflows keep their self-hosted runners.
+- **Manual release build:** `.github/workflows/build-windows.yml` — owner-only `workflow_dispatch` with `version`, `target`, `runner` and `publish` inputs. Defaults to `[self-hosted, windows, unn]`; `runner=github-hosted` selects native `windows-latest` when the private runner is unavailable. Valid signatures and native launch gates are required before uploading build artifacts; VirusTotal remains a separate mandatory release gate.
 - **CI gate (build):** `overlay-build-windows-nsis` in `ci.yml` — builds the NSIS installer natively on `windows-latest` (switchable with `CI_RUNNER_WINDOWS`); runs on every PR and `prod`/`dev` push; asserts absence of `app-update.yml`/`latest*.yml`.
 - **CI gate (execution):** the former native-Windows execution smoke (`overlay-autoupdate-e2e-windows-exec`) was removed when auto-update was retired; the build gate above is the Windows CI coverage (manual `.exe` testing can still be done on the Windows VM)
 - **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — Wine/Docker failures and the native `windows-latest` migration. Read this before debugging future Windows CI failures.

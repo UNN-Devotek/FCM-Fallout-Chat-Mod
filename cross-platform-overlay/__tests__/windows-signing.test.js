@@ -34,6 +34,23 @@ const workflow = readFileSync(
 const pkg = JSON.parse(readFileSync(join(OVERLAY_ROOT, 'package.json'), 'utf8'));
 
 describe('Windows release code signing (Azure Trusted Signing)', () => {
+  it('offers native GitHub-hosted Windows while retaining the self-hosted default', () => {
+    expect(workflow).toContain('options: [self-hosted, github-hosted]');
+    expect(workflow).toContain('default: self-hosted');
+    expect(workflow).toContain("inputs.runner == 'github-hosted' && 'windows-latest'");
+    expect(workflow).toContain("fromJSON('[\"self-hosted\",\"windows\",\"unn\"]')");
+  });
+
+  it('gates uploaded Windows artifacts on signatures and both native launch checks', () => {
+    expect(workflow).toContain("$signature.Status -ne 'Valid'");
+    expect(workflow).toContain("$installerSmoke 'win-unpacked'");
+    expect(workflow).toContain('-DistDir $smokeDist');
+    expect(workflow).toContain('-DistDir $dist -Artifact Portable');
+    expect(workflow).toContain('windows-release-gates.json');
+    expect(workflow.indexOf('Verify Windows signatures and native launch gates'))
+      .toBeLessThan(workflow.indexOf('Upload installer artifacts'));
+  });
+
   it('injects azureSignOptions in the release workflow build step', () => {
     expect(workflow).toContain(
       '-c.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net'

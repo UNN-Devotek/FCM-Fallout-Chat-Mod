@@ -76,7 +76,7 @@ fix(overlay): a range of reliability and quality fixes across chat connections, 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
 ```powershell
-.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.9-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
+.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
 # -SkipBuild: reuse existing dist-electron artifacts (Linux AppImage must already be present)
 # -DryRun: runs smoke-test + VT gates for real; prints what would run for steps 4-7 without uploading
 # -SkipWindowsNexus: omit the Windows support-review upload; Linux/.deb/HUD still publish
@@ -120,8 +120,10 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 
 ### Step 1 — Build raw artifacts
 
-> **Standard path: use the release build workflows.** Windows signing runs on the
-> `[self-hosted, windows, unn]` runner; Linux builds run on GitHub-hosted `ubuntu-latest`.
+> **Standard path: use the release build workflows.** Windows signing defaults to
+> `[self-hosted, windows, unn]`; the owner can select `runner=github-hosted` for
+> native `windows-latest` when that runner is unavailable. Linux builds run on
+> GitHub-hosted `ubuntu-latest`.
 > This is the **preferred** way to produce release artifacts — it pins the toolchain
 > (Node 24), bumps the version in `package.json` from the `version` input, builds the renderer,
 > runs `electron-builder`, and uploads the raw installer(s) as a 90-day artifact. Build locally
@@ -129,10 +131,10 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 >
 > | Platform | Workflow | Runner | Outputs (artifact) |
 > | -------- | -------- | ------ | ------------------ |
-> | Windows  | `.github/workflows/build-windows.yml` | `[self-hosted, windows, unn]` | `*.exe` (NSIS + portable) |
+> | Windows  | `.github/workflows/build-windows.yml` | self-hosted default; optional native `windows-latest` | `*.exe` (NSIS + portable), signature/launch receipt |
 > | Linux    | `.github/workflows/build-linux.yml`   | `ubuntu-latest`   | `*.AppImage`, `*.deb` |
 >
-> **Note:** the Windows release workflow still requires the self-hosted signing runner;
+> **Note:** the Windows release workflow's `runner` input chooses its signing host;
 > the Linux release workflow uses GitHub-hosted Linux. The `CI_RUNNER` /
 > `CI_RUNNER_WINDOWS` repo variables have no effect on release workflows.
 >
@@ -143,15 +145,26 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 > gh workflow run build-linux.yml   -f version=X.Y.Z
 > ```
 >
+> To select the GitHub-hosted Windows fallback explicitly:
+>
+> ```bash
+> gh workflow run build-windows.yml --ref prod -f version=X.Y.Z -f target=both -f runner=github-hosted -f publish=false
+> ```
+>
 > **Owner-only.** Both workflows start with an `authorize` job that hard-fails unless
 > `github.actor` is the repo owner (`UNN-Devotek`). `workflow_dispatch` is otherwise runnable by
 > any collaborator with write access, so this gate keeps release builds owner-only — a non-owner
 > dispatch fails at `authorize` before any build runs. Update the allowlisted login in both
 > `build-windows.yml` and `build-linux.yml` if ownership changes.
 >
-> Each build is **artifacts only** — it does NOT run the smoke-test / VirusTotal gates or publish.
-> Download the artifacts, then continue with the FAIL-CLOSED gate + publish steps below
-> (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → Nexus → `POST /admin/releases`). The
+> Each build is **artifacts only** and never publishes. Windows requires valid
+> Authenticode signatures and native packaged launch checks before artifact upload.
+> It preserves the NSIS unpacked payload before portable metadata replaces it and
+> records executable hashes and launch results in `windows-release-gates.json`.
+> Match those receipts to the downloaded executables. VirusTotal remains mandatory
+> after the launch gates; the Linux AppImage also needs its release smoke test.
+> Continue with upload → size/hash verification → Nexus → `POST /admin/releases`
+> only after all gates pass. The
 > `publish` input is reserved for a future automated publish step and is currently a no-op.
 
 #### Windows code signing (Azure Trusted Signing)
@@ -276,16 +289,28 @@ SHA256SUMS.txt, and an explicitly optional `Optional FCM Bridge/` directory. It
 never copies profiles, credentials, or the visible HUD mod. The bridge remains a
 manual opt-in and is never installed by the overlay.
 
+The optional bridge folder retains its ZFE and xScal cosmetic-receiver config
+fragments. Install only the fragment for the chosen provider when enabling blue
+names; unrelated package entries are rejected. Generated bridge instructions use
+the validated build manifest's version and the Prod environment.
+
 The README source is `Packaging/windows/README-PORTABLE.txt`. Extenders and
-HUDModLoader remain separate downloads. No native chat endpoint or bridge account
-linking is required; the Prod-stamped bridge exports only to the authenticated Prod
-overlay. Preserve the entire FCMData directory beside the EXE when upgrading.
+HUDModLoader remain separate downloads. Export-only Server chat needs no native
+chat endpoint or bridge account linking; the Prod-stamped bridge exports only to
+the authenticated Prod overlay. Blue names additionally require the chosen
+provider's optional native receiver configuration and matching backend support.
+Preserve the entire FCMData directory beside the EXE when upgrading.
 
 The release orchestrator runs the exact portable EXE through smoke and VirusTotal
 gates, uploads and size-verifies the EXE and ZIP, then records
 `portableDownloadUrl`. Every overlay ZIP includes the validated bridge under a
 clearly optional folder with separate ZFE/xScal sections. The Install page presents
 the portable ZIP next to the installer; packaging alone does not publish or install.
+
+The pinned bridge candidate for the 1.4.3 / HUD 2.10.151 release is **0.2.19 PROD**.
+Its ZIP SHA-256 is `c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f`;
+the embedded BA2 SHA-256 is `47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`.
+Keep the validated ZIP: the release pin identifies this exact archive.
 
 `Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux), and invokes the repeatable HUD package helper:
 

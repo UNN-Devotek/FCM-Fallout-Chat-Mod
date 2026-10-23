@@ -1,0 +1,16 @@
+feat(nameplates): nearby FCM users can now have blue overhead names through the HUD mod or desktop overlay with the optional Server Bridge, supporting ZFE and xScal
+feat(hud): enter g, t, e, i, r, or s alone to select a tab; use channel prefixes such as `/t message` to send without leaving your current tab
+feat(events): added `/sts` for Surface to Air
+chore(chat): channel and Server chat allow three messages in 30 seconds before a 35-second cooldown, shared across linked clients and Discord; repeated flooding increases the wait, up to five minutes
+fix(hud): show cooldown wait times privately and preserve queued messages for retry; private help and giveaway controls remain available
+fix(server-chat): keep the desktop Server tab and chat visible through travel and brief reconnects
+fix(notifications): restore Server mention and keyword alerts without repeating notifications for messages loaded from history
+fix(xscal): preserve HUD appearance changes made through F11 across game restarts
+fix(xscal): changing the HUD open-chat key now releases Insert and applies the replacement after restarting the game
+fix(minerva): display the complete inventory list with readable Gold prices, highest first, and clearer visit times and countdowns
+fix(overlay): restore brief glitch name effects while respecting reduced-motion settings and pausing when hidden
+fix(events): correct `/sos` to announce Swarm of Suitors
+fix(bridge): prevent internal HUD and bridge control messages from appearing in Server chat
+fix(moderation): clarify which spam settings apply to private messages, party chat and edits
+chore(install): strengthen checks for incomplete or incompatible HUD and Server Bridge download packages
+fix(security): update app and server dependencies with security and reliability fixes

@@ -23,7 +23,8 @@ try {
     $bridge = Join-Path $stage 'Optional FCM Bridge'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path -LiteralPath $BridgeZip).Path, $bridge)
-    $allowed = @('BUILD.json', 'EXPORT.json', 'INSTALL.txt', 'FCMServerBridge.hudmodloader.ini', 'Fallout76Custom.ini.example', 'Data/FCMServerBridge.ba2')
+    $allowed = @('BUILD.json', 'EXPORT.json', 'INSTALL.txt', 'FCMServerBridge.hudmodloader.ini', 'Fallout76Custom.ini.example', 'Data/FCMServerBridge.ba2',
+        'Provider-ZFE/Data/ZFE/TextChat/fragments/FCMServerBridge.ini', 'Provider-xScal/xscal.ini')
     foreach ($file in Get-ChildItem -LiteralPath $bridge -Recurse -File) {
         $relative = $file.FullName.Substring($bridge.Length + 1).Replace('\', '/')
         if ($relative -cnotin $allowed) { throw "Unexpected bridge package entry: $relative" }
@@ -31,6 +32,7 @@ try {
     $manifest = Get-Content -LiteralPath (Join-Path $bridge 'BUILD.json') -Raw | ConvertFrom-Json
     $export = Get-Content -LiteralPath (Join-Path $bridge 'EXPORT.json') -Raw | ConvertFrom-Json
     if ($manifest.target -ne 'prod' -or $export.environment -ne 'prod') { throw 'Only a PROD-stamped bridge may be included' }
+    if ($manifest.version -notmatch '^\d+\.\d+\.\d+$') { throw 'Bridge manifest must contain a semantic version' }
     $ba2 = Join-Path $bridge 'Data/FCMServerBridge.ba2'
     if ((Get-FileHash -LiteralPath $ba2 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.ba2Sha256) {
         throw 'Bridge BA2 does not match its build manifest'
@@ -44,7 +46,7 @@ try {
         $fcmBridge = Join-Path $gameMods 'FCMBridge'
         $bridgeMod = Join-Path $fcmBridge 'hudmodloader-bridge'
         $template = Join-Path $bridgeMod 'INSTALL.template.txt'
-        $text = (Get-Content -LiteralPath $template -Raw).Replace('{version}', '0.2.9').Replace('{target}', 'PROD').Replace('{host}', 'falloutchatmod.com')
+        $text = (Get-Content -LiteralPath $template -Raw).Replace('{version}', $manifest.version).Replace('{target}', 'PROD').Replace('{target_lower}', 'prod').Replace('{host}', 'falloutchatmod.com')
         [IO.File]::WriteAllText($bridgeInstallPath, $text, [Text.UTF8Encoding]::new($false))
     }
     Copy-Item -LiteralPath $exe.FullName -Destination $stage

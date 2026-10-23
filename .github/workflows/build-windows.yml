@@ -17,6 +17,11 @@ on:
         type: choice
         options: [installer, portable, both]
         default: both
+      runner:
+        description: 'Native Windows build runner'
+        type: choice
+        options: [self-hosted, github-hosted]
+        default: self-hosted
 
 # Least privilege: the build reads the repo and publishes via SSH/HTTP to the
 # backend registry (not via GITHUB_TOKEN), so read is sufficient.
@@ -43,7 +48,7 @@ jobs:
   build-windows:
     name: Build Windows NSIS installer
     needs: authorize
-    runs-on: [self-hosted, windows, unn]
+    runs-on: ${{ inputs.runner == 'github-hosted' && 'windows-latest' || fromJSON('["self-hosted","windows","unn"]') }}
     defaults:
       run:
         # The temporary MSI runner keeps the default Restricted execution policy.
@@ -134,6 +139,12 @@ jobs:
             "-c.win.azureSignOptions.certificateProfileName=fcm-public-trust" `
             "-c.win.azureSignOptions.codeSigningAccountName=fcm-trusted-signing"
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+          # Portable uses the same win-unpacked output with different metadata.
+          # Preserve the NSIS payload for the installed-edition launch gate.
+          $installerSmoke = Join-Path $env:RUNNER_TEMP 'fcm-installer-smoke'
+          if (Test-Path -LiteralPath $installerSmoke) { Remove-Item -LiteralPath $installerSmoke -Recurse -Force }
+          New-Item -ItemType Directory -Path $installerSmoke -Force | Out-Null
+          Copy-Item -LiteralPath 'dist-electron\win-unpacked' -Destination (Join-Path $installerSmoke 'win-unpacked') -Recurse
           }
           if ('${{ inputs.target }}' -ne 'installer') {
           .\node_modules\.bin\electron-builder --win portable --publish never `
@@ -147,6 +158,32 @@ jobs:
             "-c.win.azureSignOptions.codeSigningAccountName=fcm-trusted-signing"
           if ($LASTEXITCODE -ne 0) { throw 'Portable build failed' }
           }
+
+      - name: Verify Windows signatures and native launch gates
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: |
+          $dist = (Resolve-Path 'cross-platform-overlay\dist-electron').Path
+          $receipts = @()
+          if ($env:RELEASE_TARGET -ne 'portable') {
+            $exe = Join-Path $dist "Fallout Chat Mod Setup $($env:RELEASE_VERSION).exe"
+            $signature = Get-AuthenticodeSignature -LiteralPath $exe
+            if ($signature.Status -ne 'Valid') { throw 'Installer signature is not valid' }
+            $smokeDist = Join-Path $env:RUNNER_TEMP 'fcm-installer-smoke'
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File Packaging\smoke-test.ps1 -Version $env:RELEASE_VERSION -DistDir $smokeDist
+            if ($LASTEXITCODE -ne 0) { throw 'Installed-edition native launch gate failed' }
+            $receipts += [pscustomobject]@{ artifact=(Split-Path $exe -Leaf); sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signature='Valid'; nativeSmoke='PASS'; appAsarSha256=(Get-FileHash (Join-Path $smokeDist 'win-unpacked\resources\app.asar') -Algorithm SHA256).Hash.ToLowerInvariant() }
+          }
+          if ($env:RELEASE_TARGET -ne 'installer') {
+            $exe = Join-Path $dist "Fallout Chat Mod Portable $($env:RELEASE_VERSION).exe"
+            $signature = Get-AuthenticodeSignature -LiteralPath $exe
+            if ($signature.Status -ne 'Valid') { throw 'Portable signature is not valid' }
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File Packaging\smoke-test.ps1 -Version $env:RELEASE_VERSION -DistDir $dist -Artifact Portable
+            if ($LASTEXITCODE -ne 0) { throw 'Portable native launch gate failed' }
+            $receipts += [pscustomobject]@{ artifact=(Split-Path $exe -Leaf); sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signature='Valid'; nativeSmoke='PASS' }
+          }
+          $receipts | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $dist 'windows-release-gates.json') -Encoding UTF8
 
       - name: Verify Windows artifact contract
         env:
@@ -201,5 +238,6 @@ jobs:
           # latest.yml feed manifest or .blockmap differential is produced.
           path: |
             cross-platform-overlay/dist-electron/*.exe
+            cross-platform-overlay/dist-electron/windows-release-gates.json
           retention-days: 90
           if-no-files-found: error

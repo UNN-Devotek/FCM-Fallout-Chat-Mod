@@ -166,17 +166,17 @@ def main() -> None:
     for marker in (
         "Optional FCM Bridge",
         "Data/FCMServerBridge.ba2",
-        "9ae03b9e047c5fea221d10a8c805b0fe07cfcadb79af9667c766a4c627b54e44",
+        "47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45",
         "Fallout Chat Mod Portable $Version (Windows)",
         "README-PORTABLE-NEXUS.txt",
     ):
         assert marker in package_nexus, f"Nexus package helper is missing: {marker}"
     assert '"-BridgeZip", $BridgeZip' in release
     for script in (package_downloads, package_nexus):
-        assert "9c245bcad80b7baf1681d29273fda97008403a047bb941e00622a7210bb465af" in script
-    for script in (package_downloads, package_nexus, package_portable):
+        assert "c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f" in script
+    for script in (package_downloads, package_nexus):
         assert "'0.2.8'" not in script and "0.2.8 candidate" not in script
-        assert "'0.2.9'" in script
+        assert "'0.2.19'" in script
 
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
