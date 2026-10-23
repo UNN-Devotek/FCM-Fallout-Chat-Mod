@@ -21,6 +21,11 @@ class FCMServerBridge extends MovieClip {
     var nameplatePainter:FcmNameplatePainter;
     var nameplateReceiver:FcmBridgeNameplates = null;
     var nextNameplateProvider:Float = 0;
+    var nameplateGate:String = "start";
+    var nameplateError:String = "none";
+    public function nameplateProbe():String return nameplateGate + ":" + nameplateError
+        + ":r" + nameplatePresence.requestCount + ":a" + nameplatePresence.acceptedCount
+        + ":j" + nameplatePresence.rejectedCount;
     #if bridge_native_prototype
     #if !bridge_dev
     #error "Native transport prototype is development-only"
@@ -315,13 +320,18 @@ class FCMServerBridge extends MovieClip {
                 return;
             }
             tickPhase = "export";
+            #if bridge_nameplate_probe
+            exporter.nameplateProbe = nameplateProbe();
+            #end
             exportState(now, false, sampled);
             #if !bridge_native_prototype
             tickPhase = "nameplates";
             updateNameplates(now);
             #end
         } catch (error:Dynamic) {
-            lastFailure = tickPhase + " " + FcmBridgeRead.errorCode(error);
+            if (tickPhase == "nameplates" && nameplateReceiver != null) nameplateGate = nameplateReceiver.probe;
+            nameplateError = FcmBridgeRead.errorCode(error);
+            lastFailure = tickPhase + " " + nameplateError;
             status = "Bridge temporarily unavailable - retrying";
         }
     }
@@ -329,16 +339,31 @@ class FCMServerBridge extends MovieClip {
         if (disposed || conflict) return;
         var active = state.fresh(now) && state.rosterGate() == "" && exporter.lastSuccess
             && exporter.publishedWorld == state.session.requestId;
-        if (!active) { nameplatePresence.reset(); nameplatePainter.clear(); }
-        if (active && nameplateReceiver == null && now >= nextNameplateProvider && nameplatePainter.hasSurface()) {
+        if (!active) { nameplateGate = "world"; nameplatePresence.reset(); nameplatePainter.clear(); }
+        if (active && nameplateReceiver == null && now >= nextNameplateProvider) {
+            nameplateGate = "surface";
+            if (!nameplatePainter.hasSurface()) return;
             nextNameplateProvider = now + 30000;
+            nameplateGate = "discover";
             var native = FcmNativeApi.discover(this);
             if (disposed || conflict) return;
-            if (native != null && native.provider == api.provider && native.probeChatCapability()
-                && native.supportsNonBlockingConnect() && native.supportsNonBlockingControl() && native.supportsNonBlockingSend())
-                nameplateReceiver = new FcmBridgeNameplates(native.call, nameplatePresence);
+            nameplateGate = "native";
+            if (native == null) return;
+            nameplateGate = "provider";
+            if (native.provider != api.provider) return;
+            nameplateGate = "chat";
+            if (!native.probeChatCapability()) return;
+            nameplateGate = "async";
+            if (!native.supportsNonBlockingConnect() || !native.supportsNonBlockingControl() || !native.supportsNonBlockingSend()) return;
+            nameplateGate = "create";
+            nameplateReceiver = new FcmBridgeNameplates(native.call, nameplatePresence);
         }
-        if (nameplateReceiver != null) nameplateReceiver.tick(now, movieSession, state.session.requestId, active);
+        if (nameplateReceiver != null) {
+            nameplateGate = "receive";
+            nameplateReceiver.tick(now, movieSession, state.session.requestId, active);
+            nameplateGate = nameplateReceiver.probe;
+            if (nameplateReceiver.lastError != "none") nameplateError = nameplateReceiver.lastError;
+        }
         if (disposed || conflict) return;
         if (active && nameplatePresence.context != "") {
             // Native transport calls can publish a newer menu/world observation.

@@ -1,12 +1,15 @@
 /** Pure rate/freshness policy. A heartbeat advances sequence, NEVER observationSequence. */
 class FcmBridgeExport {
-    public static inline var VERSION:String = "0.2.18";
+    public static inline var VERSION:String = "0.2.19";
     public static inline var BUILD:String = VERSION;
     public var sequence(default, null):Int = 0;
     public var observationSequence(default, null):Int = 1;
     public var lastSuccess(default, null):Bool = false;
     /** Pending samples and provider pushes cannot authorize a cosmetic world. */
     public var publishedWorld(default, null):String = "";
+    #if bridge_nameplate_probe
+    public var nameplateProbe:String = "start:none:r0:a0:j0";
+    #end
     var sessionId:String;
     var environment:String;
     var lastAttempt:Float = -5000;
@@ -63,7 +66,11 @@ class FcmBridgeExport {
             && observationSequence > lastSavedObservationSequence;
         if (key == lastKey && now - lastSaved < 5000 && !establishingWriter) return false;
         lastAttempt = now;
-        #if bridge_perf
+        #if bridge_nameplate_probe
+        // Fixed gate/error labels and bounded lifetime counters only. Keep the
+        // schema, single export and write cadence identical to the normal build.
+        var build = BUILD + "-np:" + nameplateProbe.substr(0, 48);
+        #elseif bridge_perf
         var encodeStarted = clock == null ? now : clock();
         var build = BUILD + "-c5" + (timing == null ? "-perf" : timing.label());
         #else

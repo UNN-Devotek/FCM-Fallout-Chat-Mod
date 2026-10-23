@@ -1,4 +1,26 @@
-# FCM Server Bridge 0.2.18 source candidate
+# FCM Server Bridge 0.2.19 source candidate
+
+Fresh 0.2.18 native probes on both providers report `receive:E1014` with zero
+private requests and accepted replies, while roster exports remain active.
+0.2.19 separates cosmetic connect, auth, poll, event decoding and request/send
+methods, following the working visible HUD's staged lifecycle. The orchestration
+method no longer contains JSON encoding or an event-array cast/loop. This is a
+controlled native compatibility candidate, not an identified missing class or a
+confirmed color fix. It shares the unchanged HUD painter and lease policy.
+Boundary unit tests cover exceptions and unload during all four native calls;
+the isolated provider harness also tests unload inside native auth.
+All required local checks pass, including 97/97 Ruffle cases. The exact DEV probe
+archive was installed on desktop/xScal and MSI/ZFE with protected files unchanged.
+Both native receivers now advance accepted replies without the recorded E1014,
+and the user reports working colors. The desktop has since switched to the
+tested visible HUD for mixed-client validation; broader native acceptance remains
+pending. No hosted CI run or publication is claimed.
+
+The 2026-10-23 local overlay test reached one canonical room on both providers
+but showed no blue names. `package.py --target dev --nameplate-diagnostic`
+provides an unpublished gate/error probe in the existing export build field.
+See the [native investigation](../../../docs/testing/blue-nameplates-2026-10-23-bridge.md).
+This is diagnostic evidence collection; it does not claim a native color fix.
 
 0.2.18 shares HUD 2.10.150's stationary continuation for already admitted exact
 visible field/plate/entity/name associations under current eligibility and fresh

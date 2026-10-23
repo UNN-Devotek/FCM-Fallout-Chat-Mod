@@ -179,6 +179,37 @@ do not infer that a high `s` value is the cause of game lag without a same-world
 bridge-on/bridge-off comparison. The normal build retains its exact version
 label and does not include timing code.
 
+For an unexplained missing blue name, `package.py --target dev --nameplate-diagnostic`
+builds a separate, unpublished native probe. It keeps schema 1, the exact export
+path, observation authority and write cadence. The existing `build` string becomes
+`0.2.19-np:<gate>:<error>:r<count>:a<count>:j<count>`: fixed gate/error labels and
+lifetime private-presence request/accepted/rejected counts. It contains no names,
+tokens, request IDs or payloads, and remains under 64 characters. A saved record
+reports the previous receiver tick; reading or saving never renews evidence.
+
+`surface` means the public nameplate host was not found. `native`, `provider`,
+`chat`, and `async` identify rejected provider checks; `discover`/`create`/`receive`
+identify entry before a potentially failing native operation. The receiver reports
+`connect`, `auth`, `poll`, `request`, `send`, `waiting`, `transport`, `failure`, or
+`active`. `world` means current export/roster authority is unavailable. Error is
+`none`, `error`, or a bounded numeric VM code such as `E1014`; caught receiver
+errors persist for diagnosis. `active` confirms the receiver loop, not successful
+painting. This mode requires Dev and cannot be combined with the performance or
+native-transport experiment. It must never be published as a release.
+
+The 0.2.19 candidate separates the receiver's connect, auth, poll, event decoding
+and request/send methods, following the working HUD lifecycle. Fixed `*-call`
+phases distinguish helper invocation from entry; `events`/`event` describe only
+local decoding. A failure escaping the receiver reports its last phase. Fresh
+0.2.18 exports on both providers showed `receive:E1014` and zero requests;
+this narrows the failure boundary but does not identify a missing class. The
+candidate keeps the same provider checks, call order, retry/poll limits, lease
+deadlines, exported-world fence and painter. Native acceptance is still required.
+
+The [2026-10-23 bridge investigation](../../testing/blue-nameplates-2026-10-23-bridge.md)
+records why a fresh native probe is required; passing simulation does not establish
+that blue names work in the game.
+
 The desktop reads asynchronously with bounded size/schema checks. A transient missing, partial or
 invalid read during the provider's atomic file replacement retains only the last already-validated
 sample until its existing thirty-second writer and evidence deadlines; it

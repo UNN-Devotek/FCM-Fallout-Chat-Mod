@@ -19,6 +19,7 @@ class TestFcmNameplates {
         currentAdmission();
         generations();
         nativeProbe();
+        receiverBoundaries();
         var diagnostics = new FcmNameplates("private-client");
         var privateRequest = diagnostics.request(100, "private-world");
         check("diagnostic request count", diagnostics.requestCount == 1);
@@ -98,7 +99,54 @@ class TestFcmNameplates {
         transport.shutdown(); var count = calls.length;
         transport.tick(3300, "movie", "new-world", true);
         check("unload stops native calls", calls.length == count);
+        var fault = new FcmBridgeNameplates(function(verb:String, _:String):Dynamic {
+            if (verb == "chat.v1.connect") return '{"success":true}';
+            throw {errorID:1014,message:"Private native payload"};
+        }, new FcmNameplates("fault"));
+        fault.tick(0, "movie", "world", true);
+        check("native receiver failure has a numeric privacy-safe probe", fault.probe == "failure"
+            && fault.lastError == "E1014" && fault.diagnostic == "presence unavailable");
+        fault.shutdown();
         Sys.println("FcmNameplates + cosmetic receiver PASS");
+    }
+    static function receiverBoundaries():Void {
+        for (boundary in ["chat.v1.connect", "chat.v1.getAuthState", "chat.v1.pollEvents", "chat.v1.sendMessage"]) {
+            for (unload in [false, true]) {
+                var lease = new FcmNameplates("boundary");
+                var calls:Array<String> = [];
+                var receiver:FcmBridgeNameplates = null;
+                receiver = new FcmBridgeNameplates(function(verb:String, _:String):Dynamic {
+                    calls.push(verb);
+                    if (verb == boundary) {
+                        if (unload) receiver.shutdown();
+                        else throw {errorID:1014,message:"Private native boundary payload"};
+                    }
+                    return verb == "chat.v1.getAuthState" ? '{"success":true,"state":"limited"}'
+                        : verb == "chat.v1.pollEvents" ? '{"success":true,"events":[]}' : '{"success":true}';
+                }, lease);
+                receiver.tick(0, "movie", "world", true);
+                check("native boundary stops later work " + boundary, calls[calls.length - 1] == boundary);
+                check("native boundary retires cosmetic evidence " + boundary, lease.context == "" && lease.current(0).length == 0);
+                if (!unload) check("native boundary catches numeric failure " + boundary,
+                    receiver.probe == "failure" && receiver.lastError == "E1014");
+                var count = calls.length;
+                receiver.tick(1000, "movie", "world", true);
+                check("fault backs off or disposed receiver stays stopped " + boundary, calls.length == count);
+                if (!unload) check("backoff preserves the caught boundary diagnosis " + boundary,
+                    receiver.probe == "failure" && receiver.lastError == "E1014");
+                receiver.shutdown();
+            }
+        }
+        var connects = 0;
+        var pending = new FcmBridgeNameplates(function(verb:String, _:String):Dynamic {
+            if (verb == "chat.v1.connect") connects++;
+            return verb == "chat.v1.getAuthState" ? '{"success":false,"state":"connecting"}' : '{"success":true}';
+        }, new FcmNameplates("pending"));
+        pending.tick(0, "movie", "world", true);
+        pending.tick(30000, "movie", "world", true);
+        check("pending auth response never restarts accepted transport", connects == 1);
+        pending.shutdown();
+        Sys.println("Cosmetic receiver native boundary isolation PASS");
     }
     static function currentAdmission():Void {
         var rows = [{id:11.0,name:"peer",eligible:true}];

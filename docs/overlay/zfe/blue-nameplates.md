@@ -1,5 +1,14 @@
 # Blue FCM nameplates — testing candidate
 
+The 2026-10-23 invisible-bridge run reached the same canonical room on both
+providers but showed no blue names. Fresh 0.2.18 probes on both providers show
+`receive:E1014` with no private requests. Bridge 0.2.19 separates its receiver
+methods to match the working HUD lifecycle; it retains the shared painter and
+presence leases. Initial native captures now advance requests and accepted
+replies on both providers, and the user reports working colors. Broader native
+acceptance, including the newly installed HUD/xScal to bridge/ZFE pairing, remains pending. See the
+[bridge investigation](../../testing/blue-nameplates-2026-10-23-bridge.md).
+
 **Current integrated widget:** 2.10.151 DEV includes the 2.10.150 continuation
 policy below together with the latest Dev cooldown/retry handling. Native
 stationary acceptance remains pending. See the

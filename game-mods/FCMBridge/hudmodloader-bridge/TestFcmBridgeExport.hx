@@ -94,7 +94,11 @@ class TestFcmBridgeExport {
         var save = function(text:String):Bool { documents.push(haxe.Json.parse(text)); return succeed; };
         check(exporter.update(1000, state, "Self", "xscal", save), "initial snapshot written");
         check(documents[0].state == "active" && documents[0].observationAgeMs == 0, "active evidence age");
-        #if bridge_perf
+        #if bridge_nameplate_probe
+        check(documents[0].build == FcmBridgeExport.BUILD + "-np:start:none:r0:a0:j0",
+            "nameplate diagnostic uses only fixed labels and counters");
+        exporter.nameplateProbe = "surface:E1014:r0:a0:j0";
+        #elseif bridge_perf
         check(StringTools.startsWith(documents[0].build, FcmBridgeExport.BUILD + "-c5-perf:p") && documents[0].build.length <= 64,
             "diagnostic export keeps the strict schema and bounded build label");
         #else
@@ -103,6 +107,10 @@ class TestFcmBridgeExport {
         check(!exporter.update(1500, state, "Changed", "xscal", save), "changed writes rate limited");
         check(!exporter.update(5999, state, "Self", "xscal", save), "no unnecessary write");
         check(exporter.update(6000, state, "Self", "xscal", save), "five second heartbeat");
+        #if bridge_nameplate_probe
+        check(documents[1].build == FcmBridgeExport.BUILD + "-np:surface:E1014:r0:a0:j0"
+            && Reflect.fields(documents[1]).length == 12, "nameplate probe preserves the single schema-1 export");
+        #end
         check(documents[1].sequence == 2 && documents[1].observationSequence == 2
             && documents[1].observationAgeMs == 5000, "heartbeat does not refresh observation");
         state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[{menuName:"LoadingMenu"}]}}));

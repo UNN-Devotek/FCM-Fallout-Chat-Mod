@@ -8,6 +8,40 @@ function pollCount(value: unknown): number {
 }
 
 for (const provider of ['zfe','xscal']) {
+  test(`cosmetic receiver unload during native auth stops the remaining ${provider} lifecycle`, async ({ page }) => {
+    await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());
+    await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-nameplates`);
+    const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+    await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false, nameColor: 0x167FAF });
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-unload-auth'));
+    await expect.poll(snapshot).toMatchObject({ disposed: true, subscriptions: 0, violation: false, nameColor: 0xFFFFFF });
+    const stopped = await snapshot();
+    await page.waitForTimeout(1200);
+    expect(await snapshot()).toEqual(stopped);
+  });
+  test(`nameplate diagnostic reports a missing surface and native VM fault on ${provider}`, async ({ page }) => {
+    test.setTimeout(45_000);
+    await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());
+    await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-nameplates-probe`);
+    const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+    await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false, cosmeticConnects: 0,
+      snapshot: { build: expect.stringMatching(/-np:surface:none:r0:a0:j0$/) } });
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-show-surface'));
+    await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ violation: false, cosmeticConnects: 1, nameColor: 0x167FAF,
+      snapshot: { build: expect.stringMatching(/-np:active:none:r[1-9]\d*:a[1-9]\d*:j0$/) } });
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-fault'));
+    await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ violation: false,
+      snapshot: { build: expect.stringMatching(/-np:failure:E1014:r\d+:a\d+:j0$/) } });
+    const result = await snapshot();
+    expect(typeof result).toBe('object');
+    const build = (result as { snapshot: { build: string } }).snapshot.build;
+    expect(build.length).toBeLessThanOrEqual(64);
+    expect(build).not.toMatch(/private|PeerA|HarnessSelf/);
+    const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+    expect(stopped).toMatchObject({ disposed: true, subscriptions: 0, violation: false });
+    await page.waitForTimeout(1200);
+    expect(await snapshot()).toEqual(stopped);
+  });
   test(`isolated packaged bridge colors desktop-owned FCM peers from first live snapshot on ${provider}`, async ({ page }) => {
     test.setTimeout(55_000);
     await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());

@@ -85,6 +85,23 @@ class BridgePackageTests(unittest.TestCase):
         self.assertIn('mouseEnabled = false', source)
         self.assertIn('mouseChildren = false', source)
 
+    def test_nameplate_probe_is_dev_only_and_keeps_the_normal_export(self):
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'bridge-nameplate-probe.zip'
+            with self.assertRaisesRegex(ValueError, 'requires dev'):
+                package.build('prod', path, nameplate_diagnostic=True)
+            with self.assertRaisesRegex(ValueError, 'no other diagnostic mode'):
+                package.build('dev', path, diagnostic=True, nameplate_diagnostic=True)
+            self.assertFalse(path.exists())
+            subprocess.run(['haxe', 'test-export.hxml', '-D', 'bridge_nameplate_probe'],
+                           cwd=package.ROOT, check=True)
+            manifest = package.build('dev', path, nameplate_diagnostic=True)
+            with ZipFile(path) as archive:
+                self.assertTrue(manifest['nameplateDiagnostic'])
+                self.assertIn('NAMEPLATE DIAGNOSTIC TEST BUILD - NOT FOR RELEASE', archive.read('INSTALL.txt').decode())
+                self.assertEqual([name for name in archive.namelist() if name.startswith('Data/')],
+                                 ['Data/FCMServerBridge.ba2'])
+
     def test_native_prototype_is_separate_and_refuses_production(self):
         with TemporaryDirectory() as root:
             path = Path(root) / 'native.zip'

@@ -57,6 +57,19 @@ try {
     throw new Error('Diagnostic bridge payload differs from BUILD.json');
   }
   await writeFile(resolve(publicDir, 'bridge-perf-manifest.json'), JSON.stringify(perfManifest, null, 2) + '\n');
+  const probeZip = resolve(bridgeTemp, 'probe.zip');
+  const probeExtract = resolve(bridgeTemp, 'probe');
+  await mkdir(probeExtract);
+  await run('python3', [resolve(bridge, 'package.py'), '--target', 'dev', '--nameplate-diagnostic', '--output', probeZip]);
+  await run('python3', ['-m', 'zipfile', '-e', probeZip, probeExtract]);
+  const probeManifest = JSON.parse(await readFile(resolve(probeExtract, 'BUILD.json'), 'utf8'));
+  await run('python3', [resolve(widget, '../hudmenu-chat/ba2tool.py'), 'extract',
+    resolve(probeExtract, 'Data/FCMServerBridge.ba2'), 'Interface/FCMServerBridge.swf',
+    resolve(publicDir, 'FCMServerBridgeProbe.swf')]);
+  if (!probeManifest.nameplateDiagnostic || createHash('sha256').update(await readFile(resolve(publicDir, 'FCMServerBridgeProbe.swf'))).digest('hex') !== probeManifest.swfSha256) {
+    throw new Error('Nameplate probe bytes differ from diagnostic package');
+  }
+  await writeFile(resolve(publicDir, 'bridge-probe-manifest.json'), JSON.stringify(probeManifest, null, 2) + '\n');
   const nativeZip = resolve(bridgeTemp, 'native.zip');
   const nativeExtract = resolve(bridgeTemp, 'native');
   await mkdir(nativeExtract);

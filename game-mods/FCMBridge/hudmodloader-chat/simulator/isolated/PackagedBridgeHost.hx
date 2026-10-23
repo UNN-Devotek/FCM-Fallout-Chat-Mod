@@ -22,6 +22,8 @@ class PackagedBridgeHost extends Sprite {
     var cosmeticConnects:Int = 0;
     var cosmeticReplies:Bool = true;
     var cosmeticAuthState:String = "limited";
+    var cosmeticFault:Bool = false;
+    var cosmeticUnloadOnAuth:Bool = false;
     var cosmeticPlate:IsolatedNameplate = null;
     var cosmeticSurface:IsolatedNameplateSurface = null;
     var markerPublications:Int = 0;
@@ -64,10 +66,10 @@ class PackagedBridgeHost extends Sprite {
         super();
         source = flash.Lib.current.loaderInfo.parameters.provider == "zfe" ? "zfe" : "xscal";
         scenario = flash.Lib.current.loaderInfo.parameters.scenario;
-        if (scenario == "packaged-nameplates") {
+        if (cosmeticScenario()) {
             cosmeticPlate = new IsolatedNameplate(11, "PeerA");
             cosmeticSurface = new IsolatedNameplateSurface(cosmeticPlate);
-            TeammateMarkerBase = cosmeticSurface;
+            TeammateMarkerBase = scenario == "packaged-nameplates-probe" ? null : cosmeticSurface;
             addChild(cosmeticSurface);
         }
         if (scenario == "packaged-probe-throw") probeFault = "throw";
@@ -119,6 +121,7 @@ class PackagedBridgeHost extends Sprite {
         movie.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR, function(_:IOErrorEvent):Void { violation = true; emit("PACKAGED load failed"); });
         addChild(movie);
         movie.load(new URLRequest(scenario == "packaged-native" ? "/FCMServerBridgeNative.swf"
+            : scenario == "packaged-nameplates-probe" ? "/FCMServerBridgeProbe.swf"
             : scenario == "packaged-perf" ? "/FCMServerBridgePerf.swf" : "/FCMServerBridge.swf"),
             new LoaderContext(false, domain));
     }
@@ -170,16 +173,22 @@ class PackagedBridgeHost extends Sprite {
         }
         return true;
     }
+    function cosmeticScenario():Bool return StringTools.startsWith(scenario, "packaged-nameplates");
+    function cosmeticAuth():String {
+        if (cosmeticUnloadOnAuth) retire();
+        if (cosmeticFault) throw new flash.errors.Error("private native payload", 1014);
+        return haxe.Json.stringify({success:true,state:cosmeticAuthState});
+    }
     function xscalApi():Dynamic return {version:{runtime:"xScal",value:"0.2.17",platform:"sim"},
       chatInterface:{
         getRuntimeInfo:function():String return '{"success":true,"runtime":"xScal Chat","protocol":1}',
         connect:function(_:Dynamic):String { cosmeticConnects++; return '{"success":true}'; },
-        getAuthState:function(_:Dynamic):String return scenario == "packaged-nameplates"
-            ? haxe.Json.stringify({success:true,state:cosmeticAuthState}) : '{"success":true,"state":"authenticated"}',
+        getAuthState:function(_:Dynamic):String return cosmeticScenario()
+            ? cosmeticAuth() : '{"success":true,"state":"authenticated"}',
         getConnectionState:function():String return '{"success":true,"state":"authenticated"}',
         pollEvents:function(_:Dynamic):String { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); },
         sendMessage:function(args:Dynamic):String {
-            if (scenario == "packaged-nameplates") return cosmeticSend(args);
+            if (cosmeticScenario()) return cosmeticSend(args);
             if (scenario != "packaged-native" || disposed) { violation = true; violationReason = "unexpected-native-send"; }
             var prefix = "FCMCTL/1/NATIVE-PROTOTYPE:";
             if (args.channel != "server" || !StringTools.startsWith(args.body, prefix)) {
@@ -219,10 +228,10 @@ class PackagedBridgeHost extends Sprite {
             var ok = save(args.text);
             return haxe.Json.stringify({success:ok,status:ok ? "saved" : "failed"});
         }
-        if (scenario == "packaged-nameplates") {
+        if (cosmeticScenario()) {
             if (verb == "chat.v1.getRuntimeInfo") return '{"success":true,"capabilities":["zfe-chat-online-v1","zfe-chat-async-connect-v1","zfe-chat-async-send-v1","zfe-chat-async-control-v1"]}';
             if (verb == "chat.v1.connect") { cosmeticConnects++; return '{"success":true}'; }
-            if (verb == "chat.v1.getAuthState") return haxe.Json.stringify({success:true,state:cosmeticAuthState});
+            if (verb == "chat.v1.getAuthState") return cosmeticAuth();
             if (verb == "chat.v1.pollEvents") { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); }
             if (verb == "chat.v1.sendMessage") return cosmeticSend(haxe.Json.parse(payload));
         }
@@ -276,6 +285,9 @@ class PackagedBridgeHost extends Sprite {
             case "cosmetic-friendly": if (cosmeticPlate != null) markers();
             case "cosmetic-unready": cosmeticAuthState = "connecting";
             case "cosmetic-ready": cosmeticAuthState = "limited";
+            case "cosmetic-show-surface": TeammateMarkerBase = cosmeticSurface; markers();
+            case "cosmetic-fault": cosmeticFault = true;
+            case "cosmetic-unload-auth": cosmeticUnloadOnAuth = true;
             case "main-menu": publish("MenuStackData", {menuStackA:[{menuName:"MainMenu"}]});
             case "unload":
                 retire(); // Production REMOVED_FROM_STAGE owns shutdown.
