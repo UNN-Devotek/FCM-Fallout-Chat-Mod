@@ -170,17 +170,15 @@ jobs:
           # Reused runners must never accept a prior launch's log or profile.
           $gateRoot = Join-Path $env:RUNNER_TEMP ('fcm-native-smoke-' + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $gateRoot | Out-Null
-          $priorAppData = $env:APPDATA
           $receipts = @()
           try {
-            $env:APPDATA = Join-Path $gateRoot 'AppData'
-            New-Item -ItemType Directory -Path $env:APPDATA | Out-Null
             if ($env:RELEASE_TARGET -ne 'portable') {
               $exe = Join-Path $dist "Fallout Chat Mod Setup $($env:RELEASE_VERSION).exe"
               $signature = Get-AuthenticodeSignature -LiteralPath $exe
               if ($signature.Status -ne 'Valid') { throw 'Installer signature is not valid' }
               $smokeDist = Join-Path $env:RUNNER_TEMP 'fcm-installer-smoke'
-              powershell.exe -NoProfile -ExecutionPolicy Bypass -File Packaging\smoke-test.ps1 -Version $env:RELEASE_VERSION -DistDir $smokeDist
+              $smokeProfile = Join-Path $gateRoot 'installed-profile'
+              powershell.exe -NoProfile -ExecutionPolicy Bypass -File Packaging\smoke-test.ps1 -Version $env:RELEASE_VERSION -DistDir $smokeDist -UserDataDir $smokeProfile
               if ($LASTEXITCODE -ne 0) { throw 'Installed-edition native launch gate failed' }
               $receipts += [pscustomobject]@{ artifact=(Split-Path $exe -Leaf); sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); signature='Valid'; nativeSmoke='PASS'; appAsarSha256=(Get-FileHash (Join-Path $smokeDist 'win-unpacked\resources\app.asar') -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
@@ -197,7 +195,6 @@ jobs:
             }
             $receipts | ConvertTo-Json -Depth 4 | Set-Content -Path $receiptPath -Encoding UTF8
           } finally {
-            $env:APPDATA = $priorAppData
             Remove-Item -LiteralPath $gateRoot -Recurse -Force
           }
 

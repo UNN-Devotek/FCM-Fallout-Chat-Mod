@@ -64,9 +64,11 @@ function runNativeGate(installerExit, check, workflowSource = workflow) {
 $ErrorActionPreference = 'Stop'
 function Get-AuthenticodeSignature { param($LiteralPath) [pscustomobject]@{ Status='Valid' } }
 function powershell.exe {
-  param([switch]$NoProfile, $ExecutionPolicy, $File, $Version, $DistDir, $Artifact='Default')
-  $log = if ($Artifact -eq 'Portable') { Join-Path $DistDir 'FCMData/logs/main.log' } else { Join-Path $env:APPDATA 'Fallout Chat Mod/logs/main.log' }
-  [pscustomobject]@{ artifact=$Artifact; freshLog=(-not (Test-Path $log)); distDir=$DistDir; profile=$env:APPDATA } |
+  param([switch]$NoProfile, $ExecutionPolicy, $File, $Version, $DistDir, $Artifact='Default', $UserDataDir)
+  # Electron's Windows default is the shell roaming folder, independent of APPDATA.
+  $profile = if ($UserDataDir) { $UserDataDir } else { Join-Path $env:FCM_TEST_ROAMING 'Fallout Chat Mod' }
+  $log = if ($Artifact -eq 'Portable') { Join-Path $DistDir 'FCMData/logs/main.log' } else { Join-Path $profile 'logs/main.log' }
+  [pscustomobject]@{ artifact=$Artifact; freshLog=(-not (Test-Path $log)); distDir=$DistDir; profile=$profile } |
     ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FCM_TEST_EVENTS -Encoding UTF8
   $global:LASTEXITCODE = if ($Artifact -eq 'Portable') { 0 } else { [int]$env:FCM_TEST_INSTALLER_EXIT }
 }
@@ -75,7 +77,7 @@ ${body.replace(/^ {10}/gm, '')}
     const result = spawnSync(process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
         cwd: temp, encoding: 'utf8', timeout: 30000,
-        env: { ...process.env, APPDATA: sharedProfile, RUNNER_TEMP: runnerTemp,
+        env: { ...process.env, APPDATA: sharedProfile, FCM_TEST_ROAMING: sharedProfile, RUNNER_TEMP: runnerTemp,
           RELEASE_VERSION: '1.4.3', RELEASE_TARGET: 'both', FCM_TEST_EVENTS: eventsFile,
           FCM_TEST_INSTALLER_EXIT: String(installerExit) },
       });
@@ -86,6 +88,47 @@ ${body.replace(/^ {10}/gm, '')}
 }
 
 describe('Windows release code signing (Azure Trusted Signing)', () => {
+  it('passes an explicit profile to the app and reads that same profile, including paths with spaces', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'fcm-smoke-profile-'));
+    try {
+      const dist = join(temp, 'build');
+      const profile = join(temp, 'isolated profile');
+      mkdirSync(join(dist, 'win-unpacked'), { recursive: true });
+      for (const file of [join(dist, 'Fallout Chat Mod-1.4.3.AppImage'), join(dist, 'win-unpacked', 'Fallout Chat Mod.exe')]) writeFileSync(file, 'fixture');
+      const script = join(temp, 'launch.ps1');
+      writeFileSync(script, `
+$ErrorActionPreference = 'Stop'
+function Start-Process {
+  param($FilePath, $ArgumentList, [switch]$PassThru)
+  if (($ArgumentList -join ' ') -notmatch '--user-data-dir="([^"]+)"') { throw 'Missing quoted user-data-dir argument' }
+  $profile = $matches[1]
+  if ($profile -ne $env:FCM_TEST_PROFILE) { throw 'Wrong Electron profile' }
+  $logs = Join-Path $profile 'logs'
+  New-Item -ItemType Directory -Path $logs -Force | Out-Null
+  $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+  @("[$stamp] [info] overlay starting", "[$stamp] [info] createWindow") |
+    Set-Content -LiteralPath (Join-Path $logs 'main.log') -Encoding UTF8
+  [pscustomobject]@{ Id=0 }
+}
+function kill { }
+function pkill { }
+function taskkill { }
+& $env:FCM_TEST_SMOKE -Version 1.4.3 -DistDir $env:FCM_TEST_DIST -WaitSec 0 -UserDataDir $env:FCM_TEST_PROFILE
+`);
+      const result = spawnSync(process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+          encoding: 'utf8', timeout: 30000,
+          env: { ...process.env, FCM_TEST_PROFILE: profile, FCM_TEST_DIST: dist,
+            FCM_TEST_SMOKE: join(REPO_ROOT, 'Packaging', 'smoke-test.ps1') },
+        });
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('SMOKE TEST: PASS');
+      expect(readFileSync(join(profile, 'logs', 'main.log'), 'utf8')).toContain('overlay starting');
+    } finally { rmSync(temp, { recursive: true, force: true }); }
+  }, 30000);
+
   it('rejects an installer smoke failure even when portable would succeed, with no success receipt', () => {
     runNativeGate(1, ({ result, receipt, events }) => {
       expect(result.status).not.toBe(0);

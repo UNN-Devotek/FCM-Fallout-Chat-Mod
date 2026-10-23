@@ -13,8 +13,8 @@
     Flow:
       1. Launch "<DistDir>/win-unpacked/Fallout Chat Mod.exe" (Start-Process -PassThru).
          Record the launch time, wait ~15s for startup to settle.
-      2. Read "$env:APPDATA/Fallout Chat Mod/logs/main.log", keeping only lines whose
-         timestamp is at/after the launch time (this run only).
+      2. Read "$env:APPDATA/Fallout Chat Mod/logs/main.log" (or UserDataDir/logs
+         when supplied), keeping only this run's timestamped lines.
       3. PASS requires, in this run's lines:
            - NO 'Cannot find module'
            - NO '[uncaught]'
@@ -31,13 +31,15 @@
 .PARAMETER Version  e.g. 1.3.83 (informational; the unpacked path is version-agnostic)
 .PARAMETER DistDir  build-output dir (default: ..\cross-platform-overlay\dist-electron)
 .PARAMETER WaitSec  seconds to let the app start before reading the log (default 15)
+.PARAMETER UserDataDir  explicit isolated installed/QA profile; passed to Electron and used for log lookup
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$Version,
     [string]$DistDir = "",
     [ValidateSet("Default", "Portable", "QA")] [string]$Artifact = "Default",
-    [int]$WaitSec = 15
+    [int]$WaitSec = 15,
+    [string]$UserDataDir = ""
 )
 $ErrorActionPreference = "Stop"
 
@@ -69,6 +71,11 @@ if ($IsLinux) {
         $exe = Join-Path $winUnpacked "Fallout Chat Mod.exe"
     }
 }
+if ($UserDataDir) {
+    if ($Artifact -eq "Portable") { throw "Portable smoke uses its adjacent FCMData profile, not UserDataDir" }
+    $UserDataDir = [System.IO.Path]::GetFullPath($UserDataDir)
+    $logDir = Join-Path $UserDataDir "logs"
+}
 $logPath = Join-Path $logDir "main.log"
 $priorElectronRunAsNode = $env:ELECTRON_RUN_AS_NODE
 
@@ -98,7 +105,11 @@ try {
         # APPIMAGELAUNCHER_DISABLE avoids the integrate prompt.
         & chmod +x $exe 2>$null
         $env:APPIMAGELAUNCHER_DISABLE = "1"
-        $proc = Start-Process -FilePath $exe -ArgumentList "--appimage-extract-and-run","--no-sandbox","--ozone-platform=x11" -PassThru
+        $launchArgs = @("--appimage-extract-and-run", "--no-sandbox", "--ozone-platform=x11")
+        if ($UserDataDir) { $launchArgs += "--user-data-dir=`"$UserDataDir`"" }
+        $proc = Start-Process -FilePath $exe -ArgumentList $launchArgs -PassThru
+    } elseif ($UserDataDir) {
+        $proc = Start-Process -FilePath $exe -ArgumentList "--user-data-dir=`"$UserDataDir`"" -PassThru
     } else {
         $proc = Start-Process -FilePath $exe -PassThru
     }

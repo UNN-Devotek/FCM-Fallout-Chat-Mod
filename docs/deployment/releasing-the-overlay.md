@@ -159,8 +159,11 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 >
 > Each build is **artifacts only** and never publishes. Windows requires valid
 > Authenticode signatures and native packaged launch checks before artifact upload.
-> Each gate uses a fresh temporary AppData profile and portable directory, so a
-> reused runner cannot accept an earlier build's log. Failed gates leave no success
+> Each gate uses a fresh temporary profile and portable directory, so a reused
+> runner cannot accept an earlier build's log. The installed launch passes
+> `-UserDataDir` to the smoke helper, which supplies Electron's `--user-data-dir`
+> argument and reads that exact profile's logs; changing `APPDATA` alone does not
+> redirect the Windows known-folder path. Failed gates leave no success
 > receipt; the temporary profile is removed after the checks.
 > It preserves the NSIS unpacked payload before portable metadata replaces it and
 > records executable hashes and launch results in `windows-release-gates.json`.
