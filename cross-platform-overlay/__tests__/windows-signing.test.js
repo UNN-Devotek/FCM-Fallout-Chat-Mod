@@ -37,7 +37,7 @@ const pkg = JSON.parse(readFileSync(join(OVERLAY_ROOT, 'package.json'), 'utf8'))
 
 // Execute the actual workflow gate, substituting only signing and native launch.
 // The deliberately stale profiles model a reused self-hosted runner.
-function runNativeGate(installerExit, check) {
+function runNativeGate(installerExit, check, workflowSource = workflow) {
   const temp = mkdtempSync(join(tmpdir(), 'fcm-native-gate-'));
   try {
     const dist = join(temp, 'cross-platform-overlay', 'dist-electron');
@@ -57,7 +57,7 @@ function runNativeGate(installerExit, check) {
     const receipt = join(dist, 'windows-release-gates.json');
     writeFileSync(receipt, 'stale receipt');
     const eventsFile = join(temp, 'events.jsonl');
-    const body = workflow.match(/- name: Verify Windows signatures and native launch gates[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name: Verify Windows artifact contract)/)?.[1];
+    const body = workflowSource.replace(/\r\n/g, '\n').match(/- name: Verify Windows signatures and native launch gates[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name: Verify Windows artifact contract)/)?.[1];
     expect(body, 'native gate must be selected from the release workflow').toBeTruthy();
     const script = join(temp, 'gate.ps1');
     writeFileSync(script, `
@@ -92,7 +92,7 @@ describe('Windows release code signing (Azure Trusted Signing)', () => {
       expect(result.stderr).toContain('Installed-edition native launch gate failed');
       expect(events.map(event => event.artifact)).toEqual(['Default']);
       expect(existsSync(receipt)).toBe(false);
-    });
+    }, workflow.replace(/\r?\n/g, '\r\n'));
   }, 30000);
 
   it('uses fresh installed and portable logs and writes receipts only after both pass', () => {
