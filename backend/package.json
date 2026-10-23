@@ -59,7 +59,7 @@
     "@types/ws": "^8.18.2",
     "jest": "^30.5.2",
     "nodemon": "^3.1.9",
-    "prisma": "^5.22.0",
+    "prisma": "^7.10.1",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
