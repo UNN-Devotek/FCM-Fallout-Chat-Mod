@@ -37,10 +37,10 @@
   "//scripts": "DEVELOPMENT uses ONLY dev:local / start:local \u2014 both target your local backend at http://localhost:7076. dev:local is ONE command: starts the Vite renderer (HMR) + launches Electron against it (edit ChatOverlay.tsx/shell.ts \u2192 hot-reloads). start:local builds the renderer once (no HMR). dev:cloud runs scripts/dev-cloud.mjs, which loads the hosted-DEV persona key from the OS keyring (or DEV_PERSONA_LOGIN_SECRET), isolates user data under ~/.fcm/hosted-dev, and targets dev.falloutchatmod.com. start + dist:* are the SHIPPING build of the end-user binary, which targets the production relay (https://falloutchatmod.com) \u2014 do NOT use them to develop against prod. NOTE: node_modules is platform-specific (native binaries: rollup, electron) \u2014 run these on the SAME OS you ran `npm install` on. On Windows+WSL, install and run the overlay on Windows.",
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
-    "@tanstack/react-query": "^5.104.3",
+    "@tanstack/react-query": "^5.104.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router": "^8.4.0",
+    "react-router": "^8.5.0",
     "ws": "^8.22.0"
   },
   "devDependencies": {
@@ -52,7 +52,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/coverage-v8": "^5.0.3",
+    "@vitest/coverage-v8": "^5.0.5",
     "concurrently": "^10.0.6",
     "cross-env": "^10.1.0",
     "electron": "^43.8.3",
@@ -61,7 +61,7 @@
     "semver": "^7.8.5",
     "tailwindcss": "^4.2.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.3",
     "wait-on": "^9.5.1"
   },
