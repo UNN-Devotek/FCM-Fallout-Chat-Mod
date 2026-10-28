@@ -172,6 +172,34 @@ Aliases affect grouping only; relay tokens remain the sole actor identity and al
 attribution is unchanged. One-sided aliases remain isolated, malformed or excess aliases fail
 closed, and freshness/session/generation rules apply to the whole roster record.
 
+Unreleased bridge recovery carries up to four observed self aliases through the local export and
+desktop protocol, matching the existing native HUD path. If the primary self label changes within
+the **same request generation**, session continuity additionally requires the previous aliases to
+contain the new primary label and the new aliases to contain the previous primary label. A one-sided
+claim or a generation change does not preserve the old session through this rule. Two-player
+worlds can join/recover with fresh reciprocal sightings; the three-name population rule remains
+unchanged and is not a prerequisite for initial pairing.
+
+Local-export transition logs include a pseudonymous account/actor crosswalk, movie/request
+references, fixed source/provider/state labels, numeric build version, observation age and
+roster/alias counts. Attach, source/state/count/identity changes and leave events are recorded;
+ordinary unchanged heartbeats are suppressed. Recovery reasons distinguish actual same-room
+direct recovery from shared-population restoration and new-room assignment. Missing rooms are
+`null`, rather than hashes of an empty string. The same fixed payload is kept in the bounded
+Redis diagnostic rings. These logs do not establish a private/public-world flag.
+
+Native relay connection slots are released by their owning TCP stream, including upgrades that
+abort before a WebSocket connection exists. The five-concurrent-connections-per-IP guard remains.
+Debug-level reservation/release logs pair a random connection reference with counts and a keyed `ipRef`;
+aborted-upgrade release is logged at info level. Normal RPC traffic does not generate info-level
+slot logs on every request. Cap
+rejections and authenticated desktop connection logs carry the same IP reference. This supports
+network-level correlation without adding raw addresses to these diagnostics. Shared addresses
+never authenticate an account or uniquely identify a player. IP references use
+`HUD_IDENTITY_HASH_SECRET`, with a process-local random fallback when absent; fallback references
+cannot be compared across restarts. Retention of Docker log files remains governed by deployment
+rotation, separately from Redis ring limits. See the [automated recovery plan](../testing/private-world-recovery.md).
+
 The additive v1 encoding supports a HUD-first rolling update: an older backend treats `@self:` as
 an unmatched peer entry rather than chat. A backend-first update accepts old clients with no
 aliases. Automated coverage includes differing account labels, mixed HUD/bridge transport labels

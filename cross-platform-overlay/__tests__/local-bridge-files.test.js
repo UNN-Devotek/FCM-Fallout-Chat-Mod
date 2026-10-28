@@ -22,6 +22,8 @@ describe('strict provider export boundary', () => {
     expect(bridgeEnvironment('https://other.example')).toBeNull();
   });
   it.each([
+    { ownAliases: Array(5).fill('Alias') }, { ownAliases: [1] }, { ownAliases: ['bad\nname'] },
+    { ownAliases: [''] }, { rosterSource: 'arbitrary private diagnostic text' },
     { schemaVersion: 2 }, { environment: 'prod' }, { provider: 'xscal' }, { credentials: 'forbidden' },
     { sequence: 0 }, { sequence: 1.5 }, { sequence: Number.MAX_SAFE_INTEGER + 1 }, { observationSequence: -1 },
     { observationAgeMs: -1 }, { observationAgeMs: 60001 }, { sessionId: '../file' }, { worldGeneration: '' },
@@ -66,6 +68,16 @@ describe('strict provider export boundary', () => {
 });
 
 describe('monotonic evidence and writer liveness', () => {
+  it('carries bounded aliases/source while fencing alias mutation under an unchanged observation', () => {
+    const value = snapshot({ ownAliases: ['AccountLabel'], rosterSource: 'PlayerListData' });
+    expect(parse(value)).toEqual(value);
+    const c = new ExportCursor(); c.accept(value, 0);
+    expect(c.accept({ ...value, sequence: 2 }, 1000)).not.toBeNull();
+    expect(c.accept({ ...value, sequence: 3, ownAliases: ['OtherLabel'] }, 2000)).toBeNull();
+    // A genuine updated observation retains the original roster's age bound.
+    expect(c.accept({ ...value, sequence: 4, observationSequence: 2, observationAgeMs: 3000 }, 3000)).not.toBeNull();
+    expect(c.current(30000)).toBeNull();
+  });
   it('requires advancement after attach and retains an established writer until observation expiry', () => {
     const cursor = new ExportCursor();
     expect(cursor.accept(snapshot(), 0)).toBeNull();

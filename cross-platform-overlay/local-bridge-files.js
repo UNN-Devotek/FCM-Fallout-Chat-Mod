@@ -13,6 +13,9 @@ const OBSERVATION_MS = 30000;
 const ADVANCE_MS = OBSERVATION_MS;
 const KEYS = ['schemaVersion', 'environment', 'provider', 'build', 'sessionId', 'worldGeneration',
   'sequence', 'observationSequence', 'observationAgeMs', 'state', 'ownName', 'names'].sort();
+const OPTIONAL_KEYS = ['ownAliases', 'rosterSource'];
+const ROSTER_SOURCES = ['none', 'MapMenuData', 'PlayerListData', 'PublicTeamsData',
+  'TeamMarkers', 'PartyMenuList', 'VoiceChatAreaData'];
 
 function bridgeEnvironment(relayHttp) {
   try {
@@ -30,7 +33,8 @@ function parseSnapshot(text, environment, provider) {
     const s = JSON.parse(text);
     const short = value => typeof value === 'string' && value.length <= 64;
     const nonce = value => typeof value === 'string' && /^[a-z0-9-]{1,64}$/.test(value);
-    if (!s || Array.isArray(s) || Object.keys(s).sort().join() !== KEYS.join()
+    if (!s || Array.isArray(s) || KEYS.some(key => !Object.hasOwn(s, key))
+      || Object.keys(s).some(key => !KEYS.includes(key) && !OPTIONAL_KEYS.includes(key))
       || s.schemaVersion !== 1 || s.environment !== environment || !['dev', 'prod'].includes(s.environment)
       || s.provider !== provider || !['zfe', 'xscal'].includes(s.provider)
       || !short(s.build) || !s.build || !nonce(s.sessionId) || !nonce(s.worldGeneration)
@@ -38,7 +42,10 @@ function parseSnapshot(text, environment, provider) {
       || !Number.isSafeInteger(s.observationSequence) || s.observationSequence <= 0
       || !Number.isFinite(s.observationAgeMs) || s.observationAgeMs < 0 || s.observationAgeMs > 60000
       || !['active', 'holding', 'inactive'].includes(s.state)
-      || !short(s.ownName) || !Array.isArray(s.names) || s.names.length > 24 || !s.names.every(short)) return null;
+      || !short(s.ownName) || !Array.isArray(s.names) || s.names.length > 24 || !s.names.every(short)
+      || (s.ownAliases !== undefined && (!Array.isArray(s.ownAliases) || s.ownAliases.length > 4
+        || !s.ownAliases.every(name => short(name) && name.length > 0 && !/[\x00-\x1f\x7f|]/.test(name))))
+      || (s.rosterSource !== undefined && !ROSTER_SOURCES.includes(s.rosterSource))) return null;
     return s;
   } catch { return null; }
 }
@@ -85,7 +92,8 @@ async function readBoundedFile(root, relative, maxBytes = MAX_BYTES, io = fs.pro
 
 const generation = s => `${s.provider}/${s.sessionId}/${s.worldGeneration}`;
 const evidence = s => JSON.stringify([s.provider, s.ownName.trim().toLowerCase(),
-  s.names.map(n => n.trim().toLowerCase()).sort()]);
+  s.names.map(n => n.trim().toLowerCase()).sort(),
+  (s.ownAliases ?? []).map(n => n.trim().toLowerCase()).sort(), s.rosterSource]);
 
 /** Per file watermarks survive bad reads. A first read is only a baseline. */
 class ExportCursor {

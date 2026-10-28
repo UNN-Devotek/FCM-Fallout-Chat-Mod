@@ -151,6 +151,18 @@ Schema 1 exports:
 - `state`: active / holding / inactive; `observationAgeMs`.
 - `ownName` from the fresh selected roster source when available, otherwise AccountInfo,
   plus at most 24 roster `names`; each is at most 64 characters.
+- Unreleased recovery work adds optional `ownAliases` (at most four sanitized local self labels)
+  and the fixed-enum `rosterSource`. New readers accept older schema-1 documents without these
+  fields. Update the backend and desktop overlay before installing a bridge that emits them;
+  older desktop readers reject additional fields. This change is not yet released or native-accepted.
+
+Self-name, self-alias and selected-source changes advance `observationSequence` while retaining
+the selected roster's actual age. Holding preserves the entire preceding observation, including
+its self name and aliases; it cannot publish changed identity evidence with an old sequence.
+Self aliases come only from current AccountInfoData and fresh, unblocked local-player rows.
+They help reciprocal roster matching and never authenticate an account. A corroborated self-label
+switch can preserve an unchanged backend observation session; generation/account boundaries remain
+authoritative. See the [private-world automated test plan](../../testing/private-world-recovery.md).
 
 Maximum UTF-8 document: 8 KiB. No tokens, linking codes, account authentication,
 room selection or credentials. Storage namespaces are organization, not security;
@@ -224,7 +236,7 @@ until it finds a non-empty bounded candidate set; those exact paths are pinned f
 authenticated game/watcher lifetime. Game exit, authentication/socket replacement, or overlay
 restart creates a new watcher and therefore performs fresh discovery. This avoids repeatedly
 launching the Windows process-metadata query during play while retaining game-before-overlay
-startup recovery. An independent watchdog revokes a writer that stops advancing for twelve
+startup recovery. An independent watchdog revokes a writer that stops advancing for thirty
 seconds, including while discovery or a read stalls. Only known Steam manifests/process
 locations and exact provider paths are inspected; no recursive filesystem or network scanning.
 

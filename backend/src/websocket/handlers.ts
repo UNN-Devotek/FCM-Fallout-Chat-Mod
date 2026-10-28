@@ -8,6 +8,7 @@ import { query as dbQuery } from '../config/database';
 import { computeDiscriminator } from '../utils/discriminator';
 import { buildAvatarUrl } from '../services/avatarService';
 import { isSocketSuperseded } from './socketSupersession';
+import { clientIpRef } from '../utils/clientIp';
 import { getLatestVersion } from '../services/latestReleaseVersion';
 import { shadowMute } from '../services/autoModService';
 import { engineEvaluate } from '../services/autoModEngine';
@@ -1682,7 +1683,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     bridgeInGame: false,
     role: connectTimeRole,
   });
-  logger.info({ userId: user.id, username: user.username, displayName }, 'WS client connected');
+  logger.info({ userId: user.id, username: user.username, displayName, ipRef: clientIpRef(req) }, 'WS client connected');
 
   // ── WS-flap grace handoff ──────────────────────────────────────────────────
   // If this user has a pending-disconnect entry from a recent close, decide

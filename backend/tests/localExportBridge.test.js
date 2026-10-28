@@ -34,7 +34,7 @@ const prisma = { user: { findUnique: jest.fn() } };
 const environment = { NODE_ENV: 'test', FCM_PUBLIC_BASE_URL: 'https://falloutchatmod.com' };
 jest.mock('../src/config/redis', () => ({ getRedisClient: async () => redis }));
 jest.mock('../src/config/prisma', () => ({ __esModule: true, default: prisma }));
-jest.mock('../src/config/logger', () => ({ __esModule: true, default: { warn: jest.fn(), debug: jest.fn() } }));
+jest.mock('../src/config/logger', () => ({ __esModule: true, default: { warn: jest.fn(), debug: jest.fn(), info: jest.fn() } }));
 jest.mock('../src/config/environment', () => ({ __esModule: true, default: environment }));
 jest.mock('../src/services/autoModEngine', () => ({ engineEvaluate: jest.fn(async () => ({ block: false })) }));
 jest.mock('../src/services/cosmetics/cosmeticsService', () => ({ attachCosmetics: jest.fn(async value => value) }));
@@ -47,6 +47,7 @@ const { getServerHistory } = require('../src/services/relay/serverChat');
 const { sendServerMessage } = require('../src/services/relay/serverMessageService');
 const { bridgeBindingId } = require('../src/services/relay/overlayServerBridge');
 const { BridgeConnection } = require('../src/websocket/bridgeConnection');
+const logger = require('../src/config/logger').default;
 const { mergeBridgeRows, readBridgeState, INACTIVE_BRIDGE } = require('../../admin-dashboard/src/features/chat/bridgeFeed');
 const snapshot = (changes = {}) => ({ schemaVersion: 1, environment: 'dev', provider: 'zfe', build: '0.2.0',
   sessionId: 'movie-one', worldGeneration: 'world-one', sequence: 1, observationSequence: 1,
@@ -80,6 +81,8 @@ test.each([
   { ...snapshot(), sequence: 0 }, { ...snapshot(), observationSequence: 1.5 }, { ...snapshot(), observationAgeMs: -1 },
   { ...snapshot(), observationAgeMs: Infinity }, { ...snapshot(), ownName: 'x'.repeat(65) },
   { ...snapshot(), names: Array(24).fill('\u0000'.repeat(64)) },
+  snapshot({ ownAliases: Array(5).fill('Alias') }), snapshot({ ownAliases: ['bad\nname'] }),
+  snapshot({ ownAliases: [1] }), snapshot({ rosterSource: 'unbounded private text' }),
 ])('bounded strict snapshot rejects invalid input %#', input => expect(parseLocalBridgeObservation(input)).toBeNull());
 
 test('deployment environment is explicit and unknown production URLs fail closed', () => {
@@ -135,6 +138,62 @@ test('observation timeout revokes authority immediately and recovers the same ro
   expect(await getWorldId(a.local.actorId)).toBeNull();
   await a.connection.observe(snapshot({ names: ['P1', 'P2', 'P3'], sequence: 2, observationSequence: 2 }));
   expect((await a.local.resolve()).binding.room).toBe(original);
+});
+
+test.each([['zfe','zfe'], ['zfe','xscal'], ['xscal','zfe'], ['xscal','xscal']])
+  ('two-player %s/%s bridge matches self aliases and recovers without public population', async (provider, peerProvider) => {
+  const a = desktop(), b = desktop('account-b', 'session-b');
+  const alice = { provider, ownName: 'Alice Character', ownAliases: ['Alice'], names: ['Bob'] };
+  const bob = { provider: peerProvider, ownName: 'Bob Character', ownAliases: ['Bob'], names: ['Alice'] };
+  expect(await a.local.observe(snapshot(alice))).toBe(true);
+  expect(await b.local.observe(snapshot(bob))).toBe(true);
+  const original = (await a.local.resolve()).binding.room;
+  expect((await b.local.resolve()).binding.room).toBe(original);
+  const before = await readRoster(a.local.actorId);
+  const message = await sendServerMessage({ accountId: 'account-b', relayUserId: b.local.actorId,
+    displayName: 'Bob' }, original, 'private-world history');
+  // A fresh source switches which self label it exposes. Both labels are from
+  // the same observed local player; the authenticated actor/generation stays.
+  await a.local.observe(snapshot({ ...alice, ownName: 'Alice', ownAliases: ['Alice Character'],
+    sequence: 2, observationSequence: 2 }));
+  expect(await readRoster(a.local.actorId)).toMatchObject({ session: before.session, roomKey: original });
+  await a.connection.leave('observation_timeout');
+  expect((await a.local.resolve()).status).toBe('inactive');
+  await a.local.observe(snapshot({ ...alice, sequence: 3, observationSequence: 3 }));
+  expect((await a.local.resolve()).binding.room).toBe(original);
+  expect((await getServerHistory(original, 0, 50)).map(row => row.messageId)).toEqual([message.messageId]);
+  const recovery = lists.get('relay:room-diagnostics:recent').map(JSON.parse).find(row => row.event === 'soft_leave_recovered');
+  expect(recovery.reason).toBe('direct');
+});
+
+test('transition diagnostics correlate account/session/source without names, tokens or heartbeat noise', async () => {
+  const a = desktop('hidden-account-id', 'hidden-bearer-token');
+  const first = snapshot({ ownName: 'HiddenLocalName', names: ['HiddenPeer'], ownAliases: ['HiddenAlias'],
+    rosterSource: 'PlayerListData', build: 'private-debug-string' });
+  await a.local.observe(first);
+  const events = logger.info.mock.calls.map(([event]) => event);
+  expect(events).toEqual([
+    expect.objectContaining({ event: 'bridge_attached', accountRef: expect.stringMatching(/^[a-f0-9]{12}$/) }),
+    expect.objectContaining({ event: 'bridge_observation', source: 'PlayerListData', build: 'other',
+      rosterCount: 1, aliasCount: 1, observationAgeMs: 0, sessionRef: expect.stringMatching(/^[a-f0-9]{12}$/) }),
+  ]);
+  await a.local.observe({ ...first, sequence: 2, observationAgeMs: 5000 });
+  expect(logger.info).toHaveBeenCalledTimes(2);
+  await a.connection.leave('observation_timeout');
+  expect(logger.info.mock.calls.at(-1)[0]).toMatchObject({ event: 'bridge_leave', reason: 'observation_timeout' });
+  const text = JSON.stringify(logger.info.mock.calls);
+  for (const secret of ['hidden-account-id', 'hidden-bearer-token', 'HiddenLocalName', 'HiddenPeer',
+    'HiddenAlias', 'private-debug-string', a.local.actorId]) expect(text).not.toContain(secret);
+});
+
+test('a heartbeat cannot introduce a new self alias or change roster-source provenance', async () => {
+  const a = desktop();
+  const first = snapshot({ ownAliases: ['CharacterLabel'], rosterSource: 'MapMenuData' });
+  await a.local.observe(first);
+  const before = await readRoster(a.local.actorId);
+  expect(await a.local.observe({ ...first, sequence: 2, ownAliases: ['OtherLabel'] })).toBe(false);
+  expect(await a.local.observe({ ...first, sequence: 3, rosterSource: 'PlayerListData' })).toBe(false);
+  expect(await readRoster(a.local.actorId)).toEqual(before);
 });
 
 test('soft leave cannot restore an old room without a qualifying current peer', async () => {

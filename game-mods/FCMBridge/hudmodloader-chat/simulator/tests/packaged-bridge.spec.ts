@@ -8,6 +8,38 @@ function pollCount(value: unknown): number {
 }
 
 for (const provider of ['zfe','xscal']) {
+  test(`packaged ${provider} keeps self aliases and evidence generations consistent through travel`, async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());
+    await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-self-alias`);
+    const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+    await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false,
+      snapshot: { ownName: 'HarnessSelf', ownAliases: [], rosterSource: 'MapMenuData' } });
+    const first = await snapshot();
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('self-label'));
+    await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ violation: false,
+      snapshot: { ownName: 'HarnessCharacter', ownAliases: ['harnessself'], names: ['PeerA','PeerB'],
+        worldGeneration: first!.snapshot.worldGeneration } });
+    const changed = await snapshot();
+    expect(changed!.snapshot.observationSequence).toBeGreaterThan(first!.snapshot.observationSequence);
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('alternate-self-source'));
+    await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ violation: false,
+      snapshot: { ownName: 'HarnessSelf', ownAliases: ['harnesscharacter'], rosterSource: 'PlayerListData',
+        names: ['PeerA','PeerB'], worldGeneration: first!.snapshot.worldGeneration } });
+    const alternate = await snapshot();
+    expect(alternate!.snapshot.observationSequence).toBeGreaterThan(changed!.snapshot.observationSequence);
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('loading'));
+    await expect.poll(snapshot, { timeout: 8_000 }).toMatchObject({ violation: false,
+      snapshot: { state: 'holding', ownName: 'HarnessSelf', ownAliases: ['harnesscharacter'],
+        observationSequence: alternate!.snapshot.observationSequence } });
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('resume'));
+    await expect.poll(snapshot, { timeout: 8_000 }).toMatchObject({ active: true, snapshot: { state: 'active' } });
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('hop'));
+    await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ rebound: true, violation: false,
+      snapshot: { ownAliases: [], names: ['NewPeer'] } });
+    const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+    expect(stopped).toMatchObject({ disposed: true, subscriptions: 0, violation: false });
+  });
   test(`cosmetic receiver unload during native auth stops the remaining ${provider} lifecycle`, async ({ page }) => {
     await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());
     await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-nameplates`);
