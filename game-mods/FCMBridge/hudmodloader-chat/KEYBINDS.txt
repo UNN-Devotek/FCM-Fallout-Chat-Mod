@@ -49,6 +49,12 @@ operating system browser through GFx. No desktop overlay is required. Escape can
 its field without delivering the final callback, FCM recovers the Enter draft after a short grace
 period; other focus loss cancels the stale edit so the next Insert press works.
 
+The unreleased HUDModLoader editor caret blinks at the insertion point, including
+in an empty input. Left/Right move that point; typing and deletion use the editor's
+normal selection. It disappears when input closes and is never sent as message text.
+This covers ZFE and xScal shared/fallback input. The native xScal API does not yet
+report its caret position, so that route has no added visible caret.
+
 ZFE OPEN-CHAT KEY
 -----------------
 The shipped open-chat key is Insert. ZFE users can change it. Keep the HUD label/action

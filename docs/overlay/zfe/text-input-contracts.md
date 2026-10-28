@@ -1,7 +1,7 @@
 # HUD text input: ZFE and xScal contracts
 
-This describes the current `FCMChatWidget` 2.10.134 source and the locally tested ZFE 0.15.0
-and xScal input paths. One provider-neutral BA2 contains both routes. The widget requires
+This describes the current `FCMChatWidget` input routes; the native tests below identify
+their tested artifacts and provider versions. One provider-neutral BA2 contains both routes. The widget requires
 **one active extender**; if it detects both, it shows a provider-conflict message and stops
 discovery. [Provider discovery](../../../game-mods/FCMBridge/FcmNativeApi.hx) and
 [route selection](../../../game-mods/FCMBridge/hudmodloader-chat/FcmInputRoute.hx) are the
@@ -76,6 +76,28 @@ trial opened such a session while gameplay still responded to M/W. Therefore
 selects HUDTools for ZFE even when those capabilities are advertised; the legacy ZFE native
 chat-input buffer is not an automatic fallback either. `hotkeys.v1.*` is a third, separate
 contract for owned key chords and edge-count polling, not text editing or gameplay suppression.
+
+## Local caret in the HUDModLoader editor
+
+The unreleased caret candidate draws a blinking two-pixel insertion marker beside the
+focused HUDTools entry field. It appears even in an empty input, follows the editor's
+actual caret index and resets its blink after typing or movement. The editor retains
+Left/Right navigation, selection, insertion and deletion; the widget never rewrites
+the draft to display the marker. The marker is a separate, mouse-transparent graphic,
+so it cannot enter submitted text, pending rows, message history or the relay.
+
+The existing editor poll updates its position and blink. Focus loss hides the marker;
+submit, cancellation, modal handoff and unload remove it. Its coordinates use the
+editor's transform and account for text scrolling. A callback from an older editor
+generation cannot stop the current poll or remove the current caret.
+Fresh native GFx acceptance is pending.
+
+This currently covers ZFE and xScal's `xscalInputMode=shared`/host fallback. The native
+xScal `PollInput` contract does not expose its internal caret position, including
+Left/Right/Home/End movements that leave text and revision unchanged. Accurate native
+caret rendering needs a provider API extension. Input-route defaults are unchanged;
+native xScal mode does not display this new marker. See the author's
+[callback implementation](https://github.com/DCHoaxer/xScal/blob/main/src/api/scaleform_callbacks.cpp).
 
 ## xScal: native text session
 

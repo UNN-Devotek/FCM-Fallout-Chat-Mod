@@ -1,14 +1,14 @@
 {
   "artifacts": {
-    "FCMChatWidget.ba2": "3d79f5e6be6db00f34da06e88d605e94fd16c0fbf3b460c9471f49fc4c602e7a",
-    "FCMChatWidget.swf": "fcdf893bdc3d79d64c5533bde6d270ce3a615f241232febe447eabef15f514c1"
+    "FCMChatWidget.ba2": "73a8e3e70a7f551066e15fe492c8c9d20963a407fc6636a8cfdb4e230f5f1675",
+    "FCMChatWidget.swf": "5bcced5dede01d8da45522c40e1f3932185e7e1a74b5031a09c666c1849a5924"
   },
   "format": 1,
   "sources": {
     "FcmAuthFlow.hx": "dcfa605765f45a404ef3c139fd253e5ddadd491ff2f46751707a28f5901fc729",
     "FcmNativeApi.hx": "1bb137aebf8b5f596f6390fa8e615ce3a731cd4b2bf95befb8272496cf0b96fe",
     "FcmRuntimeError.hx": "4341725ac91f54c0329c312e7e947ae6dd7480db3a478c968f61c1de724fbef6",
-    "hudmodloader-chat/FCMChatWidget.hx": "9c09358dd7ceb80c0261bca4551f3fa004fa18302791e80043d492f12bd3f63e",
+    "hudmodloader-chat/FCMChatWidget.hx": "258d674d1e081261f070a07d699bbeb8a6c739fedb97c2035c685c978e5dcac6",
     "hudmodloader-chat/FcmBrowser.hx": "e0ff11e37ccfc85a01019be369d6d8cea30388b239690c2fa865d93eefd02430",
     "hudmodloader-chat/FcmCommand.hx": "ab90179ef7c142e3553f55822c4a4d9d8eb50338a0e9a55075512613d8e064c2",
     "hudmodloader-chat/FcmConfig.hx": "5eacdb03a5216af9f608f4ae89c1669f8fe43d3a0914bc4efd55732c558fec9c",
@@ -27,6 +27,7 @@
     "hudmodloader-chat/FcmHudLayout.hx": "497e18a0114d7b78dfe2b460e020d2b5c28e021c65d3a7e7ef7831a1baea5ec6",
     "hudmodloader-chat/FcmHudRosterReader.hx": "e9ae989020559cd9d8e5bf607e0929bf86ad3672fc6c6b8e912f4f602fa337c6",
     "hudmodloader-chat/FcmIdentity.hx": "116366792acad7eae35dde07080a867126c253df8af99107b900a2eb2d583575",
+    "hudmodloader-chat/FcmInputCaret.hx": "382ebb64a4907adac1e4809e99f0ce3b4e02534e0c5a5908aa2cb0199d5eddec",
     "hudmodloader-chat/FcmInputRoute.hx": "f53bea3cda111e030d0dc6cb7780108140a669ccb3a45072dc792ccda731bb8d",
     "hudmodloader-chat/FcmJson.hx": "d95202b99b9c8a3130d5b6de728cc1488414c8030d8b058e5181728458ba2053",
     "hudmodloader-chat/FcmLink.hx": "1deac306de6b8a941b2785370fedddc7aa0908f471825d6e9fd5136e312d0b55",

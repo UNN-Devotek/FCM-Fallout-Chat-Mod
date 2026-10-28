@@ -1,5 +1,27 @@
 # Automated HUD-mod test harness plan
 
+## Local input caret candidate
+
+`TestFcmInputCaret.hx` checks the half-second blink, reset on editing/movement,
+empty input, selection, focus and closure. The required `gamemod-anchors` job runs it.
+`simulator/tests/input-caret.spec.ts` uses real Ruffle text entry on both providers'
+HUDModLoader editor paths: Left/Right, insertion and Backspace, exact submitted body,
+cancellation without send, reopening, stale callback rejection and unload without a retained marker. Its local
+fixture starts with empty chat history and blocks non-loopback requests.
+
+The simulator's JavaScript driver passes ExternalInterface arguments individually,
+including genuinely zero-argument snapshot calls. Mock host modes permit that local
+driver; production artifact mode retains disabled networking and script access.
+URL opening remains denied. These settings belong only to the simulator.
+
+Run the complete harness and existing package/source checks before distribution.
+Native acceptance must check an empty input and a draft, repeated Left/Right editing,
+long/wrapped/localized input, moved/resized panels, focus loss, Enter/Escape, reopening,
+gameplay arrows outside input and HUD unload. Confirm the caret is visible only in
+the active input and no marker appears in sent text or retained history. Accurate
+native xScal caret rendering requires provider position metadata; it is not certified
+by a shared-editor fixture. See [input contracts](../overlay/zfe/text-input-contracts.md).
+
 ## Dev integration — HUD 2.10.151 / bridge source 0.2.18
 
 The integrated candidate keeps current Dev's real cooldown scenario and the

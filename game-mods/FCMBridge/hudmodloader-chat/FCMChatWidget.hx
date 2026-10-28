@@ -438,6 +438,7 @@ class FCMChatWidget extends MovieClip {
     var _lastSharedInputDiag:String = "";
     static inline var SHARED_INPUT_FOCUS_GRACE_MS:Float = 225;
     var _sharedInputField:TextField = null;
+    var _inputCaret:FcmInputCaret = new FcmInputCaret();
     var _sharedInputDraft:String = "";
     var _sharedInputAllowEmpty:Bool = false;
     var _sharedInputSubmitArmed:Bool = false;
@@ -752,6 +753,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function stopSharedInputDiagnostics():Void {
+        _inputCaret.clear();
         if (_sharedInputDiagTimer != null) {
             _sharedInputDiagTimer.stop();
             _sharedInputDiagTimer = null;
@@ -3228,6 +3230,7 @@ class FCMChatWidget extends MovieClip {
 
     function onSharedInputKeyDown(e:KeyboardEvent):Void {
         if (_disposed || !_inputOpen || _nativeInput || _sharedInputField == null) return;
+        _inputCaret.activity(flash.Lib.getTimer());
         var keyCode:Int = Std.int(e.keyCode);
         if (keyCode != 13 && FcmCommand.linkActivationEnabled(
                 FcmCommand.physicalKeyAction(keyCode).length > 0
@@ -3267,7 +3270,10 @@ class FCMChatWidget extends MovieClip {
     }
 
     function pollSharedInputDiagnostics(generation:Int):Void {
-        if (_disposed || !_inputOpen || _nativeInput || generation != _inputGeneration || stage == null) {
+        // A queued callback from an ended editor must not stop the newer
+        // editor's poll timer or remove its caret.
+        if (generation != _inputGeneration) return;
+        if (_disposed || !_inputOpen || _nativeInput || stage == null) {
             stopSharedInputDiagnostics();
             return;
         }
@@ -3310,7 +3316,14 @@ class FCMChatWidget extends MovieClip {
             caret = tf.caretIndex;
             maxChars = tf.maxChars;
             inputType = Std.string(tf.type);
+            var inputRect = _cfg.inputRect();
+            if (tf.type == TextFieldType.INPUT && Math.abs(tf.x - x - inputRect.x) <= 2
+                    && Math.abs(tf.y - y - inputRect.y) <= 2
+                    && Math.abs(tf.width - inputRect.width) <= 2) {
+                _inputCaret.updateField(tf, flash.Lib.getTimer(), _cfg.inputTextColor);
+            } else _inputCaret.clear();
         } else if (_sharedInputField != null) {
+            _inputCaret.clear();
             var now:Float = flash.Lib.getTimer();
             if (_sharedInputFocusLostAt == 0) _sharedInputFocusLostAt = now;
             var lostMs:Float = now - _sharedInputFocusLostAt;

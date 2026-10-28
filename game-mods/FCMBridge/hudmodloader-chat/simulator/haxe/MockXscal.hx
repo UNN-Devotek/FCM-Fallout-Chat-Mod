@@ -23,6 +23,7 @@ class MockXscal {
     public static var authPollCount(default, null):Int = 0;
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
+    public static var lastChatBody(default, null):String = "";
     public static var giveawayMode:Bool = false;
     public static var eventMode:Bool = false;
     public static var lastEventBody(default, null):String = "";
@@ -233,6 +234,7 @@ class MockXscal {
                 return response({success:true, messageId:messageId, targetUserId:""});
             }
             ordinarySendCount++;
+            lastChatBody = body;
             var nextId:Int = scenarioEvents.length + 1;
             scenarioEvents.push({kind:"chat.message", id:nextId, messageId:messageId,
                 channel:channel, senderUserId:"sim-linked-user", senderDisplayName:"Simulator76",
