@@ -57,7 +57,7 @@ async function sha256(url: string): Promise<string> {
 
 function external(name: string, ...args: unknown[]): unknown {
   if (!player) throw new Error('Ruffle player is not ready');
-  return player.ruffle().callExternalInterface(name, args);
+  return player.ruffle().callExternalInterface(name, ...args);
 }
 
 async function dispatch(bindingOrKey: string): Promise<void> {
@@ -97,7 +97,7 @@ async function boot(): Promise<void> {
     logLevel: 'info', warnOnUnsupportedContent: true, unmuteOverlay: 'hidden',
     // Ruffle's "internal" blocks ExternalInterface. Only our isolated local test
     // host needs that driver; URL opening remains denied and tests block nonlocal requests.
-    openUrlMode: 'deny', allowNetworking: mode === 'packaged-bridge' ? 'all' : mode === 'harness' ? 'internal' : 'none', allowScriptAccess: mode !== 'artifact',
+    openUrlMode: 'deny', allowNetworking: mode === 'artifact' ? 'none' : 'all', allowScriptAccess: mode !== 'artifact',
     parameters: { provider, scenario: new URLSearchParams(location.search).get('scenario') ?? '' },
     ...(gameFontSource ? { fontSources: ['/fonts_programs.swf'] } : {}),
   });
@@ -197,7 +197,7 @@ boot().catch(error => {
 
 type RuffleController = {
   load(config: Record<string, unknown>): Promise<void>;
-  callExternalInterface(name: string, args: unknown[]): unknown;
+  callExternalInterface(name: string, ...args: unknown[]): unknown;
   traceObserver?: (line: string) => void;
 };
 type RuffleElement = HTMLElement & { ruffle(): RuffleController };

@@ -23,6 +23,7 @@ class MockXscal {
     public static var authPollCount(default, null):Int = 0;
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
+    public static var lastChatBody(default, null):String = "";
     public static var giveawayMode:Bool = false;
     public static var eventMode:Bool = false;
     public static var lastEventBody(default, null):String = "";
@@ -33,6 +34,10 @@ class MockXscal {
     public static var lastRoomDiagnosticBody(default, null):String = "";
     public static var lastNameplateControl(default, null):String = "";
     public static var sessionInputEnabled:Bool = false;
+    public static var sessionCaretEnabled:Bool = false;
+    public static var hudReceipts:Bool = false;
+    static var sessionCaretIndex:Dynamic = 0;
+    static var sessionEncodedText:String = '""';
     public static var sessionInputBusy:Bool = false;
     public static var sessionEndResult:Dynamic = true;
     public static var sessionEndKeepsActive:Bool = false;
@@ -233,10 +238,25 @@ class MockXscal {
                 return response({success:true, messageId:messageId, targetUserId:""});
             }
             ordinarySendCount++;
+            lastChatBody = body;
             var nextId:Int = scenarioEvents.length + 1;
             scenarioEvents.push({kind:"chat.message", id:nextId, messageId:messageId,
                 channel:channel, senderUserId:"sim-linked-user", senderDisplayName:"Simulator76",
                 body:body, targetUserId:""});
+            if (hudReceipts) {
+                var target = Std.string(Reflect.field(args, "targetUserId"));
+                if (StringTools.startsWith(target, "FCMOUT/1;")) for (part in target.split(";")) {
+                    if (!StringTools.startsWith(part, "i=")) continue;
+                    // Match the real relay's durable private receipt so a caret
+                    // test does not turn an unacknowledged send into a retry test.
+                    var receipt = response({success:true,messageId:messageId,
+                        targetUserId:"FCMHUD/1;q=" + part.substr(2) + ";m=" + StringTools.urlEncode(messageId)});
+                    scenarioEvents.push({kind:"chat.message",id:scenarioEvents.length + 1,
+                        messageId:"sim-ack-" + nextId,channel:"system",senderUserId:"system",
+                        senderDisplayName:"FCM",body:"FCMACK/1;" + StringTools.urlEncode(receipt),targetUserId:""});
+                    break;
+                }
+            }
             if (channel != "server") sendHostedDev(channel, body);
             return response({success:true, messageId:messageId, targetUserId:""});
         });
@@ -274,14 +294,27 @@ class MockXscal {
                 sessionId = ++sessionBeginCount;
                 sessionRevision = 0;
                 sessionText = "";
+                sessionCaretIndex = 0;
+                sessionEncodedText = '""';
                 sessionState = "active";
                 return response({success:true,sessionId:sessionId,revision:0,text:"",state:"active"});
             }
             if (name == "Input.PollInput") {
                 if (!sessionInputEnabled || sessionId == 0 || Std.int(value) != sessionId)
                     return response({success:false,error:"invalid_session"});
-                return response({success:true,sessionId:sessionId,revision:sessionRevision,
-                    text:sessionText,state:sessionState});
+                var snapshot:Dynamic = {success:true,sessionId:sessionId,revision:sessionRevision,
+                    text:sessionText,state:sessionState};
+                if (sessionCaretEnabled && sessionCaretIndex != null)
+                    Reflect.setField(snapshot, "caretIndex", sessionCaretIndex);
+                if (sessionCaretEnabled) {
+                    // Haxe's Flash JSON printer writes surrogate halves as
+                    // separate UTF-8 sequences. Keep the supplied ASCII JSON
+                    // string intact at this mock provider boundary.
+                    Reflect.deleteField(snapshot, "text");
+                    var header = response(snapshot);
+                    return header.substr(0, header.length - 1) + ',"text":' + sessionEncodedText + '}';
+                }
+                return response(snapshot);
             }
             if (name == "Input.EndInput") {
                 if (sessionId == 0 || Std.int(value) != sessionId) return false;
@@ -328,6 +361,12 @@ class MockXscal {
         sessionText = text;
         sessionState = state;
         sessionRevision++;
+    }
+
+    public static function setNativeInput(text:String, index:Dynamic, state:String, encodedText:String):Void {
+        if (text != sessionText || state != sessionState) setSessionInput(text, state);
+        sessionCaretIndex = index; // Cursor movement alone does not change the native text revision.
+        sessionEncodedText = encodedText;
     }
 
     public static function setVirtualKey(key:Int, down:Bool):Void {

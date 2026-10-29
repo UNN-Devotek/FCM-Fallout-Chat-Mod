@@ -1,5 +1,32 @@
 # xScal visible HUD acceptance — 2026-09-15
 
+## Native caret test — 2026-10-29
+
+[Confirmed by user] After the authorized desktop installation of HUD 2.10.152
+and the author's supplied xScal test DLL, the user reports "its working" and
+requests integration into Dev. Record this as basic native caret acceptance;
+the user did not enumerate individual arrow/repeat, scrolling, Unicode, controller
+or input-release checks. Fresh ZFE and the two-client Server compatibility matrix
+remain separate acceptance work.
+
+The active desktop files still match the tested installation:
+
+- `dxgi.dll` SHA-256: `e95e698aa3a76c715f628aa5192a6c947a879cbd30529b1809b55f270b025180`.
+- `FCMChatWidget.ba2` SHA-256: `600948b678c562fc1f8f4818d14e41568ace8a7610bc93f93ffebaf33f264125`.
+
+A fresh log modified at 2026-10-29 16:33:11 UTC identifies the supplied test DLL
+as xScal 0.4.31, loads FCMChatWidget 2.10.152, and records
+`xScal caret metadata available=true units=utf16`. This independently confirms
+the optional provider metadata reached the widget; the visual result comes from
+the user's observation. Native input and the existing Dev endpoint are retained.
+The public xScal 0.4.32 source also contains the requested cursor metadata, but
+its released binary was not installed or accepted by this test.
+
+The exact source candidate passed all 100 local Ruffle cases, 32 pure Haxe
+suites plus JavaScript UTF-16 checks, source/package/artifact validation and all
+19 reported hosted checks at `4058094fa895c169ed6adbfb301db76244638e0c`.
+These automated results do not substitute for the remaining native matrix.
+
 ## Desktop game-update test — 2026-10-20
 
 [Confirmed] The user requested the latest Nexus xScal locally after the game

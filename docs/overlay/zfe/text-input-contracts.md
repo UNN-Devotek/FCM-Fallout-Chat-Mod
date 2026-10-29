@@ -1,7 +1,7 @@
 # HUD text input: ZFE and xScal contracts
 
-This describes the current `FCMChatWidget` 2.10.134 source and the locally tested ZFE 0.15.0
-and xScal input paths. One provider-neutral BA2 contains both routes. The widget requires
+This describes the current `FCMChatWidget` input routes; the native tests below identify
+their tested artifacts and provider versions. One provider-neutral BA2 contains both routes. The widget requires
 **one active extender**; if it detects both, it shows a provider-conflict message and stops
 discovery. [Provider discovery](../../../game-mods/FCMBridge/FcmNativeApi.hx) and
 [route selection](../../../game-mods/FCMBridge/hudmodloader-chat/FcmInputRoute.hx) are the
@@ -76,6 +76,45 @@ trial opened such a session while gameplay still responded to M/W. Therefore
 selects HUDTools for ZFE even when those capabilities are advertised; the legacy ZFE native
 chat-input buffer is not an automatic fallback either. `hotkeys.v1.*` is a third, separate
 contract for owned key chords and edge-count polling, not text editing or gameplay suppression.
+
+## Local caret (2.10.152 test candidate)
+
+The unreleased caret candidate draws a blinking two-pixel insertion marker beside the
+focused HUDTools entry field. It appears even in an empty input, follows the editor's
+actual caret index and resets its blink after typing or movement. The editor retains
+Left/Right navigation, selection, insertion and deletion; the widget never rewrites
+the draft to display the marker. The marker is a separate, mouse-transparent graphic,
+so it cannot enter submitted text, pending rows, message history or the relay.
+
+The existing editor poll updates its position and blink. Focus loss hides the marker;
+submit, cancellation, modal handoff and unload remove it. Its coordinates use the
+editor's transform and account for text scrolling. A callback from an older editor
+generation cannot stop the current poll or remove the current caret.
+Basic native xScal caret operation was confirmed by the user on 2026-10-29;
+see the [acceptance record](../../testing/hud-xscal-acceptance-2026-09-15.md#native-caret-test--2026-10-29).
+The detailed native matrix and fresh ZFE acceptance remain pending.
+
+ZFE and xScal's `xscalInputMode=shared`/host fallback use the actual field selection.
+Native xScal retains `Input.BeginInput`/`PollInput`/`EndInput` ownership. A provider
+that includes an optional numeric `caretIndex` in its poll snapshot supplies the
+zero-based UTF-16 insertion position. The widget reads it on every poll, including
+Left/Right/Home/End movement that leaves text and revision unchanged. The display
+field stays noneditable and never takes focus; only its graphic and horizontal
+scroll change to reveal the insertion point. No additional keys are registered.
+
+The xScal test DLL supplied on 2026-10-28 provides this metadata: a fresh
+2026-10-29 desktop log records its availability with HUD 2.10.152, and the user
+reports the caret working. That DLL identifies itself as 0.4.31; the released
+[0.4.32 source](https://github.com/DCHoaxer/xScal/blob/61b2e5496b8ad2e539a07959a267f79f8c3dc499/src/api/scaleform_callbacks.cpp#L587)
+also serializes the requested `caretIndex`. The public 0.4.32 binary was not
+installed or independently accepted in this test.
+Missing, nonnumeric, fractional, out-of-range or split-surrogate positions hide the
+graphic without ending input or switching editors. Older providers continue using
+the same native editor without a caret. `xscalInputMode` and route defaults are
+unchanged. The bounded `xScal caret metadata available=true/false units=utf16` log
+records availability transitions without recording drafts or session tokens.
+An isolated drawing failure disables the graphic for that edit and logs once;
+native typing and submission continue. Reopening starts a fresh render attempt.
 
 ## xScal: native text session
 

@@ -4,6 +4,7 @@ import flash.events.KeyboardEvent;
 import flash.external.ExternalInterface;
 import MockXscal.SimLog;
 
+@:access(FCMChatWidget)
 class FCMHarness extends Sprite {
     public var __SFECodeObj:Dynamic;
     public var __SFCodeObj:Dynamic;
@@ -29,7 +30,13 @@ class FCMHarness extends Sprite {
             if (requested == "zfe") provider = "zfe";
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
-        if (scenario == "quoted-echo" || scenario == "cooldown" || scenario == "channel-send-tab" || scenario == "nameplates" || scenario == "native-nameplates") MockXscal.resetEvents();
+        if (scenario == "input-caret" || scenario == "xscal-native-caret") MockXscal.hudReceipts = true;
+        if (scenario == "xscal-native-caret") {
+            MockXscal.resetEvents();
+            MockXscal.sessionInputEnabled = true;
+            MockXscal.sessionCaretEnabled = true;
+        }
+        if (scenario == "input-caret" || scenario == "quoted-echo" || scenario == "cooldown" || scenario == "channel-send-tab" || scenario == "nameplates" || scenario == "native-nameplates") MockXscal.resetEvents();
         if (scenario == "giveaway") { MockXscal.resetEvents(); MockXscal.giveawayMode = true; }
         if (scenario == "events") { MockXscal.resetEvents(); MockXscal.eventMode = true; }
         if (scenario == "xscal-session-input" || scenario == "xscal-period-native"
@@ -46,7 +53,7 @@ class FCMHarness extends Sprite {
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
-        if (scenario != "native-nameplates" && scenario != "nameplates" && scenario != "channel-send-tab" && scenario != "cooldown" && scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
+        if (scenario != "xscal-native-caret" && scenario != "input-caret" && scenario != "native-nameplates" && scenario != "nameplates" && scenario != "channel-send-tab" && scenario != "cooldown" && scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
             MockXscal.loadScenario("/hosted-dev-snapshot.json");
         BSUIDataManager = scenario == "bridge-fast-travel" ? MockBridgeGameData.manager() : MockGameData.manager();
         if (scenario == "nameplates" || scenario == "native-nameplates") {
@@ -58,6 +65,7 @@ class FCMHarness extends Sprite {
         if (ExternalInterface.available) {
             ExternalInterface.addCallback("simDispatch", simDispatch);
             ExternalInterface.addCallback("simSubmit", simSubmit);
+            ExternalInterface.addCallback("simNativeInput", simNativeInput);
             ExternalInterface.addCallback("simSnapshot", simSnapshot);
             ExternalInterface.addCallback("simSetHudMode", simSetHudMode);
             ExternalInterface.addCallback("simUnload", simUnload);
@@ -146,6 +154,19 @@ class FCMHarness extends Sprite {
 
     function simDispatch(action:String, down:Bool):Bool {
         if (stage == null) return false;
+        if (scenario == "input-caret" && action == "stale-input-poll") {
+            widget.pollSharedInputDiagnostics(widget._inputGeneration - 1);
+            return true;
+        }
+        if (scenario == "xscal-native-caret" && action == "stale-input-poll") {
+            widget.runXscalSessionInputSafely(widget._inputGeneration - 1);
+            return true;
+        }
+        if (scenario == "xscal-native-caret" && action == "caret-render-fault" && widget != null) {
+            widget._inputCaret.clear();
+            widget._inputCaret = down ? new FailingInputCaret() : new FcmInputCaret();
+            return true;
+        }
         stage.dispatchEvent(new SimUserEvent(action, down));
         MockXscal.setPressed(action, down);
         return true;
@@ -153,6 +174,17 @@ class FCMHarness extends Sprite {
 
     function simSubmit(text:String):Bool {
         return SharedHUDTools.submitActive(text);
+    }
+
+    function simNativeInput(encodedText:String, index:Dynamic, state:String):Bool {
+        if (scenario != "xscal-native-caret" || widget == null || !widget._xscalSessionInput) return false;
+        // Use ASCII JSON text at the fixture boundary, preserving UTF-16 units
+        // independently of ExternalInterface and Haxe's Flash JSON printer.
+        var text:Dynamic = FcmJson.parse(encodedText);
+        if (!Std.isOfType(text, String)) return false;
+        MockXscal.setNativeInput(text, index, state, encodedText);
+        widget.runXscalSessionInputSafely(widget._inputGeneration);
+        return true;
     }
 
 
@@ -167,9 +199,31 @@ class FCMHarness extends Sprite {
     }
 
     function simSnapshot():String {
+        var marker = widget == null ? null : widget._inputCaret.marker;
+        var field = widget == null ? null : widget._sharedInputField;
+        var prompt = widget == null ? null : widget._promptTf;
         return haxe.Json.stringify({
             provider: provider,
             editorActive: SharedHUDTools.hasActiveEditor(),
+            nativeInputActive: widget != null && widget._xscalSessionInput,
+            nativeDraft: widget == null ? "" : widget._inProgress,
+            nativeDraftUnits: widget == null ? [] : [for (i in 0...widget._inProgress.length) widget._inProgress.charCodeAt(i)],
+            nativeRevision: widget == null ? -1 : widget._xscalSessionRevision,
+            nativeBeginCount: MockXscal.sessionBeginCount,
+            nativeEndCount: MockXscal.sessionEndCount,
+            nativeFieldScrollH: prompt == null ? 0 : prompt.scrollH,
+            nativeFieldLeft: prompt == null ? 0 : prompt.x,
+            nativeFieldRight: prompt == null ? 0 : prompt.x + prompt.width,
+            canSend: widget != null && widget._connected && !widget._needsLink
+                && widget._authState == "authenticated",
+            caretVisible: marker != null && marker.visible && marker.parent != null,
+            caretAttached: marker != null && marker.parent != null,
+            caretPosition: widget == null ? -1 : widget._inputCaret.position,
+            caretX: marker != null && marker.parent != null ? marker.getBounds(marker.parent).x : -1,
+            editorText: field == null ? "" : field.text,
+            ordinarySendCount: MockXscal.ordinarySendCount,
+            feedRowCount: widget == null ? 0 : widget._records.length,
+            lastChatBody: MockXscal.lastChatBody,
             callCount: MockXscal.callCount,
             pollCount: MockXscal.pollCount,
             historyDoneDeliveries: MockXscal.historyDoneDeliveries,
@@ -181,6 +235,13 @@ class FCMHarness extends Sprite {
             asyncCompletionDeliveries: MockXscal.asyncCompletionDeliveries,
             logCount: SimLog.count
         });
+    }
+}
+
+class FailingInputCaret extends FcmInputCaret {
+    override public function updateNativeField(field:flash.text.TextField, draft:String,
+            index:Int, now:Float, color:Int):Void {
+        throw "simulated native caret render failure";
     }
 }
 

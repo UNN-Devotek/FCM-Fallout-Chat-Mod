@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.151"; // combine current Dev retry handling with stationary name retention
+    static inline var VERSION:String  = "2.10.152"; // local caret from the native xScal cursor snapshot
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -438,6 +438,9 @@ class FCMChatWidget extends MovieClip {
     var _lastSharedInputDiag:String = "";
     static inline var SHARED_INPUT_FOCUS_GRACE_MS:Float = 225;
     var _sharedInputField:TextField = null;
+    var _inputCaret:FcmInputCaret = new FcmInputCaret();
+    var _xscalCaretAvailable:Null<Bool> = null;
+    var _xscalCaretRenderFailed:Bool = false;
     var _sharedInputDraft:String = "";
     var _sharedInputAllowEmpty:Bool = false;
     var _sharedInputSubmitArmed:Bool = false;
@@ -752,6 +755,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function stopSharedInputDiagnostics():Void {
+        _inputCaret.clear();
         if (_sharedInputDiagTimer != null) {
             _sharedInputDiagTimer.stop();
             _sharedInputDiagTimer = null;
@@ -2582,6 +2586,8 @@ class FCMChatWidget extends MovieClip {
             _xscalBeginAfterReleaseKey = 0;
             _xscalBeginAfterReleaseAt = 0;
             _xscalSessionRevision = -1;
+            _xscalCaretAvailable = null;
+            _xscalCaretRenderFailed = false;
             _xscalSessionInput = true;
             _nativeInput = true;
             _inputOpen = true;
@@ -2617,18 +2623,36 @@ class FCMChatWidget extends MovieClip {
                 closeXscalSessionInput(true);
                 return;
             }
-            if (snapshot.revision != _xscalSessionRevision || snapshot.text != _inProgress) {
+            var caretAvailable = snapshot.caretIndex >= 0;
+            var caretChanged = _xscalCaretAvailable != caretAvailable;
+            if (caretChanged) {
+                _xscalCaretAvailable = caretAvailable;
+                zfeLog("info", "input", "xScal caret metadata available=" + caretAvailable + " units=utf16");
+            }
+            if (snapshot.revision != _xscalSessionRevision || snapshot.text != _inProgress || caretChanged) {
                 zfeLog("info", "input", "xScal poll state=" + snapshot.state
                     + " revision=" + snapshot.revision + " textLen=" + snapshot.text.length);
                 _xscalSessionRevision = snapshot.revision;
                 _inProgress = snapshot.text;
-                setPrompt(_inProgress.length == 0 ? typingPrompt()
+                setPrompt(_inProgress.length == 0 && !caretAvailable ? typingPrompt()
                     : typingPrompt() + ' <font face="' + FONT_BODY + '" size="'
                         + _cfg.effectiveInputFontSize(true) + '" color="'
                         + hx(_cfg.inputTextColor) + '"> &#x203A; '
                         + FcmConfig.htmlEscape(_inProgress) + '</font>');
             }
-            if (snapshot.state == "active") return;
+            if (snapshot.state == "active") {
+                if (caretAvailable && !_xscalCaretRenderFailed) {
+                    try {
+                        _inputCaret.updateNativeField(_promptTf, _inProgress,
+                            snapshot.caretIndex, flash.Lib.getTimer(), _cfg.inputTextColor);
+                    } catch (_:Dynamic) {
+                        _xscalCaretRenderFailed = true;
+                        try { _inputCaret.clear(); } catch (_:Dynamic) {}
+                        zfeLog("warn", "input", "native caret render failed; native input retained");
+                    }
+                } else _inputCaret.clear();
+                return;
+            }
             var submitted:Bool = snapshot.state == "submitted";
             var text:String = StringTools.trim(_inProgress);
             zfeLog("info", "input", "xScal terminal state=" + snapshot.state
@@ -2703,6 +2727,7 @@ class FCMChatWidget extends MovieClip {
         _xscalSessionRevision = -1;
         _inProgress = "";
         clearNavigationLatches();
+        if (_promptTf != null) _promptTf.scrollH = 0;
         setPrompt(idlePrompt());
         return !failed && ended;
     }
@@ -3228,6 +3253,7 @@ class FCMChatWidget extends MovieClip {
 
     function onSharedInputKeyDown(e:KeyboardEvent):Void {
         if (_disposed || !_inputOpen || _nativeInput || _sharedInputField == null) return;
+        _inputCaret.activity(flash.Lib.getTimer());
         var keyCode:Int = Std.int(e.keyCode);
         if (keyCode != 13 && FcmCommand.linkActivationEnabled(
                 FcmCommand.physicalKeyAction(keyCode).length > 0
@@ -3267,7 +3293,10 @@ class FCMChatWidget extends MovieClip {
     }
 
     function pollSharedInputDiagnostics(generation:Int):Void {
-        if (_disposed || !_inputOpen || _nativeInput || generation != _inputGeneration || stage == null) {
+        // A queued callback from an ended editor must not stop the newer
+        // editor's poll timer or remove its caret.
+        if (generation != _inputGeneration) return;
+        if (_disposed || !_inputOpen || _nativeInput || stage == null) {
             stopSharedInputDiagnostics();
             return;
         }
@@ -3310,7 +3339,14 @@ class FCMChatWidget extends MovieClip {
             caret = tf.caretIndex;
             maxChars = tf.maxChars;
             inputType = Std.string(tf.type);
+            var inputRect = _cfg.inputRect();
+            if (tf.type == TextFieldType.INPUT && Math.abs(tf.x - x - inputRect.x) <= 2
+                    && Math.abs(tf.y - y - inputRect.y) <= 2
+                    && Math.abs(tf.width - inputRect.width) <= 2) {
+                _inputCaret.updateField(tf, flash.Lib.getTimer(), _cfg.inputTextColor);
+            } else _inputCaret.clear();
         } else if (_sharedInputField != null) {
+            _inputCaret.clear();
             var now:Float = flash.Lib.getTimer();
             if (_sharedInputFocusLostAt == 0) _sharedInputFocusLostAt = now;
             var lostMs:Float = now - _sharedInputFocusLostAt;
