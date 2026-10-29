@@ -77,7 +77,7 @@ selects HUDTools for ZFE even when those capabilities are advertised; the legacy
 chat-input buffer is not an automatic fallback either. `hotkeys.v1.*` is a third, separate
 contract for owned key chords and edge-count polling, not text editing or gameplay suppression.
 
-## Local caret in the HUDModLoader editor
+## Local caret (2.10.152 test candidate)
 
 The unreleased caret candidate draws a blinking two-pixel insertion marker beside the
 focused HUDTools entry field. It appears even in an empty input, follows the editor's
@@ -92,12 +92,23 @@ editor's transform and account for text scrolling. A callback from an older edit
 generation cannot stop the current poll or remove the current caret.
 Fresh native GFx acceptance is pending.
 
-This currently covers ZFE and xScal's `xscalInputMode=shared`/host fallback. The native
-xScal `PollInput` contract does not expose its internal caret position, including
-Left/Right/Home/End movements that leave text and revision unchanged. Accurate native
-caret rendering needs a provider API extension. Input-route defaults are unchanged;
-native xScal mode does not display this new marker. See the author's
-[callback implementation](https://github.com/DCHoaxer/xScal/blob/main/src/api/scaleform_callbacks.cpp).
+ZFE and xScal's `xscalInputMode=shared`/host fallback use the actual field selection.
+Native xScal retains `Input.BeginInput`/`PollInput`/`EndInput` ownership. A provider
+that includes an optional numeric `caretIndex` in its poll snapshot supplies the
+zero-based UTF-16 insertion position. The widget reads it on every poll, including
+Left/Right/Home/End movement that leaves text and revision unchanged. The display
+field stays noneditable and never takes focus; only its graphic and horizontal
+scroll change to reveal the insertion point. No additional keys are registered.
+
+The xScal test DLL supplied on 2026-10-28 is intended to add this metadata; its
+actual callback and native rendering must be confirmed by fresh gameplay logs.
+Missing, nonnumeric, fractional, out-of-range or split-surrogate positions hide the
+graphic without ending input or switching editors. Older providers continue using
+the same native editor without a caret. `xscalInputMode` and route defaults are
+unchanged. The bounded `xScal caret metadata available=true/false units=utf16` log
+records availability transitions without recording drafts or session tokens.
+An isolated drawing failure disables the graphic for that edit and logs once;
+native typing and submission continue. Reopening starts a fresh render attempt.
 
 ## xScal: native text session
 

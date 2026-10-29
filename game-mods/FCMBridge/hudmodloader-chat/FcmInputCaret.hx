@@ -31,6 +31,25 @@ class FcmInputCaret {
         var shown = field != null && observe(now, field.visible && field.parent != null,
             focused, field.length, field.caretIndex, field.selectionBeginIndex != field.selectionEndIndex);
         if (!shown) { if (marker != null) marker.visible = false; return; }
+        draw(field, position, color, false);
+    }
+
+    /** Native input owns focus outside GFx. Its validated snapshot supplies the
+     * position; the display field never acquires focus or receives edit keys. */
+    public function updateNativeField(field:flash.text.TextField, draft:String,
+            index:Int, now:Float, color:Int):Void {
+        if (field == null || field.stage == null || field.parent == null || !field.visible
+                || index < 0 || index > draft.length) { clear(); return; }
+        var offset = field.length - draft.length;
+        if (offset < 0 || field.text.substr(offset) != draft) { clear(); return; }
+        if (!observe(now, true, true, draft.length, index)) {
+            if (marker != null) marker.visible = false;
+            return;
+        }
+        draw(field, offset + index, color, true);
+    }
+
+    function draw(field:flash.text.TextField, index:Int, color:Int, reveal:Bool):Void {
         if (marker == null) {
             marker = new flash.display.Sprite();
             marker.mouseEnabled = false; marker.mouseChildren = false;
@@ -40,21 +59,27 @@ class FcmInputCaret {
             field.parent.addChild(marker);
         }
         marker.transform.matrix = field.transform.matrix;
-        var line = field.length == 0 ? 0 : position == field.length
-            ? field.numLines - 1 : field.getLineIndexOfChar(position);
+        var line = field.length == 0 ? 0 : index == field.length
+            ? field.numLines - 1 : field.getLineIndexOfChar(index);
         var metrics = field.getLineMetrics(line);
         var px:Float = metrics.x;
         var py:Float = 2;
         for (i in 0...line) py += field.getLineMetrics(i).height;
         var bounds = field.length == 0 ? null
-            : field.getCharBoundaries(position < field.length ? position : position - 1);
+            : field.getCharBoundaries(index < field.length ? index : index - 1);
         if (bounds != null) {
             px = bounds.x;
-            if (position == field.length) {
-                var last = field.text.charAt(position - 1);
+            if (index == field.length) {
+                var last = field.text.charAt(index - 1);
                 if (last != "\n" && last != "\r") px += bounds.width;
                 else px = metrics.x;
             }
+        }
+        if (reveal) {
+            var left = field.scrollH;
+            var right = left + field.width - 4;
+            if (px < left) field.scrollH = Std.int(Math.max(0, px - 2));
+            else if (px > right) field.scrollH = Std.int(Math.min(field.maxScrollH, Math.ceil(px - field.width + 4)));
         }
         px -= field.scrollH;
         for (i in 0...field.scrollV - 1) py -= field.getLineMetrics(i).height;

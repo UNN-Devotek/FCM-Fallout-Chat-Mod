@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.151"; // combine current Dev retry handling with stationary name retention
+    static inline var VERSION:String  = "2.10.152"; // local caret from the native xScal cursor snapshot
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -439,6 +439,8 @@ class FCMChatWidget extends MovieClip {
     static inline var SHARED_INPUT_FOCUS_GRACE_MS:Float = 225;
     var _sharedInputField:TextField = null;
     var _inputCaret:FcmInputCaret = new FcmInputCaret();
+    var _xscalCaretAvailable:Null<Bool> = null;
+    var _xscalCaretRenderFailed:Bool = false;
     var _sharedInputDraft:String = "";
     var _sharedInputAllowEmpty:Bool = false;
     var _sharedInputSubmitArmed:Bool = false;
@@ -2584,6 +2586,8 @@ class FCMChatWidget extends MovieClip {
             _xscalBeginAfterReleaseKey = 0;
             _xscalBeginAfterReleaseAt = 0;
             _xscalSessionRevision = -1;
+            _xscalCaretAvailable = null;
+            _xscalCaretRenderFailed = false;
             _xscalSessionInput = true;
             _nativeInput = true;
             _inputOpen = true;
@@ -2619,18 +2623,36 @@ class FCMChatWidget extends MovieClip {
                 closeXscalSessionInput(true);
                 return;
             }
-            if (snapshot.revision != _xscalSessionRevision || snapshot.text != _inProgress) {
+            var caretAvailable = snapshot.caretIndex >= 0;
+            var caretChanged = _xscalCaretAvailable != caretAvailable;
+            if (caretChanged) {
+                _xscalCaretAvailable = caretAvailable;
+                zfeLog("info", "input", "xScal caret metadata available=" + caretAvailable + " units=utf16");
+            }
+            if (snapshot.revision != _xscalSessionRevision || snapshot.text != _inProgress || caretChanged) {
                 zfeLog("info", "input", "xScal poll state=" + snapshot.state
                     + " revision=" + snapshot.revision + " textLen=" + snapshot.text.length);
                 _xscalSessionRevision = snapshot.revision;
                 _inProgress = snapshot.text;
-                setPrompt(_inProgress.length == 0 ? typingPrompt()
+                setPrompt(_inProgress.length == 0 && !caretAvailable ? typingPrompt()
                     : typingPrompt() + ' <font face="' + FONT_BODY + '" size="'
                         + _cfg.effectiveInputFontSize(true) + '" color="'
                         + hx(_cfg.inputTextColor) + '"> &#x203A; '
                         + FcmConfig.htmlEscape(_inProgress) + '</font>');
             }
-            if (snapshot.state == "active") return;
+            if (snapshot.state == "active") {
+                if (caretAvailable && !_xscalCaretRenderFailed) {
+                    try {
+                        _inputCaret.updateNativeField(_promptTf, _inProgress,
+                            snapshot.caretIndex, flash.Lib.getTimer(), _cfg.inputTextColor);
+                    } catch (_:Dynamic) {
+                        _xscalCaretRenderFailed = true;
+                        try { _inputCaret.clear(); } catch (_:Dynamic) {}
+                        zfeLog("warn", "input", "native caret render failed; native input retained");
+                    }
+                } else _inputCaret.clear();
+                return;
+            }
             var submitted:Bool = snapshot.state == "submitted";
             var text:String = StringTools.trim(_inProgress);
             zfeLog("info", "input", "xScal terminal state=" + snapshot.state
@@ -2705,6 +2727,7 @@ class FCMChatWidget extends MovieClip {
         _xscalSessionRevision = -1;
         _inProgress = "";
         clearNavigationLatches();
+        if (_promptTf != null) _promptTf.scrollH = 0;
         setPrompt(idlePrompt());
         return !failed && ended;
     }

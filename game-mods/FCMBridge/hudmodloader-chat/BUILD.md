@@ -1,5 +1,15 @@
 # FCMChatWidget build, install, and verification
 
+## Native caret test candidate 2.10.152 — 2026-10-28
+
+**Widget version:** 2.10.152. Local test candidate; native acceptance pending.
+
+Consumes optional native xScal `caretIndex` snapshots for a client-only blinking
+insertion marker. The native editor, input mode and keys retain their existing
+ownership. ZFE/shared input retains its caret; old xScal providers retain native
+typing without a marker. Pure Haxe/UTF-16, full Ruffle and source/archive checks
+are required before a test install. This candidate is not a public release.
+
 ## Dev integration candidate 2.10.151 — 2026-10-22
 
 **Widget version:** 2.10.151. DEV integration candidate; native acceptance pending.

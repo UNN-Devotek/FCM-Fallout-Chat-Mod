@@ -10,6 +10,17 @@ class TestFcmXscalInput {
         check("string id rejected", !FcmXscalInput.begin('{"success":true,"sessionId":"1"}').success);
         check("invalid id rejected", !FcmXscalInput.begin('{"success":true,"sessionId":0}').success);
         check("active", FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":4,"text":"hello","state":"active"}', 1, 500).success);
+        var cursor = FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":4,"text":"hello","state":"active","caretIndex":2}', 1, 500);
+        check("native cursor metadata survives decoding", Reflect.field(cursor, "caretIndex") == 2);
+        var empty = FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":0,"text":"","state":"active","caretIndex":0}', 1, 500);
+        check("empty native cursor", Reflect.field(empty, "caretIndex") == 0);
+        var legacy = FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":4,"text":"hello","state":"active"}', 1, 500);
+        check("older provider keeps native input without a cursor", legacy.success && Reflect.field(legacy, "caretIndex") == -1);
+        for (invalid in ["null", "true", "\"2\"", "-1", "2.5", "6"]) {
+            var result = FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":4,"text":"hello","state":"active","caretIndex":' + invalid + '}', 1, 500);
+            check("invalid cursor only hides presentation: " + invalid,
+                result.success && Reflect.field(result, "caretIndex") == -1);
+        }
         check("submitted", FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":5,"text":"hello","state":"submitted"}', 1, 500).state == "submitted");
         check("cancelled", FcmXscalInput.poll('{"success":true,"sessionId":1,"revision":5,"text":"","state":"cancelled"}', 1, 500).state == "cancelled");
         check("stale id", !FcmXscalInput.poll('{"success":true,"sessionId":2,"revision":1,"text":"x","state":"active"}', 1, 500).success);
@@ -23,6 +34,10 @@ class TestFcmXscalInput {
         check("malformed result cannot confirm release", !FcmXscalInput.confirmsReleased('true'));
         #if js
         var astral = "😀";
+        var unicode = FcmXscalInput.poll(haxe.Json.stringify({success:true,sessionId:1,revision:1,text:"a😀b",state:"active",caretIndex:3}),1,512);
+        check("UTF-16 cursor after a surrogate pair", Reflect.field(unicode, "caretIndex") == 3);
+        var splitPair = FcmXscalInput.poll(haxe.Json.stringify({success:true,sessionId:1,revision:1,text:"a😀b",state:"active",caretIndex:2}),1,512);
+        check("split surrogate cursor only hides presentation", splitPair.success && Reflect.field(splitPair, "caretIndex") == -1);
         var utf16 = new StringBuf();
         for (_ in 0...256) utf16.add(astral);
         check("512 UTF-16 units accepted", FcmXscalInput.poll(haxe.Json.stringify({success:true,sessionId:1,revision:1,text:utf16.toString(),state:"active"}),1,512).success);

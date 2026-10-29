@@ -392,6 +392,12 @@ jobs:
       - name: Test local input caret lifecycle
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-input-caret.hxml
+      - name: Test native xScal input and UTF-16 cursor metadata
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: |
+          haxe test-xscal-input.hxml
+          haxe --class-path .. --main TestFcmXscalInput --js /tmp/fcm-xscal-input.js
+          node /tmp/fcm-xscal-input.js
       - name: Test cosmetic presence leases and bridge receiver
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-nameplates.hxml

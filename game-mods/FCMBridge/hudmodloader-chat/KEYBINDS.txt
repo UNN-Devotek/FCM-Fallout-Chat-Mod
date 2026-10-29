@@ -52,8 +52,9 @@ period; other focus loss cancels the stale edit so the next Insert press works.
 The unreleased HUDModLoader editor caret blinks at the insertion point, including
 in an empty input. Left/Right move that point; typing and deletion use the editor's
 normal selection. It disappears when input closes and is never sent as message text.
-This covers ZFE and xScal shared/fallback input. The native xScal API does not yet
-report its caret position, so that route has no added visible caret.
+This covers ZFE and xScal shared/fallback input. Native xScal input also displays
+the caret when the provider supplies caretIndex metadata. Older providers keep
+native input without a visible caret; no input mode or keybind changes are needed.
 
 ZFE OPEN-CHAT KEY
 -----------------

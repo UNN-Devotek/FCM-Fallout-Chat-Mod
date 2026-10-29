@@ -11,6 +11,8 @@ typedef FcmXscalInputPoll = {
     var revision:Int;
     var text:String;
     var state:String;
+    /** Optional read-only UTF-16 position; -1 leaves the native editor unchanged. */
+    var caretIndex:Int;
 }
 
 /** Decoder for xScal 0.2.18's bounded, exclusive Input.* text session. */
@@ -62,8 +64,21 @@ class FcmXscalInput {
             && Math.floor(revision) == revision
             && Std.isOfType(textValue, String) && limit > 0 && text.length <= limit
             && (state == "active" || state == "submitted" || state == "cancelled");
+        var caretValue = field(parsed, "caretIndex");
+        var caretIndex:Int = -1;
+        if (ok && !Std.isOfType(caretValue, Bool)
+                && (Std.isOfType(caretValue, Int) || Std.isOfType(caretValue, Float))) {
+            var n:Float = cast caretValue;
+            if (Math.isFinite(n) && n >= 0 && n <= text.length && Math.floor(n) == n) {
+                var index = Std.int(n);
+                var before = index > 0 ? text.charCodeAt(index - 1) : 0;
+                var after = index < text.length ? text.charCodeAt(index) : 0;
+                if (!(before >= 0xD800 && before <= 0xDBFF && after >= 0xDC00 && after <= 0xDFFF))
+                    caretIndex = index;
+            }
+        }
         return {success:ok, sessionId:id, revision:ok ? Std.int(revision) : -1,
-            text:ok ? text : "", state:ok ? state : ""};
+            text:ok ? text : "", state:ok ? state : "", caretIndex:caretIndex};
     }
 
     /** A closed session must be rejected by the same native poll contract. */
