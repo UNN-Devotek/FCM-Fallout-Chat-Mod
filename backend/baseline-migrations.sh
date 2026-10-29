@@ -24,7 +24,7 @@
 set -eu
 
 echo "=== prisma db push (authoritative schema sync) ==="
-if ! npx prisma db push --skip-generate; then
+if ! npx prisma db push; then
   echo "FATAL: prisma db push failed; refusing to boot" >&2
   exit 1
 fi

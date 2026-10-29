@@ -10,7 +10,14 @@ The local stack runs Postgres, Redis, MinIO, and the backend in Docker. Start it
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-`docker-compose.dev.yml` overrides the production compose file: it publishes host ports for Postgres and Redis, replaces the backend image with `node:20-alpine`, volume-mounts the `backend/` source tree, and starts `tsx watch` automatically. The dashboard also runs as a hot-reload Vite container.
+`docker-compose.dev.yml` overrides the production compose file: it publishes host ports for Postgres and Redis, uses pinned Node 22.23.4 Alpine, volume-mounts the `backend/` source tree, and starts `tsx watch` automatically. The dashboard also runs as a hot-reload Vite container.
+
+Use Node 22.19 or newer in the 22.x series, or Node 24+ for host-run backend
+tools. Prisma CLI/client/adapter versions are aligned; run `npx prisma generate`
+after a clean install and `npx tsc -p tsconfig.tools.json` to check the CLI config
+and maintainer seed tool. The root `.dockerignore` excludes host dependencies,
+generated output and environment files, so Docker stages use their own installed
+dependencies.
 
 The dev backend container:
 - Runs `apk add openssl && npm install && npx prisma generate && npx prisma db push && npx tsx watch src/server.ts`
@@ -50,6 +57,11 @@ cd cross-platform-overlay && npm run dev:linux
 ```
 
 > Always use `dev:local` (or `dev:linux` on Linux KDE-Wayland) for the overlay — it targets the local backend. `npm start` targets production. Add `--fcm-debug` (or `FCM_DEBUG=1`) for verbose diagnostic logging; see [../overlay/diagnostics-logging.md](../overlay/diagnostics-logging.md).
+
+The development renderer's default DevTools port is 9222. An explicit
+`--remote-debugging-port` is preserved, including port `0` for independently
+assigned automation endpoints. Packaged applications do not enable the development
+fallback.
 
 ### Hosted Dev overlay
 

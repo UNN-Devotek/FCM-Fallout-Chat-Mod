@@ -111,14 +111,14 @@ check  -jest   -contract  -anchors   (matrix)     -smoke-linux    -windows-nsis
 | --- | ---------------- | --------- | ----- |
 | `authorize` | `ubuntu-latest` | **Gate** | Skipped for unlabeled PRs → fails `ci-summary` |
 | `osv-scan` | `ubuntu-latest` | **Not required** (`continue-on-error: true`) | OSV (osv.dev) vulnerability scan of every lockfile (`osv-scanner scan source -r .`); advisory only — results in the job log, PR step summary, and an `osv-report` artifact. NON-BLOCKING pilot; see [Dependency scanning](#dependency-scanning-osv--dependabot) |
-| `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
-| `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7`; validates Prisma and runs `db push`, executes both MCP/asset migration SQL files twice against PostgreSQL, asserts their constraints/indexes exist, then runs backend build, the official MCP Inspector smoke, all Jest integration suites, and TS `node:test` units |
+| `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay; explicitly generates the Prisma client before backend typechecking after a clean install |
+| `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7`; validates/generates Prisma and runs `db push`, verifies MCP/asset migrations twice, then builds and exercises the real PostgreSQL adapter (model/JSON/date round trips, rollback, unique-error mapping), the MCP Inspector, Jest integration suites and TS units |
 | `mcp-contract` | `ubuntu-latest` | **Required** | Clean-installs the standalone MCP package, type-checks/builds it, and freezes legacy dev/prod tool schemas, result envelopes, confirmation semantics, routes, and supported protocol versions |
 | `unit-vitest` | `ubuntu-latest` | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |
 | `gamemod-anchors` | `ubuntu-latest` | **Required** | Verifies promotion-critical sources, SWF/BA2 anchors and packaging, then compiles and tests the Haxe game-mod surfaces |
 | `hud-ruffle` | `ubuntu-latest` | **Required** | Builds the normalized HUD widget and runs the complete Ruffle/Playwright xScal + ZFE regression harness with failure artifacts |
 | `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Validates the Linux installer decision path (`bash -n`, `--help`, `--print-plan`), then builds once and runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
-| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds the NSIS installer and portable `.exe` **natively** on `windows-latest` (no Wine/Docker/GHCR); runs `.github/scripts/win-artifacts-check.mjs` — asserts unpacked, installer, and portable executables are present and that `app-update.yml` / `latest*.yml` are **absent** (the overlay no longer auto-updates); renamed from `overlay-autoupdate-e2e-windows` |
+| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds NSIS/portable executables natively, verifies unpacked/installer/portable artifacts and absence of update feeds, then runs `usability-smoke.mjs` against the packaged native executable with a temporary profile and loopback relay; uploads `overlay-usability-windows-evidence` |
 | `ci-summary` | `ubuntu-latest` | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
 
 All runner values above are defaults (no `CI_RUNNER` / `CI_RUNNER_WINDOWS` variable set). See
@@ -170,6 +170,18 @@ new advisories land. Note: a Dependabot PR does **not** auto-run CI — like a f
 to apply the `ci-approved` label.
 
 ### Transitive advisories — `overrides` in `package.json`
+
+The backend's `undici@6` selector requires the patched 6.29.1 series while allowing
+the MCP Inspector to retain its separate Undici 8 dependency. Marketing pins Zod
+4.6.7 because Remotion's CLI dependencies still request vulnerable 4.5.4 exactly;
+validate a real composition render when changing this override. Both Vitest and
+its coverage provider are updated together so their exact peer versions agree.
+
+As of 2026-10-29, [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
+has no patched upstream deepmerge release. It is confined to Jest's development
+dependency chain in this project. Track it explicitly in dependency reviews;
+`npm audit --omit=dev` checks the separate shipping runtime. Avoid the audit
+tool's suggested major Jest downgrade as a way to silence this finding.
 
 Dependabot only opens PRs for **direct** dependencies. When an advisory lands on a *nested transitive*
 (something pulled in by `nodemon`, `glob`, `@electron/asar`, `dir-compare`, `test-exclude`, …) no version
@@ -260,8 +272,16 @@ is artifact-based: `.github/scripts/win-artifacts-check.mjs` asserts:
 - `app-update.yml` and `latest*.yml` are **absent** (inverted check — these must not be generated,
   since the overlay no longer auto-updates)
 
-The former native-exe smoke job (`overlay-autoupdate-e2e-windows-exec`) and the `tests/mock-relay/`
-auto-update fixture were removed when auto-update was retired.
+The job then launches the actual `win-unpacked/Fallout Chat Mod.exe` through
+`scripts/usability-smoke.mjs`. The existing renderer/preload/native interaction
+checks use a temporary profile and loopback relay, exercise input/navigation,
+visibility, reconnects and account/draft boundaries, and tear down only owned
+resources. Failures fail the Windows gate; evidence is retained as
+`overlay-usability-windows-evidence`. This closes the runtime validation gap for
+Electron upgrades while retaining the separate signed-artifact release gates.
+
+The former auto-update-specific smoke job (`overlay-autoupdate-e2e-windows-exec`)
+and its `tests/mock-relay/` fixture remain retired.
 
 See [windows-nsis-ci-fixes.md](windows-nsis-ci-fixes.md) for the full Wine/DinD failure history
 that motivated the migration to native windows-latest.

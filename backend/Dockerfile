@@ -16,6 +16,7 @@ WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci
 COPY backend/prisma ./prisma
+COPY backend/prisma.config.ts ./
 RUN npx prisma generate
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
@@ -29,6 +30,7 @@ RUN apk add --no-cache openssl postgresql-client
 WORKDIR /app
 COPY backend/package*.json ./
 COPY backend/prisma ./prisma
+COPY backend/prisma.config.ts ./
 # argon2 ships no musl prebuild, so on Alpine npm falls back to a node-gyp source
 # build — which needs python3 and a C++ toolchain. Without them the image build
 # fails with "gyp ERR! find Python". Installed as a virtual package and deleted in

@@ -307,10 +307,7 @@ try { app.commandLine.appendSwitch('disable-quic'); } catch { /* ignore */ }
 // be inspected remotely (e.g. Playwright connectOverCDP, chrome://inspect). NEVER
 // enabled in packaged builds. `remote-allow-origins=*` is required by Chromium
 // 111+ for non-browser CDP clients to attach.
-if (!app.isPackaged) {
-  try { app.commandLine.appendSwitch('remote-debugging-port', '9222'); } catch { /* ignore */ }
-  try { app.commandLine.appendSwitch('remote-allow-origins', '*'); } catch { /* ignore */ }
-}
+try { overlayCore.configureDevelopmentDevtools(app.commandLine, app.isPackaged); } catch { /* optional dev tools */ }
 
 // Safety net: a transient main-process error — especially a network blip from the
 // relay's net layer (ERR_QUIC_PROTOCOL_ERROR / ECONNRESET / ETIMEDOUT via
