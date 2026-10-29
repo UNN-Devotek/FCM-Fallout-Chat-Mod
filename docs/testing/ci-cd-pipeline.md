@@ -111,7 +111,7 @@ check  -jest   -contract  -anchors   (matrix)     -smoke-linux    -windows-nsis
 | --- | ---------------- | --------- | ----- |
 | `authorize` | `ubuntu-latest` | **Gate** | Skipped for unlabeled PRs → fails `ci-summary` |
 | `osv-scan` | `ubuntu-latest` | **Not required** (`continue-on-error: true`) | OSV (osv.dev) vulnerability scan of every lockfile (`osv-scanner scan source -r .`); advisory only — results in the job log, PR step summary, and an `osv-report` artifact. NON-BLOCKING pilot; see [Dependency scanning](#dependency-scanning-osv--dependabot) |
-| `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
+| `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay; explicitly generates the Prisma client before backend typechecking after a clean install |
 | `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7`; validates/generates Prisma and runs `db push`, verifies MCP/asset migrations twice, then builds and exercises the real PostgreSQL adapter (model/JSON/date round trips, rollback, unique-error mapping), the MCP Inspector, Jest integration suites and TS units |
 | `mcp-contract` | `ubuntu-latest` | **Required** | Clean-installs the standalone MCP package, type-checks/builds it, and freezes legacy dev/prod tool schemas, result envelopes, confirmation semantics, routes, and supported protocol versions |
 | `unit-vitest` | `ubuntu-latest` | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |

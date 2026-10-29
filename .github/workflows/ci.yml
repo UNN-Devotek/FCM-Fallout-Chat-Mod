@@ -117,6 +117,10 @@ jobs:
         if: matrix.workspace == 'cross-platform-overlay'
         working-directory: admin-dashboard
         run: npm ci
+      - name: Generate Prisma client for backend types
+        if: matrix.workspace == 'backend'
+        working-directory: backend
+        run: npx prisma generate
       - name: Typecheck
         working-directory: ${{ matrix.workspace }}
         run: npx tsc --noEmit -p ./tsconfig.json
