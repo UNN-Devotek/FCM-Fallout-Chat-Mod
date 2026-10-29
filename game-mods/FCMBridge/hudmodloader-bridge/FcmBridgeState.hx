@@ -8,6 +8,7 @@ class FcmBridgeState {
     public var observedAt(default, null):Float = -60000;
     var roster:FcmRoster = new FcmRoster();
     var snapshots:Array<{key:String, revision:Int, names:Array<String>, selfName:String, at:Float, blocked:Bool}> = [];
+    var selfLabels:Array<{name:String, at:Float}> = [];
     var loading:Bool = false;
     var waiting:Bool = false;
     var lastNames:String = "";
@@ -29,6 +30,7 @@ class FcmBridgeState {
         roster = new FcmRoster();
         waiting = false;
         lastNames = "";
+        selfLabels = [];
         missingClass = "not reported";
         for (entry in readReasons) entry.reason = "not observed";
         for (entry in snapshots) entry.blocked = true;
@@ -86,6 +88,21 @@ class FcmBridgeState {
             previous.selfName = observation.selfName; previous.at = observation.at; previous.blocked = false;
         }
         roster.replace(key, names, observation.at);
+        var self = cleanName(observation.selfName).toLowerCase();
+        if (self.length > 0) {
+            var known = null;
+            for (entry in selfLabels) if (entry.name == self) known = entry;
+            if (known != null) known.at = Math.max(known.at, observation.at);
+            else {
+                // Five labels bound the primary plus at most four aliases. A
+                // cached getter carries its old timestamp and cannot renew one.
+                if (selfLabels.length >= 5) {
+                    selfLabels.sort(function(a, b) return a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+                    selfLabels.shift();
+                }
+                selfLabels.push({name:self, at:observation.at});
+            }
+        }
         observedAt = Math.max(observedAt, observation.at);
         noteRead(key, "accepted");
     }
@@ -100,6 +117,26 @@ class FcmBridgeState {
                 && entry.key == source && entry.selfName.length > 0) return entry.selfName;
         for (entry in snapshots) if (!entry.blocked && now - entry.at < 30000 && entry.selfName.length > 0) return entry.selfName;
         return cleanName(fallback);
+    }
+    /** Fresh UI self rows and the current AccountInfoData label are matching
+     * evidence only. Peer rows and blocked/expired providers cannot add aliases. */
+    public function rosterAliases(now:Float, ownName:String, accountName:String):Array<String> {
+        var names:Array<String> = [];
+        var own = cleanName(ownName).toLowerCase();
+        var add = function(value:String):Void {
+            var name = cleanName(value).toLowerCase();
+            if (name.length > 0 && name != own && names.indexOf(name) < 0 && names.length < 4) names.push(name);
+        };
+        add(accountName);
+        selfLabels = [for (entry in selfLabels) if (now - entry.at < 30000) entry];
+        for (entry in selfLabels) add(entry.name);
+        for (entry in snapshots) if (!entry.blocked && now - entry.at < 30000) add(entry.selfName);
+        names.sort(function(a, b) return a < b ? -1 : a > b ? 1 : 0);
+        return names;
+    }
+    public function rosterSource(now:Float):String {
+        var source = roster.sessionSource(now, 30000, lastNames);
+        return source.length > 0 ? source : "none";
     }
     /** Timestamp of the evidence actually selected by the existing roster policy.
      * A fresh auxiliary list cannot renew an older primary map/player roster.

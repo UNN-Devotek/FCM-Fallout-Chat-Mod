@@ -147,7 +147,13 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
     // worlds. Preserve backend-owned affinity only when authenticated RESYNC or
     // overlapping roster evidence establishes continuity; ordinary nonce changes
     // remain a fail-closed new observation session.
-    const continuingSession = previous !== null && previous.name === name
+    // A selected UI source may switch between account and character labels.
+    // Preserve this exact generation only when both observations corroborate
+    // the other's self label. Aliases never authenticate an account or override
+    // a generation change.
+    const sameIdentity = previous !== null && (previous.name === name
+      || (previous.requestId === requestId && (previous.aliases ?? []).includes(name) && aliases.includes(previous.name)));
+    const continuingSession = sameIdentity
       && (previous.requestId === requestId || options.preserveExistingSession || overlapsPrevious
         || replacementSharedPopulation);
     const session = continuingSession ? previous.session : randomUUID();
@@ -188,7 +194,7 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       ...(roomKey ? { roomKey } : {}), ...(expiresAt === undefined ? {} : { expiresAt }) });
     await redis.set(`${KEY_PREFIX}${relayUserId}`, value, expiresAt === undefined
       ? { EX: TTL_SECONDS } : { PX: Math.max(1, Math.ceil(expiresAt - Date.now())) });
-    const changed = !previous || previous.requestId !== requestId || previous.session !== session
+    const changed = !previous || previous.name !== name || previous.requestId !== requestId || previous.session !== session
       || previous.observationSource !== observationSource
       || previous.seen.join('\u001f') !== seen.join('\u001f')
       || (previous.aliases ?? []).join('\u001f') !== aliases.join('\u001f')

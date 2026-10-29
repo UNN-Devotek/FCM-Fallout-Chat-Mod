@@ -79,6 +79,7 @@ class TestFcmBridgeExport {
         legacyDiscovery();
         coalescedXscalWrites();
         publishedWorldFence();
+        identityObservation();
         var state = new FcmBridgeState(function() return "world-1");
         state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
         var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
@@ -104,12 +105,12 @@ class TestFcmBridgeExport {
         #else
         check(documents[0].build == FcmBridgeExport.BUILD, "normal export retains its exact build marker");
         #end
-        check(!exporter.update(1500, state, "Changed", "xscal", save), "changed writes rate limited");
+        check(!exporter.update(1500, state, "Self", "xscal", save), "writes rate limited");
         check(!exporter.update(5999, state, "Self", "xscal", save), "no unnecessary write");
         check(exporter.update(6000, state, "Self", "xscal", save), "five second heartbeat");
         #if bridge_nameplate_probe
         check(documents[1].build == FcmBridgeExport.BUILD + "-np:surface:E1014:r0:a0:j0"
-            && Reflect.fields(documents[1]).length == 12, "nameplate probe preserves the single schema-1 export");
+            && Reflect.fields(documents[1]).length == 14, "nameplate probe preserves the single schema-1 export");
         #end
         check(documents[1].sequence == 2 && documents[1].observationSequence == 2
             && documents[1].observationAgeMs == 5000, "heartbeat does not refresh observation");
@@ -168,10 +169,13 @@ class TestFcmBridgeExport {
         check(FcmBridgeStorage.zfe({call:function(_:String, _:String):String return '{"success":true,"capabilities":[]}'}, "dev") == null, "missing capability rejected");
         var elapsed = 1010.0;
         var timed = new FcmBridgeExport("movie-2", "dev", function() return elapsed);
-        timed.update(1000, state, "Self", "zfe", save);
-        check(!timed.update(2000, state, "Other", "zfe", save), "serialization/native time cannot compress write interval");
+        var timedState = new FcmBridgeState(function() return "timed-world");
+        timedState.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
+        timedState.observe(observation); timedState.settle(1000);
+        timed.update(1000, timedState, "Self", "zfe", save);
+        check(!timed.update(2000, timedState, "Other", "zfe", save), "serialization/native time cannot compress write interval");
         elapsed = 2010;
-        check(timed.update(2010, state, "Other", "zfe", save), "write budget measured from completion");
+        check(timed.update(2010, timedState, "Other", "zfe", save), "write budget measured from completion");
         var pending = new FcmBridgeExport("movie-3", "dev");
         pending.update(1000, state, "Self", "zfe", save, true);
         var oldSequence:Int = documents[documents.length - 1].observationSequence;
@@ -203,6 +207,28 @@ class TestFcmBridgeExport {
         selectedExport.update(31000, selected, "Self", "zfe", save);
         check(documents[documents.length - 1].state == "inactive", "loading cannot preserve map beyond actual observation expiry");
         Sys.println("PASS FcmBridgeExport: " + count + " checks");
+    }
+    static function identityObservation():Void {
+        var state = new FcmBridgeState(function() return "world-identity");
+        state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
+        var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
+        observation.names = ["Peer"];
+        observation.revision = 1;
+        state.observe(observation); state.settle(1000);
+        var exporter = new FcmBridgeExport("movie-identity", "dev");
+        var documents:Array<Dynamic> = [];
+        var save = function(text:String):Bool { documents.push(haxe.Json.parse(text)); return true; };
+        exporter.update(1000, state, "AccountName", "xscal", save);
+        exporter.update(6000, state, "CharacterName", "xscal", save);
+        check(documents.length == 2 && documents[1].ownName == "CharacterName", "changed self label is published");
+        check(documents[1].observationSequence > documents[0].observationSequence,
+            "changed self label never reuses the preceding evidence sequence");
+        check(documents[1].observationAgeMs == 5000,
+            "self-label change cannot renew the underlying roster observation");
+        state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[{menuName:"LoadingMenu"}]}}));
+        exporter.update(11000, state, "", "xscal", save);
+        check(documents[2].state == "holding" && documents[2].ownName == "CharacterName",
+            "holding preserves the complete preceding observation including self label");
     }
     static function publishedWorldFence():Void {
         for (provider in ["zfe", "xscal"]) {

@@ -878,6 +878,29 @@ describe('relay WebSocket ops', () => {
     })));
   });
 
+  test('aborted upgrades release their reservation before the next five clients connect', async () => {
+    const { PassThrough } = require('node:stream');
+    const socket = new PassThrough();
+    socket.remoteAddress = '127.0.0.1';
+    const closed = new Promise(resolve => socket.once('close', resolve));
+    socket.destroy();
+    // Real ws validation reaches completeUpgrade after verifyClient reserves a
+    // slot, but an already-aborted TCP stream cannot emit a WS connection.
+    srv.server.emit('upgrade', { method: 'GET', url: '/relay', socket, headers: {
+      upgrade: 'websocket', 'sec-websocket-version': '13',
+      'sec-websocket-key': Buffer.alloc(16, 1).toString('base64'),
+    } }, socket, Buffer.alloc(0));
+    await closed;
+    const accepted = await Promise.all(Array.from({ length: 5 }, () => conn()));
+    try {
+      expect(accepted.filter(result => result.ok)).toHaveLength(5);
+    } finally {
+      await Promise.all(accepted.filter(result => result.ok).map(({ ws }) => new Promise(resolve => {
+        ws.once('close', resolve); ws.close();
+      })));
+    }
+  });
+
   test('/relay WebSocket accepts connections in test env', async () => {
     const { ok, ws } = await conn();
     expect(ok).toBe(true);

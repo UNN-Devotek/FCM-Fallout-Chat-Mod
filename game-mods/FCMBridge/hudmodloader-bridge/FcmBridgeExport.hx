@@ -20,8 +20,11 @@ class FcmBridgeExport {
     var lastObservation:Float = -60000;
     var lastWorld:String = "";
     var lastNames:Array<String> = [];
+    var lastOwnName:String = "";
+    var lastAliases:Array<String> = [];
+    var lastSource:String = "none";
     var clock:Void->Float;
-    var sample:{mode:String, world:String, ownName:String, names:Array<String>} = null;
+    var sample:{mode:String, world:String, ownName:String, names:Array<String>, aliases:Array<String>, source:String} = null;
     #if bridge_perf
     public var timing:FcmBridgeTiming;
     #end
@@ -32,20 +35,26 @@ class FcmBridgeExport {
         #end
     }
     public function update(now:Float, state:FcmBridgeState, ownName:String, provider:String,
-        save:String->Bool, inactive:Bool = false):Bool {
+        save:String->Bool, inactive:Bool = false, accountName:String = ""):Bool {
         var world = state.session.requestId;
         var holding = state.holding(now);
+        if (holding) ownName = lastOwnName;
         var evidenceAt = holding ? lastObservation : state.evidenceAt(now);
         var fresh = !inactive && ownName.length > 0 && state.fresh(now)
             && evidenceAt >= 0 && now - evidenceAt < 30000
             && (!holding || (world == lastWorld && now - lastObservation < 30000));
         var mode = !fresh ? "inactive" : state.holding(now) ? "holding" : "active";
         var names = !fresh ? [] : holding ? lastNames.copy() : state.names(now).slice(0, 24);
-        if (fresh && !holding && (evidenceAt != lastObservation || world != lastWorld || names.join("|") != lastNames.join("|"))) {
+        var selfName = !fresh ? "" : holding ? lastOwnName : ownName;
+        var aliases = !fresh ? [] : holding ? lastAliases.copy() : state.rosterAliases(now, selfName, accountName);
+        var source = !fresh ? "none" : holding ? lastSource : state.rosterSource(now);
+        if (fresh && !holding && (evidenceAt != lastObservation || world != lastWorld || names.join("|") != lastNames.join("|")
+                || selfName != lastOwnName || aliases.join("|") != lastAliases.join("|") || source != lastSource)) {
             observationSequence++; lastObservation = evidenceAt; lastWorld = world;
             lastNames = names.copy();
+            lastOwnName = selfName; lastAliases = aliases.copy(); lastSource = source;
         }
-        sample = {mode:mode, world:world, ownName:ownName, names:names};
+        sample = {mode:mode, world:world, ownName:selfName, names:names, aliases:aliases, source:source};
         return heartbeat(now, provider, save);
     }
     /** Only copied, settled batch data crosses heartbeat ticks. Provider pushes
@@ -60,7 +69,9 @@ class FcmBridgeExport {
         // xScal named storage can stall the HUD thread. Keep sampling every two
         // seconds, but publish an unchanged roster at most every five seconds.
         // The second successful fresh snapshot still establishes a live writer.
-        var key = haxe.Json.stringify([mode, world, ownName, names,
+        var aliases = fresh ? sample.aliases : [];
+        var source = fresh ? sample.source : "none";
+        var key = haxe.Json.stringify([mode, world, ownName, names, aliases, source,
             provider == "xscal" ? 0 : observationSequence]);
         var establishingWriter = provider == "xscal" && successfulWrites == 1
             && observationSequence > lastSavedObservationSequence;
@@ -80,7 +91,8 @@ class FcmBridgeExport {
             build:build, sessionId:sessionId, worldGeneration:world,
             sequence:++sequence, observationSequence:Std.int(Math.max(1, observationSequence)),
             observationAgeMs:Std.int(Math.min(60000, Math.max(0, now - lastObservation))),
-            state:mode, ownName:fresh ? ownName.substr(0, 64) : "", names:names});
+            state:mode, ownName:fresh ? ownName.substr(0, 64) : "", names:names,
+            ownAliases:aliases, rosterSource:source});
         #if bridge_perf
         // This write carries the previous encode/save samples; the next carries these timings.
         if (timing != null && clock != null) timing.encode(clock() - encodeStarted);

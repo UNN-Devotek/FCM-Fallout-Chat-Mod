@@ -276,6 +276,14 @@ class PackagedBridgeHost extends Sprite {
         if (!disposed) switch command {
             case "loading": publish("MenuStackData", {menuStackA:[{menuName:"LoadingMenu"}]}); roster([]);
             case "refresh-roster": roster(["PeerA", "PeerB"]);
+            case "self-label": publish("MapMenuData", {MarkerData:[
+                {markerType:"PlayerLocal",text:"HarnessCharacter"},
+                {markerType:"PlayerRemote",text:"PeerA"}, {markerType:"PlayerRemote",text:"PeerB"}
+            ]});
+            case "alternate-self-source":
+                roster([]);
+                publish("PlayerListData", [{isLocalPlayer:true,displayName:"HarnessSelf"},
+                    {isLocalPlayer:false,displayName:"PeerA"}, {isLocalPlayer:false,displayName:"PeerB"}]);
             case "resume": roster(["PeerB", "PeerA"]); publish("MenuStackData", {menuStackA:[]});
             case "hop": phase = "hop"; roster(["NewPeer"]);
                 if (cosmeticPlate != null) { cosmeticPlate.Name_tf.text = "NewPeer"; markers(); }
