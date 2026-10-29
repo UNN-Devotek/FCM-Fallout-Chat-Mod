@@ -1,5 +1,14 @@
 import type { IncomingMessage } from 'http';
 import env from '../config/environment';
+import { createHmac, randomBytes } from 'node:crypto';
+
+const diagnosticSecret = env.HUD_IDENTITY_HASH_SECRET || randomBytes(32).toString('hex');
+
+/** Correlate transport events behind a proxy without adding raw IPs to new logs.
+ * A shared address is a network hint, never proof of an account's identity. */
+export function clientIpRef(req: IncomingMessage): string {
+  return createHmac('sha256', diagnosticSecret).update(`relay-ip:${clientIp(req)}`).digest('hex').slice(0, 12);
+}
 
 /**
  * Resolve the true client IP behind the proxy chain (Traefik, and later

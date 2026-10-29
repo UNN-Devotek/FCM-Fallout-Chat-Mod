@@ -16,7 +16,8 @@ import type { Duplex } from 'stream';
 import { WebSocketServer } from 'ws';
 import { handleRelayConnection } from '../services/relay/relayHandler';
 import logger from '../config/logger';
-import { clientIp } from '../utils/clientIp';
+import { clientIp, clientIpRef } from '../utils/clientIp';
+import { randomUUID } from 'node:crypto';
 
 /** Path for the main chat WebSocket. */
 export const CHAT_WS_PATH = '/ws';
@@ -27,6 +28,7 @@ export const RELAY_WS_PATH = '/relay';
 // Created once per process; relay connections are dispatched to handleRelayConnection.
 let relayWss: WebSocketServer | null = null;
 const relayConnsByIp = new Map<string, number>();
+const upgradedRequests = new WeakSet<http.IncomingMessage>();
 
 // Relay frames contain a small JSON operation plus a token and a chat body (capped at
 // 500 characters by the handler). Keep this aligned with the main chat WS limit so
@@ -43,10 +45,11 @@ function getRelayWss(): WebSocketServer {
       // here. Authentication is frame-based; this guard only bounds sockets.
       verifyClient: (info, cb) => {
         const ip = clientIp(info.req);
+        const ipRef = clientIpRef(info.req);
         const current = relayConnsByIp.get(ip) ?? 0;
         if (current >= RELAY_MAX_CONNS_PER_IP) {
           logger.warn(
-            { ip, current, limit: RELAY_MAX_CONNS_PER_IP },
+            { ipRef, current, limit: RELAY_MAX_CONNS_PER_IP },
             '[relayUpgrade] concurrent relay connection cap reached',
           );
           return cb(false, 429, 'Too many relay connections');
@@ -55,16 +58,26 @@ function getRelayWss(): WebSocketServer {
         // the handshake, so reserving there would allow a burst of parallel
         // upgrades to all observe the same pre-connection count.
         relayConnsByIp.set(ip, current + 1);
+        const connectionRef = randomUUID();
+        logger.debug?.({ event: 'relay_slot', action: 'reserved', connectionRef, ipRef,
+          current: current + 1, limit: RELAY_MAX_CONNS_PER_IP }, '[relayUpgrade] connection slot');
+        // The TCP stream may abort before completeUpgrade emits a WebSocket
+        // connection. Own the reservation on that stream, so both aborted and
+        // completed upgrades release it exactly once.
+        info.req.socket.once('close', () => {
+          const remaining = (relayConnsByIp.get(ip) ?? 1) - 1;
+          if (remaining <= 0) relayConnsByIp.delete(ip);
+          else relayConnsByIp.set(ip, remaining);
+          const diagnostic = { event: 'relay_slot', action: 'released', connectionRef, ipRef,
+            current: Math.max(0, remaining), limit: RELAY_MAX_CONNS_PER_IP };
+          if (upgradedRequests.has(info.req)) logger.debug?.(diagnostic, '[relayUpgrade] connection slot');
+          else logger.info?.(diagnostic, '[relayUpgrade] aborted upgrade released');
+        });
         cb(true);
       },
     });
     relayWss.on('connection', (ws, req) => {
-      const ip = clientIp(req);
-      ws.once('close', () => {
-        const remaining = (relayConnsByIp.get(ip) ?? 1) - 1;
-        if (remaining <= 0) relayConnsByIp.delete(ip);
-        else relayConnsByIp.set(ip, remaining);
-      });
+      upgradedRequests.add(req);
       handleRelayConnection(ws, req);
     });
   }

@@ -6,6 +6,7 @@
  */
 
 const http = require('http');
+const { clientIpRef } = require('../src/utils/clientIp');
 const { WebSocketServer, WebSocket } = require('ws');
 const {
   upgradePathname,
@@ -15,6 +16,20 @@ const {
 } = require('../src/websocket/upgradeRouter');
 
 describe('upgradePathname', () => {
+  test('IP diagnostics use the trusted proxy address, remain stable, and contain no raw address', () => {
+    const config = require('../src/config/environment');
+    const env = config.default ?? config;
+    const previous = env.TRUST_PROXY;
+    try {
+      env.TRUST_PROXY = true;
+      const proxied = { headers: { 'cf-connecting-ip': '203.0.113.7' }, socket: { remoteAddress: '10.0.0.2' } };
+      const direct = { headers: {}, socket: { remoteAddress: '203.0.113.7' } };
+      expect(clientIpRef(proxied)).toBe(clientIpRef(direct));
+      expect(clientIpRef(proxied)).toMatch(/^[a-f0-9]{12}$/);
+      env.TRUST_PROXY = false;
+      expect(clientIpRef(proxied)).not.toBe(clientIpRef(direct));
+    } finally { env.TRUST_PROXY = previous; }
+  });
   test.each([
     ['/ws', '/ws'],
     ['/ws/hud', '/ws/hud'],
