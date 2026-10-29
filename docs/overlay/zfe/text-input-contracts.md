@@ -90,7 +90,9 @@ The existing editor poll updates its position and blink. Focus loss hides the ma
 submit, cancellation, modal handoff and unload remove it. Its coordinates use the
 editor's transform and account for text scrolling. A callback from an older editor
 generation cannot stop the current poll or remove the current caret.
-Fresh native GFx acceptance is pending.
+Basic native xScal caret operation was confirmed by the user on 2026-10-29;
+see the [acceptance record](../../testing/hud-xscal-acceptance-2026-09-15.md#native-caret-test--2026-10-29).
+The detailed native matrix and fresh ZFE acceptance remain pending.
 
 ZFE and xScal's `xscalInputMode=shared`/host fallback use the actual field selection.
 Native xScal retains `Input.BeginInput`/`PollInput`/`EndInput` ownership. A provider
@@ -100,8 +102,12 @@ Left/Right/Home/End movement that leaves text and revision unchanged. The displa
 field stays noneditable and never takes focus; only its graphic and horizontal
 scroll change to reveal the insertion point. No additional keys are registered.
 
-The xScal test DLL supplied on 2026-10-28 is intended to add this metadata; its
-actual callback and native rendering must be confirmed by fresh gameplay logs.
+The xScal test DLL supplied on 2026-10-28 provides this metadata: a fresh
+2026-10-29 desktop log records its availability with HUD 2.10.152, and the user
+reports the caret working. That DLL identifies itself as 0.4.31; the released
+[0.4.32 source](https://github.com/DCHoaxer/xScal/blob/61b2e5496b8ad2e539a07959a267f79f8c3dc499/src/api/scaleform_callbacks.cpp#L587)
+also serializes the requested `caretIndex`. The public 0.4.32 binary was not
+installed or independently accepted in this test.
 Missing, nonnumeric, fractional, out-of-range or split-surrogate positions hide the
 graphic without ending input or switching editors. Older providers continue using
 the same native editor without a caret. `xscalInputMode` and route defaults are
