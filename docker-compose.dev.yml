@@ -24,7 +24,7 @@ services:
 
   backend:
     build: !reset null
-    image: node:20-alpine
+    image: node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
     working_dir: /app
     # Reset the production hardening inherited from docker-compose.yml so the dev
     # container runs locally: (1) no external dokploy-network (that only exists on
@@ -76,7 +76,7 @@ services:
 
   dashboard:
     build: !reset null
-    image: node:20-alpine
+    image: node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
     working_dir: /app
     volumes:
       - ./admin-dashboard:/app

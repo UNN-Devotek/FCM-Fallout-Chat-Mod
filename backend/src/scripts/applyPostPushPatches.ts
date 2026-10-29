@@ -196,8 +196,8 @@ export async function applyPostPushPatches(client: PostPushPatchClient): Promise
 }
 
 async function main(): Promise<void> {
-  const { PrismaClient } = await import('@prisma/client');
-  const prisma = new PrismaClient();
+  const { createPrismaClient } = await import('../config/prismaClient.js');
+  const prisma = createPrismaClient();
   try {
     await applyPostPushPatches(prisma);
     console.log(`[post-push] applied ${POST_PUSH_PATCHES.length} idempotent compatibility patch(es)`);

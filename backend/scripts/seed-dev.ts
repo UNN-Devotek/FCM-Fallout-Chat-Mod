@@ -43,7 +43,8 @@
 
 import { execFileSync } from 'child_process';
 import path from 'path';
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/config/prismaClient';
 import {
   generateFakeUsers,
   generateFakeMessage,
@@ -226,7 +227,7 @@ async function main(): Promise<void> {
 
   copyReferenceTables(sourceUrl, devUrl);
 
-  const prisma = new PrismaClient({ datasources: { db: { url: devUrl } } });
+  const prisma = createPrismaClient(devUrl);
   let summary;
   try {
     summary = await seedFakeData(prisma);

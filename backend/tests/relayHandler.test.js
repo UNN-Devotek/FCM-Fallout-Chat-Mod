@@ -2579,9 +2579,15 @@ describe('server chat (worldId-scoped room)', () => {
 
   async function sendCtrl(user, body) {
     const { ws, msgs } = await connectWs(srv.port);
-    const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: user.token, channel: 'server', body }));
-    ws.close();
-    return res;
+    try {
+      return await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: user.token, channel: 'server', body }));
+    } finally {
+      await new Promise(resolve => {
+        if (ws.readyState === WebSocket.CLOSED) return resolve();
+        ws.once('close', resolve);
+        ws.close();
+      });
+    }
   }
   const sendJoin  = (user, worldId) => sendCtrl(user, makeJoinBody(worldId));
   const sendLeave = (user)          => sendCtrl(user, makeLeaveBody());
@@ -2632,7 +2638,7 @@ describe('server chat (worldId-scoped room)', () => {
     try {
       expect(await sendJoin(a, 'nameplate-simulation')).toMatchObject({ success: true });
       expect(await sendJoin(b, 'nameplate-simulation')).toMatchObject({ success: true });
-      const sender = await open(), observer = await open(), rpc = await open();
+      const sender = await open(), observer = await open();
       for (const [client, account] of [[sender, a], [observer, b]]) {
         expect(await waitForMsg(client.ws, client.msgs, () => send(client.ws,
           { op: 'subscribe', token: account.token, cursor: 0 }))).toMatchObject({ success: true });
@@ -2644,8 +2650,18 @@ describe('server chat (worldId-scoped room)', () => {
           ? { mode: 'hud', requestId: `simulation-${i}`, nativeRequestId: 'world-1' }
           : { mode: 'bridge', requestId: `simulation-${i}`, sessionId: 'movie-1', worldGeneration: 'world-1' };
         const wire = value => i % 3 === 0 ? value.split('').join('u0000') : value;
-        const response = await waitForMsg(rpc.ws, rpc.msgs, () => send(rpc.ws,
-          { op: 'send', token: a.token, channel: wire('server'), body: wire('FCMCTL/1/NAMEPLATES;' + JSON.stringify(request)) }));
+        // Providers use one-shot RPCs while their separate subscriptions persist.
+        const control = await open();
+        let response;
+        try {
+          response = await waitForMsg(control.ws, control.msgs, () => send(control.ws,
+            { op: 'send', token: a.token, channel: wire('server'), body: wire('FCMCTL/1/NAMEPLATES;' + JSON.stringify(request)) }));
+        } finally {
+          await new Promise(resolve => {
+            if (control.ws.readyState === WebSocket.CLOSED) return resolve();
+            control.ws.once('close', resolve); control.ws.close();
+          });
+        }
         // Older relays reject the unsupported request; newer relays may handle
         // it privately or apply their independent cosmetic rate limit. Neither
         // response may acknowledge a public Server message.
@@ -2653,7 +2669,9 @@ describe('server chat (worldId-scoped room)', () => {
           expect(response.messageId).toEqual(expect.any(String));
           expect(response.messageId).not.toMatch(/^server:/);
         } else {
-          expect(response?.error?.code).toMatch(/^(invalid_request|rate_limited)$/);
+          expect(response).toMatchObject({ success: false, error: {
+            code: expect.stringMatching(/^(invalid_request|rate_limited)$/),
+          } });
         }
       }
       expect(_lists['relay:serverchat:nameplate-simulation'] ?? []).toEqual([]);
@@ -2666,6 +2684,7 @@ describe('server chat (worldId-scoped room)', () => {
       await Promise.all([sender, observer].map(c => waitForBody(c, 'reply after nameplate requests')));
       const expected = ['hello after nameplate requests', 'reply after nameplate requests'];
       for (const c of [sender, observer]) expect(serverEvents(c).map(event => event.body)).toEqual(expected);
+      const rpc = await open();
       const history = await waitForMsg(rpc.ws, rpc.msgs, () => send(rpc.ws,
         { op: 'poll', token: b.token, cursor: 0, max: 50 }));
       expect(history).toMatchObject({ success: true });

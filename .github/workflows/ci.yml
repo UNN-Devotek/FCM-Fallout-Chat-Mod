@@ -20,8 +20,9 @@ name: CI
 #
 # The `overlay-build-windows-nsis` job builds the NSIS installer and portable exe NATIVELY on
 # `windows-latest` (no Wine, no Docker, no GHCR image — the self-hosted Wine/DinD
-# strategy was superseded by the runner migration). It statically verifies the
-# artifacts (installer + exe present) and that NO auto-update feed files
+# strategy was superseded by the runner migration). It verifies the artifacts and
+# runs native packaged interaction checks with an isolated profile/loopback relay.
+# It also checks that NO auto-update feed files
 # (app-update.yml / latest*.yml) are emitted — the overlay no longer auto-updates.
 #
 # ── OVERLAY RELEASE GATES (MANDATORY, fail-closed) — see docs/deployment/releasing-the-overlay.md ──
@@ -169,13 +170,21 @@ jobs:
         run: |
           npx prisma validate
           npx prisma generate
-          npx prisma db push --skip-generate
+          npx prisma db push
       - name: Apply MCP migrations twice and verify database objects
         working-directory: backend
         run: node scripts/verify-mcp-migrations.mjs
       - name: Build (jest tests target compiled .js)
         working-directory: backend
         run: npm run build
+      - name: Typecheck Prisma CLI config and maintainer seed tool
+        working-directory: backend
+        run: npx tsc -p tsconfig.tools.json
+      - name: Prisma PostgreSQL adapter runtime smoke
+        working-directory: backend
+        env:
+          PRISMA_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: node scripts/prisma-runtime-smoke.mjs
       - name: Remote MCP Inspector contract smoke
         working-directory: backend
         run: node scripts/mcp-inspector-smoke.mjs
@@ -583,8 +592,9 @@ jobs:
   # Builds the NSIS installer NATIVELY on windows-latest (no Wine, no Docker, no
   # GHCR image — the self-hosted Wine/DinD/docker-cp strategy was superseded by the
   # GitHub-hosted runner migration; switchable back to self-hosted via
-  # CI_RUNNER_WINDOWS). Build-correctness only: asserts the installer + exe are
-  # present and non-trivial, and that NO auto-update feed files (app-update.yml /
+  # CI_RUNNER_WINDOWS). Checks installer/exe artifacts and exercises the packaged
+  # native runtime with an isolated profile and loopback relay. Also asserts
+  # that NO auto-update feed files (app-update.yml /
   # latest*.yml) are emitted — the overlay no longer auto-updates (it shows a
   # passive OS notification instead; see docs/overlay/auto-update.md).
   overlay-build-windows-nsis:
@@ -622,6 +632,20 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Windows build artifact verification
         run: node .github/scripts/win-artifacts-check.mjs
+      - name: Test packaged Windows overlay through native Electron
+        working-directory: cross-platform-overlay
+        run: |
+          $env:FCM_TEST_EXECUTABLE = (Resolve-Path 'dist-electron\win-unpacked\Fallout Chat Mod.exe').Path
+          $env:FCM_TEST_ARTIFACTS = Join-Path $env:RUNNER_TEMP 'fcm-windows-interaction'
+          node scripts/usability-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows interaction smoke failed' }
+      - name: Upload Windows interaction evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: overlay-usability-windows-evidence
+          path: ${{ runner.temp }}/fcm-windows-interaction
+          if-no-files-found: ignore
 
   # ── The single required status check ────────────────────────────────────────
   ci-summary:
