@@ -18,6 +18,14 @@ const logger = require('../src/config/logger').default;
 const { setRoster, clearRoster, computeRooms, readRoster } = require('../src/services/relay/worldRosterService');
 beforeEach(() => { values.clear(); jest.clearAllMocks(); });
 
+test.each(['new-generation', 'one-sided-alias'])('self aliases cannot override %s isolation', async boundary => {
+  await setRoster('a', 'AccountLabel', ['Bob'], 'old', undefined, ['CharacterLabel']);
+  const before = await readRoster('a');
+  await setRoster('a', 'CharacterLabel', ['Bob'], boundary === 'new-generation' ? 'new' : 'old',
+    undefined, boundary === 'one-sided-alias' ? [] : ['AccountLabel']);
+  expect((await readRoster('a')).session).not.toBe(before.session);
+});
+
 test.each([false, true])('rejoin keeps the continuously occupied room regardless of UUID order (reverse=%s)', async reverse => {
   const low = 'r:00000000-0000-4000-8000-000000000001';
   const high = 'r:ffffffff-ffff-4fff-8fff-ffffffffffff';

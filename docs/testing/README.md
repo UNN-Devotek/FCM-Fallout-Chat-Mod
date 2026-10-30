@@ -23,6 +23,8 @@ the exact commands you run locally. Deeper material lives in sibling docs:
   and duplicate-delivery checks for xScal and ZFE.
 - **[hud-automation-plan.md](hud-automation-plan.md)** — proposed Ruffle contract simulator,
   optional licensed GFx host, programmable input tests, simulated logs, and native smoke tier.
+- **[private-world-recovery.md](private-world-recovery.md)** — implemented regressions, provider
+  compatibility matrix, automated commands and native acceptance for roster/room recovery.
 
 > This is a living plan. Several units cited below are **not yet directly testable** because the
 > code has no `module.exports` / named exports or runs side effects at import time. Those are

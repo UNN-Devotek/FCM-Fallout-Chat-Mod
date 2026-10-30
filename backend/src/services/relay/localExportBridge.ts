@@ -9,6 +9,7 @@ import { getWorldId, setWorldId } from './worldIdService';
 import type { BridgeResolution } from './overlayServerBridge';
 import { opaqueRef, recordRoomDiagnostic } from './roomDiagnostics';
 import { indexBridgeNameplates } from './nameplatePresence';
+import logger from '../../config/logger';
 
 export const LOCAL_OBSERVATION_MS = 30_000;
 export const SOFT_LEAVE_MS = 30_000;
@@ -26,6 +27,9 @@ const observationSchema = z.strictObject({
   observationSequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   observationAgeMs: z.number().min(0).max(60_000), state: z.enum(['active', 'holding', 'inactive']),
   ownName: z.string().max(64), names: z.array(z.string().max(64)).max(24),
+  ownAliases: z.array(z.string().min(1).max(64).regex(/^[^\x00-\x1f\x7f|]+$/)).max(4).optional(),
+  rosterSource: z.enum(['none', 'MapMenuData', 'PlayerListData', 'PublicTeamsData',
+    'TeamMarkers', 'PartyMenuList', 'VoiceChatAreaData']).optional(),
 });
 export type LocalBridgeObservation = z.infer<typeof observationSchema>;
 
@@ -118,6 +122,24 @@ export class LocalExportBridge {
       && !this.closed && this.isCurrent() && await this.ownsConnection();
   }
 
+  /** Fixed fields/counts and pseudonymous references only; never persist the
+   * export document, credentials, roster names or arbitrary diagnostic text. */
+  private async diagnose(event: 'bridge_attached' | 'bridge_observation' | 'bridge_leave',
+    snapshot?: LocalBridgeObservation | null, reason?: BridgeLeaveReason, expiresAt?: number): Promise<void> {
+    const payload = { event, accountRef: opaqueRef(this.accountId),
+      ...(reason ? { reason } : {}),
+      ...(snapshot ? { provider: snapshot.provider,
+        build: snapshot.build.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})(?:$|-)/)?.[1] ?? 'other',
+        source: snapshot.rosterSource ?? 'unknown', state: snapshot.state,
+        sessionRef: opaqueRef(snapshot.sessionId), requestRef: opaqueRef(requestIdFor(snapshot)),
+        observationAgeMs: Math.min(60_000, Math.max(0, Math.ceil(expiresAt === undefined
+          ? snapshot.observationAgeMs : LOCAL_OBSERVATION_MS + Date.now() - expiresAt))),
+        rosterCount: snapshot.names.length, aliasCount: snapshot.ownAliases?.length ?? 0 } : {}),
+    };
+    await recordRoomDiagnostic(this.actorId, payload);
+    logger.info?.({ userRef: opaqueRef(this.actorId), ...payload }, '[localExportBridge] state');
+  }
+
   private cancelSoftLeaveTimer(): void {
     if (this.softLeaveTimer) clearTimeout(this.softLeaveTimer);
     this.softLeaveTimer = undefined;
@@ -138,6 +160,7 @@ export class LocalExportBridge {
       delete state.softLeaveUntil;
       await this.save(state);
       await clearRoomMembership(this.actorId, assertCurrent);
+      await this.diagnose('bridge_leave', state.snapshot, 'observation_timeout', state.expiresAt);
       await recordRoomDiagnostic(this.actorId, { event: 'soft_leave_expired', reason: 'observation_timeout' });
     });
   }
@@ -150,6 +173,7 @@ export class LocalExportBridge {
       await this.save({ ...(prior ?? { snapshot: null, expiresAt: 0, retiredSessions: [], retiredWorlds: [] }),
         owner: this.owner, active: false });
       await clearRoomMembership(this.actorId, assertCurrent);
+      await this.diagnose('bridge_attached');
     }).catch(error => { this.initialized = undefined; throw error; });
   }
 
@@ -168,6 +192,7 @@ export class LocalExportBridge {
         delete state.softLeaveUntil;
       }
       const old = state.snapshot;
+      const previousRoom = state.affinity?.roomKey;
       const sessionChanged = !!old && snapshot.sessionId !== old.sessionId;
       const worldChanged = !!old && (sessionChanged || snapshot.worldGeneration !== old.worldGeneration);
       if (state.retiredSessions.includes(snapshot.sessionId)
@@ -179,6 +204,9 @@ export class LocalExportBridge {
       if (this.revoked && sameObservation) return false;
       if (snapshot.state !== 'inactive' && sameObservation && (worldChanged || normalizeRosterName(old.ownName) !== normalizeRosterName(snapshot.ownName)
         || JSON.stringify(old.names.map(normalizeRosterName).sort()) !== JSON.stringify(snapshot.names.map(normalizeRosterName).sort())
+        || JSON.stringify((old.ownAliases ?? []).map(normalizeRosterName).sort())
+          !== JSON.stringify((snapshot.ownAliases ?? []).map(normalizeRosterName).sort())
+        || old.rosterSource !== snapshot.rosterSource
         || old.provider !== snapshot.provider)) return false;
       // A holding heartbeat may only preserve a known observation; it may not
       // invent one or move its expiry forward, even with a new writer sequence.
@@ -196,13 +224,14 @@ export class LocalExportBridge {
         state.active = state.active && roster?.requestId === requestIdFor(snapshot) && !!room;
         await assertCurrent();
         if (state.active && room && expiresAt < state.expiresAt) {
-          await setRoster(this.actorId, snapshot.ownName, snapshot.names, requestIdFor(snapshot), expiresAt, [],
+          await setRoster(this.actorId, snapshot.ownName, snapshot.names, requestIdFor(snapshot), expiresAt, snapshot.ownAliases ?? [],
             { observationSource: `bridge:${snapshot.provider}` });
           await setWorldId(this.actorId, room, expiresAt);
         }
         state.snapshot = snapshot;
         state.expiresAt = expiresAt;
         await this.save(state);
+        if (old.state !== snapshot.state) await this.diagnose('bridge_observation', snapshot, undefined, expiresAt);
         return epoch === this.activityEpoch && this.isInGame();
       }
       if (sessionChanged && old) state.retiredSessions.push(old.sessionId);
@@ -220,9 +249,12 @@ export class LocalExportBridge {
           state.affinity.lastDirectEvidenceAt, Date.now()) ? state.affinity : undefined;
       delete state.softLeaveUntil;
       await this.save(state);
-      if (!fresh) return true;
+      if (!fresh) {
+        if (!old || old.state !== snapshot.state || worldChanged) await this.diagnose('bridge_observation', snapshot, undefined, expiresAt);
+        return true;
+      }
       // A replay after expiry cannot revive a room even if it reports age zero.
-      await setRoster(this.actorId, snapshot.ownName, snapshot.names, requestIdFor(snapshot), expiresAt, [],
+      await setRoster(this.actorId, snapshot.ownName, snapshot.names, requestIdFor(snapshot), expiresAt, snapshot.ownAliases ?? [],
         { observationSource: `bridge:${snapshot.provider}`, ...(restoreAffinity ? { restoreAffinity } : {}) });
       await applyRoomAssignments(this.actorId, assertCurrent);
       await assertCurrent();
@@ -240,11 +272,18 @@ export class LocalExportBridge {
       } : undefined;
       await this.save(state);
       if (epoch !== this.activityEpoch || !this.isInGame()) return false;
+      if (!old || worldChanged || old.state !== snapshot.state || old.rosterSource !== snapshot.rosterSource
+        || old.ownName !== snapshot.ownName || old.names.length !== snapshot.names.length
+        || (old.ownAliases?.length ?? 0) !== (snapshot.ownAliases?.length ?? 0)) {
+        await this.diagnose('bridge_observation', snapshot, undefined, expiresAt);
+      }
       this.revoked = false;
       this.cancelSoftLeaveTimer();
       if (recoveringSoftLeave) await recordRoomDiagnostic(this.actorId, {
-        event: 'soft_leave_recovered', reason: restoreAffinity ? 'shared_population' : 'new_room',
-        roomRef: opaqueRef(await getWorldId(this.actorId) ?? ''),
+        event: 'soft_leave_recovered', reason: restoreAffinity ? 'shared_population'
+          : previousRoom === assignedRoom ? 'direct' : 'new_room',
+        fromRoomRef: previousRoom ? opaqueRef(previousRoom) : null,
+        roomRef: assignedRoom ? opaqueRef(assignedRoom) : null,
       });
       return true;
     });
@@ -296,11 +335,16 @@ export class LocalExportBridge {
         softUntil = state.softLeaveUntil ?? Date.now() + SOFT_LEAVE_MS;
         state.softLeaveUntil = softUntil;
         await this.save(state);
-        if (started) await recordRoomDiagnostic(this.actorId, { event: 'soft_leave_started', reason,
-          roomRef: opaqueRef(await getWorldId(this.actorId) ?? '') });
+        if (started) {
+          await recordRoomDiagnostic(this.actorId, { event: 'soft_leave_started', reason,
+            roomRef: roomKey ? opaqueRef(roomKey) : null,
+            previousRoomRef: state.affinity?.roomKey ? opaqueRef(state.affinity.roomKey) : null });
+          await this.diagnose('bridge_leave', state.snapshot, reason, state.expiresAt);
+        }
       } else {
         delete state.softLeaveUntil;
         await this.save(state);
+        await this.diagnose('bridge_leave', state.snapshot, reason, state.expiresAt);
       }
       // Authority is always removed immediately. Soft loss preserves only the
       // private tombstone above, never a live roster/world membership.

@@ -8,6 +8,26 @@ Schema source of truth: `backend/prisma/schema.prisma`.
 Bootstrap DDL (idempotent): `backend/db/init.sql`.
 Startup sync: `backend/baseline-migrations.sh` — see [migrations.md](./migrations.md).
 
+Prisma CLI, client and PostgreSQL adapter are kept together at 7.10.1. CLI
+configuration lives in `backend/prisma.config.ts`, which loads `.env` and then
+`.env.local` with the same precedence as the application. `DATABASE_URL` stays
+outside the schema. Generation does not need a live database; connecting commands
+and the runtime require a PostgreSQL URL. The supported `prisma-client-js`
+generator retains the existing CommonJS imports.
+
+The application singleton and startup/seed tools use `createPrismaClient` in
+`backend/src/config/prismaClient.ts`. It supplies `@prisma/adapter-pg`, preserves
+the URL's schema, and bounds its pool to ten connections, a five-second acquisition
+timeout and a thirty-second idle timeout. TLS remains controlled by the PostgreSQL
+URL/driver; certificate verification is not disabled. The CLI is a runtime
+dependency because container startup runs schema sync. Docker includes its config
+and generates the client during the build. CI exercises real PostgreSQL queries,
+JSON/dates, transaction rollback and unique-constraint error mapping alongside the
+existing mocked service suites.
+The runtime smoke requires `NODE_ENV=test` and an explicit
+`PRISMA_TEST_DATABASE_URL`; it never selects the application's database URL by
+default.
+
 TimescaleDB hypertables are used for the two highest-volume time-series tables:
 
 | Table | Hypertable chunk | Retention policy |

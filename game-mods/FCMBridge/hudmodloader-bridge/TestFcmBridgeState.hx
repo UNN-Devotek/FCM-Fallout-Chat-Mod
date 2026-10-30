@@ -14,6 +14,25 @@ class TestFcmBridgeState {
         else state.observe(reader.provider(key, provider, local, at, pushed));
     }
     static function main():Void {
+        var aliases = new FcmBridgeState(function() return "alias-world");
+        menu(aliases, ready({menuStackA:[]}));
+        observe(aliases, "PlayerListData", ready([
+            {isLocalPlayer:true,displayName:"CharacterLabel"}, {displayName:"PrivatePeer"}
+        ]), "AccountLabel", 1000, true);
+        aliases.settle(1000);
+        check(aliases.rosterSelfName(1000, "AccountLabel") == "CharacterLabel", "selected self row supplies the bridge label");
+        check(aliases.rosterAliases(1000, "CharacterLabel", "AccountLabel").join("|") == "accountlabel",
+            "only observed self/account names become aliases, never peer rows");
+        check(aliases.rosterSource(1000) == "PlayerListData", "export diagnostic identifies the selected roster source");
+        observe(aliases, "PlayerListData", ready([]), "AccountLabel", 2000, true);
+        check(aliases.rosterAliases(2000, "AccountLabel", "AccountLabel").join("|") == "characterlabel",
+            "an empty UI snapshot does not immediately discard a still-fresh self label");
+        observe(aliases, "PlayerListData", ready([]), "AccountLabel", 30000);
+        check(aliases.rosterAliases(31000, "AccountLabel", "AccountLabel").length == 0,
+            "cached polling and empty pushes never renew retained self-label evidence");
+        aliases.reset();
+        check(aliases.rosterAliases(1001, "AccountLabel", "AccountLabel").length == 0,
+            "a generation boundary blocks cached self aliases");
         check(FcmBridgeRead.retryDelay(1) == 2000 && FcmBridgeRead.retryDelay(2) == 4000
             && FcmBridgeRead.retryDelay(5) == 30000 && FcmBridgeRead.retryDelay(99) == 30000,
             "repeated source exceptions back off within a fixed ceiling");

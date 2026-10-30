@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/dist
+**/dist-electron
+**/.cache
+**/.env
+**/.env.*
+**/*.log
+**/test-results
+**/playwright-report
+marketing/promo/out

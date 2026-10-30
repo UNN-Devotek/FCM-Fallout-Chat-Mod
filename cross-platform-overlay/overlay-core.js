@@ -725,6 +725,16 @@ function shouldRotateLog(size, cap) {
 //   env.RELAY_HTTP = 'http://localhost:7076'
 //   env.RELAY_WS   = 'ws://localhost:7076/ws'
 //
+function configureDevelopmentDevtools(commandLine, isPackaged) {
+  if (isPackaged) return;
+  // Automation requests port 0 so each owned instance gets a separate endpoint.
+  // Preserve any explicit choice instead of colliding with another application.
+  if (!commandLine.hasSwitch('remote-debugging-port')) {
+    commandLine.appendSwitch('remote-debugging-port', '9222');
+  }
+  commandLine.appendSwitch('remote-allow-origins', '*');
+}
+
 // Production (default — no env override needed):
 //   relayHttp = 'https://falloutchatmod.com'
 //   relayWs   = 'wss://falloutchatmod.com/ws'
@@ -1339,6 +1349,7 @@ module.exports = {
   classifyPollerExit,
   resolveLogLevel,
   shouldRotateLog,
+  configureDevelopmentDevtools,
   stateHasRealData,
   buildDiscordUnlinkStatePatch,
   buildSteamUnlinkStatePatch,

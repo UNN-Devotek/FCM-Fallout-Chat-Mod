@@ -22,7 +22,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../config/prismaClient';
 
 export interface DiskMigration {
   name: string;
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   try {
     // Some environments are managed purely by `prisma db push` and never ran
     // `migrate deploy`, so the _prisma_migrations table simply does not exist

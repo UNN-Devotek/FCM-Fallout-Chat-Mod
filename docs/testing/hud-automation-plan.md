@@ -1,5 +1,41 @@
 # Automated HUD-mod test harness plan
 
+## Local input caret candidate
+
+The 2.10.152 native xScal candidate consumes optional UTF-16 `caretIndex` metadata
+without changing input ownership. `TestFcmXscalInput.hx` runs in the required Haxe
+job and also compiles to JavaScript to check UTF-16 surrogate boundaries. The native
+case in `input-caret.spec.ts` drives the real widget using provider snapshots;
+it checks cursor-only changes at the same revision, blinking without GFx editor
+focus, long-draft horizontal scrolling, Unicode, missing/invalid metadata, exact
+message text, cancellation, stale-generation rejection, an injected drawing
+failure that must retain native input, and unload. The fixture preserves Unicode
+as ASCII JSON and inspects UTF-16 units, avoiding Haxe's Flash JSON printer's
+surrogate-half encoding loss. It does not
+simulate the native Windows keyboard filter: actual arrow/repeat behavior still
+requires the supplied provider and fresh in-game acceptance.
+
+`TestFcmInputCaret.hx` checks the half-second blink, reset on editing/movement,
+empty input, selection, focus and closure. The required `gamemod-anchors` job runs it.
+`simulator/tests/input-caret.spec.ts` uses real Ruffle text entry on both providers'
+HUDModLoader editor paths: Left/Right, insertion and Backspace, exact submitted body,
+cancellation without send, reopening, stale callback rejection and unload without a retained marker. Its local
+fixture starts with empty chat history and blocks non-loopback requests.
+
+The simulator's JavaScript driver passes ExternalInterface arguments individually,
+including genuinely zero-argument snapshot calls. Mock host modes permit that local
+driver; production artifact mode retains disabled networking and script access.
+URL opening remains denied. These settings belong only to the simulator.
+
+Run the complete harness and existing package/source checks before distribution.
+Native acceptance must check an empty input and a draft, repeated Left/Right editing,
+long/wrapped/localized input, moved/resized panels, focus loss, Enter/Escape, reopening,
+gameplay arrows outside input and HUD unload. Confirm the caret is visible only in
+the active input and no marker appears in sent text or retained history. Accurate
+native xScal caret rendering requires provider position metadata; snapshot-driven
+and shared-editor fixtures do not certify the DLL's keyboard or GFx behavior.
+See [input contracts](../overlay/zfe/text-input-contracts.md).
+
 ## Dev integration — HUD 2.10.151 / bridge source 0.2.18
 
 The integrated candidate keeps current Dev's real cooldown scenario and the

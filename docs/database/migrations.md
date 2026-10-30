@@ -8,12 +8,18 @@
 reconciliation on every container startup:
 
 ```sh
-npx prisma db push --skip-generate                    # authoritative schema sync; failure stops boot
+npx prisma db push                                    # authoritative schema sync; failure stops boot
 node dist/scripts/applyPostPushPatches.js              # raw constraints + safe data defaults
 node dist/scripts/reconcileMigrations.js                # record pending migrations as applied (non-fatal)
 ```
 
 `prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs. `baseline-migrations.sh` uses `set -eu` and refuses to start the backend when this command fails. It deliberately does **not** pass `--accept-data-loss`; destructive schema drift must be reviewed and applied explicitly rather than silently accepted during a production boot.
+
+Prisma 7 no longer accepts `--skip-generate`; `db push` does not generate the
+client. Run `npx prisma generate` explicitly during the build. The CLI reads
+`DATABASE_URL` from `backend/prisma.config.ts`; keep this file in build and runtime
+images. Updating Prisma itself does not change the database models or authorize a
+destructive schema operation.
 
 Some compatibility changes are not represented by Prisma's schema diff: raw `CHECK` constraints
 and data-only repairs. After `db push`, `baseline-migrations.sh` runs
