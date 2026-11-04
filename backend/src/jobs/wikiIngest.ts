@@ -6,7 +6,7 @@
  * so concurrent runs (e.g. cron + admin trigger) are safe.
  */
 
-import cron from 'node-cron';
+import { producerCron } from '../runtime';
 import logger from '../config/logger';
 import { runWikiIngestion, WIKI_INGEST_LOCK_HELD_MESSAGE } from '../services/wikiIngestionService';
 import { makeJobTracker } from './jobTracker';
@@ -17,7 +17,7 @@ export function startWikiIngestJob(): void {
   // detection works AND consecutive REAL failures escalate warn → error. A
   // lock-held skip (a concurrent admin trigger) is expected and NOT counted as
   // a failure — we swallow it inside the tracked fn so the counter stays 0.
-  cron.schedule('0 3 * * 0', () =>
+  producerCron('0 3 * * 0', () =>
     tracker(async () => {
       logger.info('[wikiIngest] scheduled weekly run starting');
       try {

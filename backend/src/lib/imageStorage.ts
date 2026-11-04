@@ -12,6 +12,7 @@
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3, BUCKET, ensureBucket } from '../config/storage';
 import logger from '../config/logger';
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 
 // ── SSRF allowlist ─────────────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ export async function fetchRemoteImage(
   }
 
   if (!res.ok) {
+    await discardRuntimeResponse(res);
     logger.warn({ status: res.status, url }, '[imageStorage] download non-OK, skipping');
     return null;
   }
@@ -107,6 +109,7 @@ export async function fetchRemoteImage(
   // 3. MIME allowlist
   const contentType = res.headers.get('content-type') ?? '';
   if (!isAllowedMime(contentType)) {
+    await discardRuntimeResponse(res);
     logger.warn({ contentType, url }, '[imageStorage] rejected: MIME type not allowed');
     return null;
   }

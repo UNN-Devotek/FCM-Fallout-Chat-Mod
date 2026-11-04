@@ -1,3 +1,4 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, RequestHandler } from 'express';
 import { paramStr } from '../utils/reqParams';
 import { getRedisClient } from '../config/redis';
@@ -55,11 +56,14 @@ export const defaultQaStatusDeps: QaStatusDeps = {
     }
   },
   async deleteGrant(installToken) {
+  return runRequiredBundle('identity', 'qaStatusController:cd50d262c970', async () => {
     try {
       const redis = await getRedisClient();
-      await redis.del(`qa_grant:${installToken}`);
+      await runRequiredMutation('identity', '42a1dccd74e6fea02e1403e2', { stage: 'primary-write-unconfirmed' }, () => redis.del(`qa_grant:${installToken}`), undefined, undefined, isRowCountNoChange);
     } catch (err) {
       logger.warn({ err }, '[qa-status] deleteGrant failed');
     }
-  },
+
+  });
+},
 };

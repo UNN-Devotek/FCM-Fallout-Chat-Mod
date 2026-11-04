@@ -1,3 +1,5 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
+import { cancelProducerTimer, producerInterval } from '../runtime';
 import express from 'express';
 import { randomInt, randomBytes } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -81,6 +83,7 @@ function buildSimLine(): string {
  * Body: { count?: number }   (default 100, max 200)
  */
 router.post('/users', async (req, res, next) => {
+  return runRequiredBundle('session', 'simUsers:4cfdff75d975', async () => {
   try {
     const apiKey = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
     if (!env.ADMIN_API_KEY || !apiKey || !constantTimeEquals(apiKey, env.ADMIN_API_KEY)) {
@@ -94,7 +97,7 @@ router.post('/users', async (req, res, next) => {
     const ip = req.ip ?? req.socket.remoteAddress ?? '';
     const cleanIp = ip.replace(/^::ffff:/, '');
     const rlKeys = await redis.keys(`rl_auth:${cleanIp}*`);
-    if (rlKeys.length > 0) await redis.del(rlKeys);
+    if (rlKeys.length > 0) await runRequiredMutation('session', 'f03c1749d33435ed549ce22d', { stage: 'primary-write-unconfirmed' }, () => redis.del(rlKeys), undefined, undefined, isRowCountNoChange);
 
     const users = [];
     for (let i = 0; i < count; i++) {
@@ -106,14 +109,14 @@ router.post('/users', async (req, res, next) => {
 
       // Upsert by username (unique) so existing sim users are reused and their
       // installToken is updated to the deterministic value for consistency.
-      const user = await prisma.user.upsert({
+      const user = await runRequiredMutation('session', 'a9b889f435e98a815dd708f8', { stage: 'primary-write-unconfirmed' }, () => prisma.user.upsert({
         where: { username },
         create: { username, installToken },
         update: { installToken },
         select: { id: true, username: true },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
 
-      await redis.set(`session:${sessionToken}`, user.id, { EX: SESSION_TTL });
+      await runRequiredMutation('session', '426d7c8e40c97f92087f4ab8', { stage: 'primary-write-unconfirmed' }, () => redis.set(`session:${sessionToken}`, user.id, { EX: SESSION_TTL }), undefined, undefined, undefined);
       users.push({ username: user.username, userId: user.id, token: sessionToken });
     }
 
@@ -121,6 +124,8 @@ router.post('/users', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 /**
@@ -129,6 +134,7 @@ router.post('/users', async (req, res, next) => {
  * Requires: Authorization: Bearer <ADMIN_API_KEY>
  */
 router.delete('/users', async (req, res, next) => {
+  return runRequiredBundle('session', 'simUsers:427ed8cec5d8', async () => {
   try {
     const apiKey = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
     if (!env.ADMIN_API_KEY || !apiKey || !constantTimeEquals(apiKey, env.ADMIN_API_KEY)) {
@@ -141,15 +147,17 @@ router.delete('/users', async (req, res, next) => {
     });
     const ids = simUsers.map(u => u.id);
 
-    await prisma.message.deleteMany({ where: { userId: { in: ids } } });
-    const deleted = await prisma.user.deleteMany({
+    await runRequiredMutation('session', '74086f3b8645a47e29d0d0a3', { stage: 'primary-write-unconfirmed' }, () => prisma.message.deleteMany({ where: { userId: { in: ids } } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    const deleted = await runRequiredMutation('session', 'fe3f1774299be24caef52519', { stage: 'primary-write-unconfirmed' }, () => prisma.user.deleteMany({
       where: { id: { in: ids } },
-    });
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
     res.json({ data: { deleted: deleted.count } });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 /**
@@ -197,7 +205,7 @@ router.post('/stream', async (req, res, next) => {
     });
 
     let sent = 0;
-    const timer = setInterval(() => {
+    const timer = producerInterval('simulation-stream', () => {
       const author = simUsers.length > 0
         ? simUsers[randomInt(simUsers.length)]
         : { id: `sim-ephemeral-${randomBytes(8).toString('hex')}`, username: pick(SIM_NAMES) };
@@ -234,7 +242,7 @@ router.post('/stream', async (req, res, next) => {
       }
 
       sent += 1;
-      if (sent >= count) clearInterval(timer);
+      if (sent >= count) cancelProducerTimer(timer);
     }, intervalMs);
     // Don't keep the event loop alive solely for the sim drip.
     if (typeof timer.unref === 'function') timer.unref();

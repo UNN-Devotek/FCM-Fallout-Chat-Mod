@@ -1,3 +1,4 @@
+import { runRequiredBundle, runRequiredLookup, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Name blacklist.
  *
@@ -22,6 +23,7 @@
 
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 import { getRedisClient } from '../config/redis';
 import { compileUserRegex } from '../utils/safeRegex';
 import { canon } from '../utils/textCanon';
@@ -133,13 +135,16 @@ export function findBlacklistMatch(name: string | null | undefined): BlacklistEn
  * other instances refresh.
  */
 export async function refreshBlacklist(): Promise<void> {
+  return runRequiredBundle('moderation', 'nameBlacklistService:d0972eb51da8', async () => {
   await loadBlacklist();
   try {
-    const redis = await getRedisClient();
-    await redis.publish(PUBSUB_CHANNEL, JSON.stringify({ ts: Date.now() }));
+    const redis = await runRequiredLookup('moderation', 'blacklist-refresh:publication-client', () => getRedisClient(), 'required');
+    await runRequiredMutation('moderation', 'cb0c4196c627dd7a4b07424d', { stage: 'primary-write-unconfirmed' }, () => redis.publish(PUBSUB_CHANNEL, JSON.stringify({ ts: Date.now() })), undefined, undefined, undefined);
   } catch (err) {
     logger.debug({ err }, '[nameBlacklist] Redis publish failed (non-fatal)');
   }
+
+  });
 }
 
 /**
@@ -150,11 +155,14 @@ export async function refreshBlacklist(): Promise<void> {
 export async function subscribeBlacklistUpdates(): Promise<void> {
   try {
     const redis = await getRedisClient();
-    const sub = redis.duplicate();
-    await sub.connect();
+    const sub = runtime.initializeSdkLifetime(() => redis.duplicate());
+    runtime.registerParticipant('name-blacklist-subscription', { inspect: async () => ({ pending: 0 }),
+      close: async () => { if (sub.isOpen) await sub.quit(); } });
+    await runtime.initializeSdkLifetime(() => sub.connect());
     await sub.subscribe(PUBSUB_CHANNEL, async () => {
+      if (runtime.isFrozen()) return;
       logger.info('[nameBlacklist] received cross-instance refresh signal');
-      await loadBlacklist();
+      await runtime.run('name-blacklist:refresh', loadBlacklist);
     });
     logger.info('[nameBlacklist] subscribed to refresh channel');
   } catch (err) {

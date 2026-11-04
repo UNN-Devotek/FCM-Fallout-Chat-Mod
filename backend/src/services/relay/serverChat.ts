@@ -1,3 +1,4 @@
+import { runRequiredBundle, runRequiredLookup, runRequiredMutation } from '../../lib/requiredEffects';
 /**
  * serverChat.ts — ephemeral, worldId-scoped "server" chat room.
  *
@@ -39,7 +40,9 @@ function historyKey(worldId: string): string {
 export async function copySplitRoomHistory(source: string, destination: string): Promise<void> {
   if (source === destination) throw new Error('Split history requires a new room');
   const redis = await getRedisClient();
-  await redis.copy(historyKey(source), historyKey(destination));
+  await runRequiredMutation('publication', 'a1d48bf10c9d09cb4e24849c',
+    { stage: 'split-room-history-copy-unconfirmed' }, () => redis.copy(historyKey(source), historyKey(destination)),
+    undefined, undefined, reply => reply === 0);
   await noteModerationRoom(destination).catch(() => {});
 }
 
@@ -80,22 +83,25 @@ export async function publishServerMessage(
   cursor: number,
   event: ServerRoomEvent,
 ): Promise<void> {
+  return runRequiredBundle('publication', 'serverChat:7b57b2539bea', async () => {
   try {
     const redis = await getRedisClient();
     const key = historyKey(worldId);
-    await redis.lPush(key, JSON.stringify(event));
-    await redis.lTrim(key, 0, HISTORY_MAX - 1);
-    await redis.expire(key, HISTORY_TTL_S);
+    await runRequiredMutation('publication', '0642ce00332769f66de96fa3', { stage: 'primary-write-unconfirmed' }, () => redis.lPush(key, JSON.stringify(event)), undefined, undefined, undefined);
+    await runRequiredMutation('publication', 'e9bbaecdbd1e755640c51244', { stage: 'primary-write-unconfirmed' }, () => redis.lTrim(key, 0, HISTORY_MAX - 1), undefined, undefined, undefined);
+    await runRequiredMutation('publication', 'c528fcea23ab44bc3138047d', { stage: 'primary-write-unconfirmed' }, () => redis.expire(key, HISTORY_TTL_S), undefined, undefined, undefined);
     // Indexing is independent from delivery: failure must not suppress normal chat.
     await noteModerationRoom(worldId).catch(err => {
       logger.warn({ err }, '[serverChat] moderation index unavailable');
     });
     const envelope: ServerEventEnvelope = { kind: 'msg', worldId, cursor, event };
-    await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
+    await runRequiredMutation('publication', '7b8ecd24d26b2052059d282b', { stage: 'primary-write-unconfirmed' }, () => redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope)), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, worldId }, '[serverChat] publishServerMessage failed');
     throw err;
   }
+
+  });
 }
 
 /**
@@ -103,13 +109,16 @@ export async function publishServerMessage(
  * re-binds that user's live subscriber(s) to the new world (or unbinds on leave).
  */
 export async function publishRebind(userId: string, worldId: string | null, requestId?: string, sourceInstanceId?: string): Promise<void> {
+  return runRequiredBundle('publication', 'serverChat:bc894a0e334e', async () => {
   try {
-    const redis = await getRedisClient();
+    const redis = await runRequiredLookup('publication', 'server-rebind:publication-client', () => getRedisClient(), 'required');
     const envelope: ServerEventEnvelope = { kind: 'rebind', userId, worldId, requestId, sourceInstanceId };
-    await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
+    await runRequiredMutation('publication', '005bd0701988c5bbcb80e563', { stage: 'primary-write-unconfirmed' }, () => redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope)), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, userId }, '[serverChat] publishRebind failed');
   }
+
+  });
 }
 
 /**
@@ -118,13 +127,16 @@ export async function publishRebind(userId: string, worldId: string | null, requ
  * so a fresh subscribe-time backfill is not guaranteed on a world transition.
  */
 export async function publishHistoryResync(userId: string, sourceInstanceId: string): Promise<void> {
+  return runRequiredBundle('publication', 'serverChat:8be251f94d6b', async () => {
   try {
-    const redis = await getRedisClient();
+    const redis = await runRequiredLookup('publication', 'history-resync:publication-client', () => getRedisClient(), 'required');
     const envelope: ServerEventEnvelope = { kind: 'history-resync', userId, sourceInstanceId };
-    await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
+    await runRequiredMutation('publication', '0773abed79c09e9498150bab', { stage: 'primary-write-unconfirmed' }, () => redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope)), undefined, undefined, undefined);
   } catch (err) {
     logger.warn({ err, userId }, '[serverChat] publishHistoryResync failed');
   }
+
+  });
 }
 
 /**

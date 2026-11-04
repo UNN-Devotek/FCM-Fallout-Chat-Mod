@@ -23,6 +23,10 @@ const server = createServer((request, response) => {
   const path = new URL(request.url, 'http://localhost').pathname;
   let data = [];
   if (path === '/api/users') data = { token: 'fixture-only-session', userId: 'alice', username: 'Alice', displayName: 'Alice', discordLinked: true, role: 'admin' };
+  // A Dev-channel package uses QA authorization rather than /api/users on boot.
+  // This loopback fixture supplies the same completed response shape; no hosted
+  // login, role gate or application authentication behavior is changed.
+  else if (path.startsWith('/api/auth/qa-status/')) data = { authorized: true, token: 'fixture-only-session', displayName: 'Alice', role: 'admin' };
   else if (path === '/api/channels') data = channels;
   else if (path === '/api/block') data = { blocked: [] };
   else if (path.startsWith('/api/parties/invites')) data = { invites: [] };

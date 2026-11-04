@@ -118,7 +118,7 @@ check  -jest   -contract  -anchors   (matrix)     -smoke-linux    -windows-nsis
 | `gamemod-anchors` | `ubuntu-latest` | **Required** | Verifies promotion-critical sources, SWF/BA2 anchors and packaging, then compiles and tests the Haxe game-mod surfaces |
 | `hud-ruffle` | `ubuntu-latest` | **Required** | Builds the normalized HUD widget and runs the complete Ruffle/Playwright xScal + ZFE regression harness with failure artifacts |
 | `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Validates the Linux installer decision path (`bash -n`, `--help`, `--print-plan`), then builds once and runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
-| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds NSIS/portable executables natively, verifies unpacked/installer/portable artifacts and absence of update feeds, then runs `usability-smoke.mjs` against the packaged native executable with a temporary profile and loopback relay; uploads `overlay-usability-windows-evidence` |
+| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds NSIS/portable executables natively, verifies unpacked/installer/portable artifacts and absence of update feeds, then runs `usability-smoke.mjs` against the packaged native executable with a temporary profile and loopback relay; uploads `overlay-usability-windows-evidence`; also builds the backend and tests native control/CLI, restart fences and frozen startup |
 | `ci-summary` | `ubuntu-latest` | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
 
 All runner values above are defaults (no `CI_RUNNER` / `CI_RUNNER_WINDOWS` variable set). See
@@ -279,6 +279,16 @@ visibility, reconnects and account/draft boundaries, and tear down only owned
 resources. Failures fail the Windows gate; evidence is retained as
 `overlay-usability-windows-evidence`. This closes the runtime validation gap for
 Electron upgrades while retaining the separate signed-artifact release gates.
+
+The same required job installs/generates/builds the backend and runs
+`runtimeControl`, `runtimeRestartFence` and `runtimeFrozenBoot` on native Windows.
+These exercise named-pipe authorization, the explicit CLI directory, private ACLs
+and read-only frozen startup. Backend `NODE_ENV=test` is step scoped; the renderer
+is built with production React. These checks do not replace native gameplay or
+Linux production-storage recovery acceptance. The same interaction fixture also
+accepts an authorized loopback `/api/auth/qa-status/` response when explicitly
+pointed at a Dev-channel package. It exercises the packaged QA path without a
+hosted OAuth login; real role-gated browser authorization remains separate.
 
 The former auto-update-specific smoke job (`overlay-autoupdate-e2e-windows-exec`)
 and its `tests/mock-relay/` fixture remain retired.

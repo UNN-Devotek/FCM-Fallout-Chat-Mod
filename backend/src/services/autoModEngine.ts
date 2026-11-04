@@ -1,3 +1,4 @@
+import { createRequiredAudit, runRequiredEffect } from '../lib/requiredEffects';
 /**
  * AutoMod Engine — evaluates a message against all enabled automod_rules and
  * (internally) the legacy word_filter table, so the WS chat:send handler has a
@@ -591,7 +592,7 @@ export async function engineEvaluate(
     // Write violation record (fire-and-forget). AI matches carry the full
     // category→score map so a moderator reviewing the row sees exactly why it
     // fired, plus a sortable severity — the gradation keyword rules never had.
-    prisma.autoModViolation.create({
+    runRequiredEffect('automod:violation', { ruleId: rule.id, userId: user.id, channelId, stage: 'violation-write-unconfirmed' }, () => prisma.autoModViolation.create({
       data: {
         ruleId: rule.id,
         userId: user.id,
@@ -605,10 +606,10 @@ export async function engineEvaluate(
         aiCategories: isAiRule && aiVerdict ? (aiVerdict.scores as any) : undefined,
         aiMaxScore: isAiRule && aiVerdict ? aiVerdict.maxScore : undefined,
       },
-    }).catch((err: unknown) => logger.warn({ err }, 'autoModEngine: failed to write violation row'));
+    })).catch((err: unknown) => logger.warn({ err }, 'autoModEngine: failed to write violation row'));
 
     // Write audit log (fire-and-forget)
-    prisma.auditLog.create({
+    createRequiredAudit(prisma.auditLog, {
       data: {
         action: 'automod_violation',
         targetId: user.id,

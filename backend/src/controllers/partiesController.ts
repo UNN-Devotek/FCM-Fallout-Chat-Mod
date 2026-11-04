@@ -1,3 +1,4 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
@@ -48,6 +49,12 @@ const MAX_MEMBERS_MIN = 2;
 const MAX_MEMBERS_MAX = 50;
 const MAX_MEMBERS_MESSAGE = 'maxMembers must be 2–50';
 const PARTY_FULL_MESSAGE = 'Party is full';
+// Only this callback-originated refusal proves the controller intentionally
+// aborted its transaction. A random HTTP/SDK 409 never proves SQL rollback.
+class PartyTransactionRefusal extends Error { readonly status = 409; }
+function isPartyTransactionRollback(error: unknown): boolean {
+  return error instanceof PartyTransactionRefusal || isPrismaAtomicRefusal(error);
+}
 
 /**
  * Atomically add `userId` to `partyId`, enforcing the per-party capacity limit
@@ -75,7 +82,9 @@ async function joinPartyWithCapacityGuard(
   userId: string,
   maxMembers: number | null,
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  return runRequiredBundle('domain', 'partiesController:ab042f7a027b', async () => {
+  await runRequiredTransaction('domain', '7e946fe4f639b2e10ef49f47', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
     // Row-lock the party so concurrent joins for this party serialize. The
     // tagged-template form parameterizes partyId (no SQL injection). The lock
     // is held until the surrounding transaction commits/rolls back.
@@ -84,12 +93,14 @@ async function joinPartyWithCapacityGuard(
     if (maxMembers != null) {
       const currentCount = await tx.partyMember.count({ where: { partyId } });
       if (currentCount >= maxMembers) {
-        throw createError(409, PARTY_FULL_MESSAGE);
+        throw new PartyTransactionRefusal(PARTY_FULL_MESSAGE);
       }
     }
-    await tx.partyMember.create({
+    await runRequiredMutation('domain', '33526b7a483b76362f8c5421', { stage: 'primary-write-unconfirmed', partyId: partyId, userId: userId }, () => tx.partyMember.create({
       data: { id: uuidv4(), partyId, userId, role: 'member' },
-    });
+    }), isPrismaAtomicRefusal, tx, undefined);
+  }), { confirmedRollback: isPartyTransactionRollback });
+
   });
 }
 
@@ -245,6 +256,7 @@ export async function listParties(req: Request, res: Response, next: NextFunctio
  * POST /api/parties { name, color?, isPrivate, reapPolicy }
  */
 export async function createParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:42c4f89bb94a', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const { name, color, isPrivate, reapPolicy, maxMembers, category, description } = req.body ?? {};
@@ -313,7 +325,8 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     const partyId = uuidv4();
     const memberId = uuidv4();
 
-    const party = await prisma.$transaction(async (tx) => {
+    const party = await runRequiredTransaction('domain', 'eee463609a1362a208ff84ab', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       // Serialize concurrent creates by this owner so the owned-party cap holds
       // atomically: lock the owner's user row (same FOR UPDATE idiom as the join/
       // accept capacity guards) and re-count owned parties inside the lock before
@@ -322,11 +335,9 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
       await tx.$queryRaw`SELECT id FROM users WHERE id = ${callerId}::uuid FOR UPDATE`;
       const ownedCount = await tx.party.count({ where: { ownerId: callerId, isDeleted: false } });
       if (ownedCount >= MAX_OWNED_PARTIES_PER_USER) {
-        const err: any = new Error(OWNED_PARTY_CAP_MESSAGE);
-        err.status = 409;
-        throw err;
+        throw new PartyTransactionRefusal(OWNED_PARTY_CAP_MESSAGE);
       }
-      const p = await tx.party.create({
+      const p = await (<PreparedArgs extends Parameters<typeof tx.party.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('domain', '37b647f05b1eaac7d00ebd8f', { stage: 'primary-write-unconfirmed', rowId: partyId }, () => tx.party.create(preparedArgs), isPrismaAtomicRefusal, tx, undefined))({
         data: {
           id: partyId,
           name: name.trim(),
@@ -339,13 +350,13 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
           ownerId: callerId,
         },
       });
-      await tx.partyMember.create({
+      await runRequiredMutation('domain', '12ce63a4bd5ad1a6fce3547f', { stage: 'primary-write-unconfirmed', rowId: memberId, partyId: partyId, userId: callerId }, () => tx.partyMember.create({
         data: { id: memberId, partyId, userId: callerId, role: 'owner' },
-      });
+      }), isPrismaAtomicRefusal, tx, undefined);
       return p;
-    });
+    }), { confirmedRollback: isPartyTransactionRollback });
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '6e0f610dfef919903a561eb0', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_create',
@@ -353,7 +364,7 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
         targetType: 'party',
         metadata: { name: party.name, isPrivate: party.isPrivate, reapPolicy: party.reapPolicy, maxMembers: party.maxMembers },
       },
-    });
+    }), undefined, undefined, undefined);
 
     res.status(201).json({ data: { party } });
   } catch (err: any) {
@@ -361,6 +372,8 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     if (err?.status === 409) return next(createError(409, err.message));
     next(err);
   }
+
+  });
 }
 
 /**
@@ -371,6 +384,7 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
  * count is allowed — it only blocks future joins, nobody is kicked.
  */
 export async function updateParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:86acbe7033cf', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -448,12 +462,12 @@ export async function updateParty(req: Request, res: Response, next: NextFunctio
       updateData.name = cleanRename;
     }
 
-    const updated = await prisma.party.update({
+    const updated = await runRequiredMutation('domain', '5673df094fc0f3464aab3d58', { stage: 'primary-write-unconfirmed', rowId: partyId }, () => prisma.party.update({
       where: { id: partyId },
       data: updateData,
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '86304f640aa8b416d1ab68df', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_update',
@@ -461,12 +475,14 @@ export async function updateParty(req: Request, res: Response, next: NextFunctio
         targetType: 'party',
         metadata: updateData as Record<string, string | number | boolean | null>,
       },
-    });
+    }), undefined, undefined, undefined);
 
     res.json({ data: { party: updated } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -502,6 +518,7 @@ export async function listInvites(req: Request, res: Response, next: NextFunctio
  * POST /api/parties/invites/:id/accept
  */
 export async function acceptInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:1627808d9fff', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const inviteId = paramStr(req, 'id');
@@ -538,14 +555,15 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
     // joinParty (see joinPartyWithCapacityGuard). A pre-transaction count would
     // race exactly like the old joinParty did. The idempotent re-accept of an
     // existing membership is exempt from the cap (it doesn't grow the party).
-    const party = await prisma.$transaction(async (tx) => {
+    const party = await runRequiredTransaction('domain', '78b7277611876dddde253906', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       // Row-lock the party so concurrent accepts for this party serialize.
       await tx.$queryRaw`SELECT id FROM parties WHERE id = ${invite.partyId}::uuid FOR UPDATE`;
 
-      await tx.partyInvite.update({
+      await runRequiredMutation('domain', '5b8e0dfba601e06c787d7875', { stage: 'primary-write-unconfirmed', rowId: inviteId }, () => tx.partyInvite.update({
         where: { id: inviteId },
         data: { status: 'accepted', respondedAt: new Date() },
-      });
+      }), isPrismaAtomicRefusal, tx, undefined);
       // Upsert membership (idempotent). Re-check membership inside the tx — the
       // earlier pre-tx `alreadyIn` read is only a fast path; the authoritative
       // check happens here under the row lock.
@@ -558,17 +576,17 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
         if (invite.party.maxMembers != null) {
           const currentCount = await tx.partyMember.count({ where: { partyId: invite.partyId } });
           if (currentCount >= invite.party.maxMembers) {
-            throw createError(409, PARTY_FULL_MESSAGE);
+            throw new PartyTransactionRefusal(PARTY_FULL_MESSAGE);
           }
         }
-        await tx.partyMember.create({
+        await runRequiredMutation('domain', '6999a0580f3e30963dd81573', { stage: 'primary-write-unconfirmed', partyId: invite.partyId, userId: callerId }, () => tx.partyMember.create({
           data: { id: uuidv4(), partyId: invite.partyId, userId: callerId, role: 'member' },
-        });
+        }), isPrismaAtomicRefusal, tx, undefined);
       }
       return tx.party.findUnique({ where: { id: invite.partyId } });
-    });
+    }), { confirmedRollback: isPartyTransactionRollback });
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', 'c43d5f86322d654f7c4cc281', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: invite.partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_join',
@@ -576,7 +594,7 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
         targetType: 'party',
         metadata: { via: 'invite', inviteId },
       },
-    });
+    }), undefined, undefined, undefined);
 
     // Broadcast member-update to party
     await emitMemberUpdate(invite.partyId);
@@ -585,12 +603,15 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/parties/invites/:id/decline
  */
 export async function declineInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:47ae065e7383', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const inviteId = paramStr(req, 'id');
@@ -601,14 +622,16 @@ export async function declineInvite(req: Request, res: Response, next: NextFunct
     if (!invite || invite.inviteeId !== callerId || invite.status !== 'pending') {
       return next(createError(404, 'Invite not found or already responded'));
     }
-    await prisma.partyInvite.update({
+    await runRequiredMutation('domain', '04e7424a00ad288d74b4e178', { stage: 'primary-write-unconfirmed', rowId: inviteId }, () => prisma.partyInvite.update({
       where: { id: inviteId },
       data: { status: 'declined', respondedAt: new Date() },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: { declined: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -701,6 +724,7 @@ export async function getPartyMembers(req: Request, res: Response, next: NextFun
  * POST /api/parties/:id/join — public party only
  */
 export async function joinParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:994122fc0793', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -735,7 +759,7 @@ export async function joinParty(req: Request, res: Response, next: NextFunction)
     // party serialize: the second waits until the first commits, then re-counts
     // and sees the new member. The count + create then run inside the same tx.
     await joinPartyWithCapacityGuard(partyId, callerId, party.maxMembers);
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '6201c92ae8412307b38321d9', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_join',
@@ -743,18 +767,21 @@ export async function joinParty(req: Request, res: Response, next: NextFunction)
         targetType: 'party',
         metadata: { via: 'join' },
       },
-    });
+    }), undefined, undefined, undefined);
     await emitMemberUpdate(partyId);
     res.json({ data: { party } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/parties/:id/leave
  */
 export async function leaveParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:7e244a41b638', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -764,8 +791,8 @@ export async function leaveParty(req: Request, res: Response, next: NextFunction
     const membership = await prisma.partyMember.findFirst({ where: { partyId, userId: callerId } });
     if (!membership) return next(createError(404, 'Not a member'));
 
-    await prisma.partyMember.delete({ where: { id: membership.id } });
-    await prisma.auditLog.create({
+    await runRequiredMutation('domain', 'fc06fd24262f154b93ffa09e', { stage: 'primary-write-unconfirmed', rowId: membership.id }, () => prisma.partyMember.delete({ where: { id: membership.id } }), isPrismaAtomicRefusal, undefined, undefined);
+    await runRequiredMutation('audit', 'dcc26eb48bb870f64c3e042d', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_leave',
@@ -773,17 +800,17 @@ export async function leaveParty(req: Request, res: Response, next: NextFunction
         targetType: 'party',
         metadata: {},
       },
-    });
+    }), undefined, undefined, undefined);
 
-    const remaining = await prisma.partyMember.count({ where: { partyId } });
+    const remaining = await runRequiredLookup('domain', 'party-leave:remaining-members', () => prisma.partyMember.count({ where: { partyId } }));
     let deleted = false;
 
     if (remaining === 0) {
       // Last member left — soft-delete regardless of reapPolicy
-      await prisma.party.update({ where: { id: partyId }, data: { isDeleted: true } });
+      await runRequiredMutation('domain', '46fadda1c5bad13568fd22b7', { stage: 'primary-write-unconfirmed', rowId: partyId }, () => prisma.party.update({ where: { id: partyId }, data: { isDeleted: true } }), isPrismaAtomicRefusal, undefined, undefined);
       deleted = true;
       await emitPartyDeleted(partyId);
-      await prisma.auditLog.create({
+      await runRequiredMutation('audit', '2edd444a3f43cdde1a9ae60e', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
         data: {
           actorId: callerId,
           action: 'party_delete',
@@ -791,16 +818,16 @@ export async function leaveParty(req: Request, res: Response, next: NextFunction
           targetType: 'party',
           metadata: { reason: 'last-member-left' },
         },
-      });
+      }), undefined, undefined, undefined);
     } else {
       // If the leaver was the owner, transfer ownership to a comod or random member
       if (membership.role === 'owner') {
-        const newOwner = await prisma.partyMember.findFirst({
+        const newOwner = await runRequiredLookup('domain', 'party-leave:successor', async () => await prisma.partyMember.findFirst({
           where: { partyId, role: 'comod' },
-        }) ?? await prisma.partyMember.findFirst({ where: { partyId } });
+        }) ?? await prisma.partyMember.findFirst({ where: { partyId } }));
         if (newOwner) {
-          await prisma.partyMember.update({ where: { id: newOwner.id }, data: { role: 'owner' } });
-          await prisma.party.update({ where: { id: partyId }, data: { ownerId: newOwner.userId } });
+          await runRequiredMutation('domain', '772454c8084e70bb3e8cac9a', { stage: 'primary-write-unconfirmed', rowId: newOwner.id }, () => prisma.partyMember.update({ where: { id: newOwner.id }, data: { role: 'owner' } }), isPrismaAtomicRefusal, undefined, undefined);
+          await runRequiredMutation('domain', '27b57ac9005a193d8c4025e2', { stage: 'primary-write-unconfirmed', rowId: partyId }, () => prisma.party.update({ where: { id: partyId }, data: { ownerId: newOwner.userId } }), isPrismaAtomicRefusal, undefined, undefined);
         }
       }
       await emitMemberUpdate(partyId);
@@ -810,12 +837,15 @@ export async function leaveParty(req: Request, res: Response, next: NextFunction
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/parties/:id — owner only
  */
 export async function deleteParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:7cce08bff31b', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -826,8 +856,8 @@ export async function deleteParty(req: Request, res: Response, next: NextFunctio
     if (!party) return next(createError(404, 'Party not found'));
     if (party.ownerId !== callerId) return next(createError(403, 'Owner only'));
 
-    await prisma.party.update({ where: { id: partyId }, data: { isDeleted: true } });
-    await prisma.auditLog.create({
+    await runRequiredMutation('domain', '30afda0597378090ca6a9026', { stage: 'primary-write-unconfirmed', rowId: partyId }, () => prisma.party.update({ where: { id: partyId }, data: { isDeleted: true } }), isPrismaAtomicRefusal, undefined, undefined);
+    await runRequiredMutation('audit', '0d73df8a573076d331e774f5', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_delete',
@@ -835,19 +865,22 @@ export async function deleteParty(req: Request, res: Response, next: NextFunctio
         targetType: 'party',
         metadata: { reason: 'owner-deleted' },
       },
-    });
+    }), undefined, undefined, undefined);
     await emitPartyDeleted(partyId);
 
     res.json({ data: { deleted: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/parties/:id/invite { userId }
  */
 export async function inviteToParty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:39ecf5a56356', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -875,7 +908,7 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
     if (alreadyMember) return next(createError(409, 'User is already a member'));
 
     // Upsert pending invite
-    const invite = await prisma.partyInvite.upsert({
+    const invite = await runRequiredMutation('domain', '19a9d985cf17c7642503dc8f', { stage: 'primary-write-unconfirmed', partyId: partyId }, () => prisma.partyInvite.upsert({
       where: { partyId_inviteeId: { partyId, inviteeId } },
       update: { status: 'pending', inviterId: callerId, respondedAt: null },
       create: {
@@ -885,9 +918,9 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
         inviterId: callerId,
         status: 'pending',
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', 'e1eb3bf03e0d7590e0d2c071', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_invite',
@@ -895,7 +928,7 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
         targetType: 'party',
         metadata: { inviteeId },
       },
-    });
+    }), undefined, undefined, undefined);
 
     // Push party:invite WS notification to invitee
     const { resolveDisplayName } = importHandlers();
@@ -926,6 +959,8 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -1001,6 +1036,7 @@ export async function inviteSearch(req: Request, res: Response, next: NextFuncti
  * renders it with a Join button; the join itself reuses POST /parties/:id/join.
  */
 export async function invitePublic(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:6cc50b821844', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -1134,7 +1170,7 @@ export async function invitePublic(req: Request, res: Response, next: NextFuncti
     }
 
     // ONE audit row covers the whole multi-channel post (one cooldown consumption).
-    await prisma.auditLog.create({
+    await (<PreparedArgs extends Parameters<typeof prisma.auditLog.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('audit', '8ddda38ed17b2301aa1eda13', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create(preparedArgs), undefined, undefined, undefined))({
       data: {
         actorId: callerId,
         action: 'party_invite_public',
@@ -1173,12 +1209,15 @@ export async function invitePublic(req: Request, res: Response, next: NextFuncti
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * POST /api/parties/:id/kick { userId }
  */
 export async function kickMember(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:63f99fe4a33d', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
@@ -1201,8 +1240,8 @@ export async function kickMember(req: Request, res: Response, next: NextFunction
       return next(createError(403, 'Co-mods cannot kick other co-mods'));
     }
 
-    await prisma.partyMember.delete({ where: { id: targetMembership.id } });
-    await prisma.auditLog.create({
+    await runRequiredMutation('domain', 'b5bd400775711be742d08ced', { stage: 'primary-write-unconfirmed', rowId: targetMembership.id }, () => prisma.partyMember.delete({ where: { id: targetMembership.id } }), isPrismaAtomicRefusal, undefined, undefined);
+    await runRequiredMutation('audit', 'dc27bb3c07f5108c0fe02fab', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: 'party_kick',
@@ -1210,12 +1249,14 @@ export async function kickMember(req: Request, res: Response, next: NextFunction
         targetType: 'party',
         metadata: { kickedUserId: targetId },
       },
-    });
+    }), undefined, undefined, undefined);
     await emitMemberUpdate(partyId);
     res.json({ data: { kicked: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -1238,6 +1279,7 @@ async function changeMemberRole(
   req: Request, res: Response, next: NextFunction,
   direction: 'promote' | 'demote',
 ): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:173b8a8ad535', async () => {
   const callerId = resolveCallerId(req);
   const partyId = paramStr(req, 'id');
   const { userId: targetId } = req.body ?? {};
@@ -1266,11 +1308,11 @@ async function changeMemberRole(
       return next(createError(403, 'Cannot demote the owner'));
     }
 
-    const updated = await prisma.partyMember.update({
+    const updated = await runRequiredMutation('domain', '6a85a08924c44e40aa3414c1', { stage: 'primary-write-unconfirmed', rowId: targetMembership.id }, () => prisma.partyMember.update({
       where: { id: targetMembership.id },
       data: { role: newRole },
-    });
-    await prisma.auditLog.create({
+    }), isPrismaAtomicRefusal, undefined, undefined);
+    await runRequiredMutation('audit', 'd7ce629cfbefd563b2f08b75', { stage: 'primary-write-unconfirmed', actorId: callerId, targetId: partyId }, () => prisma.auditLog.create({
       data: {
         actorId: callerId,
         action: direction === 'promote' ? 'party_promote' : 'party_demote',
@@ -1278,12 +1320,14 @@ async function changeMemberRole(
         targetType: 'party',
         metadata: { targetUserId: targetId, newRole },
       },
-    });
+    }), undefined, undefined, undefined);
     await emitMemberUpdate(partyId);
     res.json({ data: { member: updated } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 // ── Admin endpoints ──────────────────────────────────────────────────────────
@@ -1461,18 +1505,19 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
  * Admin message deletion — soft-deletes a PartyMessage and broadcasts the deletion.
  */
 export async function adminDeletePartyMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'partiesController:fe1d2572af29', async () => {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const { partyId, messageId } = paramsOf(req);
   if (!UUID_RE.test(partyId) || !UUID_RE.test(messageId)) return next(createError(400, 'Invalid ID'));
   try {
     const msg = await prisma.partyMessage.findFirst({ where: { id: messageId } });
     if (!msg || msg.partyId !== partyId) return next(createError(404, 'Message not found'));
-    await prisma.partyMessage.updateMany({ where: { id: messageId }, data: { isDeleted: true } });
+    await runRequiredMutation('domain', '4095aa732a9987602e8efa92', { stage: 'primary-write-unconfirmed', rowId: messageId }, () => prisma.partyMessage.updateMany({ where: { id: messageId }, data: { isDeleted: true } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     // Broadcast deletion to party members
-    const members = await prisma.partyMember.findMany({
+    const members = await runRequiredLookup('publication', 'party-message-delete:member-discovery', () => prisma.partyMember.findMany({
       where: { partyId },
       select: { userId: true },
-    });
+    }));
     const memberIds = members.map(m => m.userId);
     const { broadcastToPartyMembers } = importHandlers();
     broadcastToPartyMembers(
@@ -1483,6 +1528,8 @@ export async function adminDeletePartyMessage(req: Request, res: Response, next:
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
+import { cancelProducerTimer, runtime as maintenance, producerInterval, producerTimeout } from '../runtime';
 /**
  * Giveaway service.
  *
@@ -136,7 +138,7 @@ function setCreateCooldown(userId: string): void {
 }
 
 // Prune expired cooldown entries every 5 minutes.
-const _cooldownPruneInterval = setInterval(() => {
+const _cooldownPruneInterval = producerInterval('giveaway-cooldown-prune', () => {
   const now = Date.now();
   for (const [k, exp] of joinLeaveCooldown.entries()) if (now >= exp) joinLeaveCooldown.delete(k);
   for (const [k, exp] of createCooldown.entries()) if (now >= exp) createCooldown.delete(k);
@@ -188,10 +190,11 @@ function updateDiscordCard(giveaway: GiveawayRow, entryCount: number): void {
 // ── Draw ──────────────────────────────────────────────────────────────────────
 
 async function drawWinner(giveawayId: string): Promise<void> {
+  return runRequiredBundle('publication', 'giveawayService:4d2d682744f0', async () => {
   if (!deps) return;
   activeTimers.delete(giveawayId);
   const reminderTimer = activeReminderTimers.get(giveawayId);
-  if (reminderTimer) { clearTimeout(reminderTimer); activeReminderTimers.delete(giveawayId); }
+  if (reminderTimer) { cancelProducerTimer(reminderTimer); activeReminderTimers.delete(giveawayId); }
 
   const { prisma } = deps;
 
@@ -209,13 +212,13 @@ async function drawWinner(giveawayId: string): Promise<void> {
       : null;
 
     // Atomic update — P2025 if cancelled concurrently.
-    await prisma.giveaway.update({
+    await runRequiredMutation('publication', '99caba950c104edb8eccca3f', { stage: 'primary-write-unconfirmed', rowId: giveawayId }, () => prisma.giveaway.update({
       where: { id: giveawayId, status: 'active' },
       data: {
         status: 'completed',
         ...(winner ? { winnerId: winner.userId, winnerName: winner.username } : {}),
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Set create cooldown so the creator can't immediately spam a new giveaway.
     setCreateCooldown(giveaway.createdByUserId);
@@ -252,12 +255,14 @@ async function drawWinner(giveawayId: string): Promise<void> {
     // will re-schedule the draw on the next tick.
     logger.error({ err, giveawayId }, 'drawWinner: DB error — giveaway remains active and will be retried by reconcileActive');
   }
+
+  });
 }
 
 function scheduleReminder(giveaway: { id: string; shortId: string; itemName: string; channelId: string; durationMin: number; endsAt: Date }): void {
   if (giveaway.durationMin <= REMINDER_THRESHOLD_MIN) return;
   const halfwayMs = Math.max(0, giveaway.endsAt.getTime() - Date.now() - (giveaway.durationMin * 60 * 1000 / 2));
-  const timer = setTimeout(() => {
+  const timer = producerTimeout('giveaway-reminder', () => {
     activeReminderTimers.delete(giveaway.id);
     if (!deps) return;
     const secsLeft = Math.max(0, Math.round((giveaway.endsAt.getTime() - Date.now()) / 1000));
@@ -273,22 +278,24 @@ function scheduleReminder(giveaway: { id: string; shortId: string; itemName: str
 
 function scheduleTimer(giveawayId: string, endsAt: Date): void {
   const delayMs = Math.max(0, endsAt.getTime() - Date.now());
-  const timer = setTimeout(() => { void drawWinner(giveawayId); }, delayMs);
+  const timer = producerTimeout('giveaway-draw', () => drawWinner(giveawayId), delayMs);
   activeTimers.set(giveawayId, timer);
 }
 
 // ── Init & Reconcile ──────────────────────────────────────────────────────────
 
 export async function init(injectedDeps: GiveawayDeps): Promise<void> {
+  if (maintenance.isFrozen()) return;
   deps = injectedDeps;
   try {
     await reconcileActive();
   } catch (err) {
+    maintenance.recordFailure('giveaway:startup-reconcile', err);
     logger.warn({ err }, 'giveawayService.reconcileActive failed at init (non-fatal - may be pending migration)');
   }
 
   // Periodic sweep: re-schedule any giveaway whose draw timer was lost (e.g. non-P2025 DB error).
-  const _reconcileInterval = setInterval(() => { void reconcileActive(); }, RECONCILE_INTERVAL_MS);
+  const _reconcileInterval = producerInterval('giveaway-reconcile', () => reconcileActive(), RECONCILE_INTERVAL_MS);
   if (typeof _reconcileInterval.unref === 'function') _reconcileInterval.unref();
 }
 
@@ -331,6 +338,7 @@ export async function createGiveaway(
   itemName: string,
   durationMin: number,
 ): Promise<GiveawayRow> {
+  return runRequiredBundle('publication', 'giveawayService:24e8963b61a0', async () => {
   if (!deps) throw new Error('giveawayService not initialised');
   const { prisma } = deps;
 
@@ -371,7 +379,7 @@ export async function createGiveaway(
   const shortId = await uniqueShortId(prisma);
   const endsAt = new Date(Date.now() + clampedDuration * 60 * 1000);
 
-  const giveaway = await prisma.giveaway.create({
+  const giveaway = await runRequiredMutation('publication', '89eee1ab2d8e218e4d4e6dec', { stage: 'primary-write-unconfirmed', channelId: channelId }, () => prisma.giveaway.create({
     data: {
       shortId,
       createdByUserId: userId,
@@ -382,7 +390,7 @@ export async function createGiveaway(
       endsAt,
       status: 'active',
     },
-  }).catch((err: any) => {
+  }), isPrismaAtomicRefusal, undefined, undefined).catch((err: any) => {
     // P2002 = unique constraint violation — the partial unique index fired,
     // meaning a concurrent create beat us through the count() race.
     if (err?.code === 'P2002') {
@@ -413,6 +421,8 @@ export async function createGiveaway(
 
   logger.info({ giveawayId: giveaway.id, shortId, userId, itemName: sanitized, durationMin: clampedDuration }, 'Giveaway created');
   return giveaway as unknown as GiveawayRow;
+
+  });
 }
 
 export async function joinGiveaway(
@@ -420,6 +430,7 @@ export async function joinGiveaway(
   userId: string,
   username: string,
 ): Promise<{ entryCount: number }> {
+  return runRequiredBundle('publication', 'giveawayService:fe09a6d73895', async () => {
   if (!deps) throw new Error('giveawayService not initialised');
   const { prisma } = deps;
 
@@ -439,11 +450,11 @@ export async function joinGiveaway(
   }
   if (!existing) setJoinLeaveCooldown(giveaway.id, userId);
 
-  await prisma.giveawayEntry.upsert({
+  await runRequiredMutation('publication', '549cecd705b63a1aa0fdf291', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.giveawayEntry.upsert({
     where: { giveawayId_userId: { giveawayId: giveaway.id, userId } },
     create: { giveawayId: giveaway.id, userId, username },
     update: {},
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
@@ -453,12 +464,15 @@ export async function joinGiveaway(
   }
 
   return { entryCount };
+
+  });
 }
 
 export async function leaveGiveaway(
   shortId: string,
   userId: string,
 ): Promise<{ entryCount: number }> {
+  return runRequiredBundle('publication', 'giveawayService:04d3d0088a4c', async () => {
   if (!deps) throw new Error('giveawayService not initialised');
   const { prisma } = deps;
 
@@ -471,9 +485,9 @@ export async function leaveGiveaway(
   }
   setJoinLeaveCooldown(giveaway.id, userId);
 
-  const deleted = await prisma.giveawayEntry.deleteMany({
+  const deleted = await runRequiredMutation('publication', '1d9b838eaa590b885255aa13', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.giveawayEntry.deleteMany({
     where: { giveawayId: giveaway.id, userId },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
@@ -483,6 +497,8 @@ export async function leaveGiveaway(
   }
 
   return { entryCount };
+
+  });
 }
 
 export async function cancelGiveaway(
@@ -490,6 +506,7 @@ export async function cancelGiveaway(
   userId: string,
   isMod: boolean,
 ): Promise<void> {
+  return runRequiredBundle('publication', 'giveawayService:89c985024a92', async () => {
   if (!deps) throw new Error('giveawayService not initialised');
   const { prisma } = deps;
 
@@ -501,12 +518,12 @@ export async function cancelGiveaway(
   }
 
   const timer = activeTimers.get(giveaway.id);
-  if (timer) { clearTimeout(timer); activeTimers.delete(giveaway.id); }
+  if (timer) { cancelProducerTimer(timer); activeTimers.delete(giveaway.id); }
   const reminderTimer = activeReminderTimers.get(giveaway.id);
-  if (reminderTimer) { clearTimeout(reminderTimer); activeReminderTimers.delete(giveaway.id); }
+  if (reminderTimer) { cancelProducerTimer(reminderTimer); activeReminderTimers.delete(giveaway.id); }
 
   try {
-    await prisma.giveaway.update({ where: { id: giveaway.id, status: 'active' }, data: { status: 'cancelled' } });
+    await runRequiredMutation('publication', '5a5b1c7abbf88c4be92187bd', { stage: 'primary-write-unconfirmed', rowId: giveaway.id }, () => prisma.giveaway.update({ where: { id: giveaway.id, status: 'active' }, data: { status: 'cancelled' } }), isPrismaAtomicRefusal, undefined, undefined);
   } catch (err: any) {
     if (err?.code === 'P2025') {
       throw new GiveawayError(`Giveaway ${shortId} completed before it could be cancelled.`, 'NOT_ACTIVE');
@@ -538,6 +555,8 @@ export async function cancelGiveaway(
   broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'cancelled');
   updateDiscordCard({ ...giveaway, status: 'cancelled', winnerName: null }, entryCount);
   logger.info({ giveawayId: giveaway.id, shortId, cancelledBy: userId, isMod }, 'Giveaway cancelled');
+
+  });
 }
 
 export async function listActive(): Promise<GiveawayWithCount[]> {

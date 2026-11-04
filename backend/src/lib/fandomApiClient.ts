@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 /**
  * fandomApiClient — shared Fandom MediaWiki API client used by wikiIngestionService,
  * atomPriceService, and wikiService.
@@ -38,6 +39,7 @@ export async function apiGet(
       signal:  controller.signal,
       headers: { 'User-Agent': FANDOM_UA },
     });
+    if (!res.ok) await discardRuntimeResponse(res);
     if (res.status === 429) throw new RateLimitError();
     if (!res.ok) {
       logger.warn({ status: res.status, action: params['action'] }, '[fandomApi] non-OK response');

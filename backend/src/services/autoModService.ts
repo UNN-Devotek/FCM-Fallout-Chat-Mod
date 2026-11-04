@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
@@ -225,7 +226,7 @@ async function filterContent(content: string, userId?: string): Promise<{ blocke
       if (filter.test_mode) {
         // Test mode: log the match but allow the message through
         logger.info({ userId, phrase: filter.phrase, testMode: true }, 'Auto-mod test match (not blocking)');
-        prisma.auditLog.create({
+        createRequiredAudit(prisma.auditLog, {
           data: {
             action: 'auto_mod_test_match',
             targetId: userId || null,
@@ -283,21 +284,25 @@ async function detectSpam(userId: string): Promise<{ spamDetected: boolean }> {
 const SPAM_IMMUNITY_TTL_SECONDS = 60 * 60; // 60 minutes
 
 async function setSpamImmunity(userId: string): Promise<void> {
+  return runRequiredBundle('moderation', 'autoModService:d7c8c61ed858', async () => {
   const redis = await getRedisClient();
-  await redis.set(`spam:immunity:${userId}`, '1', { EX: SPAM_IMMUNITY_TTL_SECONDS });
+  await runRequiredMutation('moderation', 'e60f684113c90074621067dc', { stage: 'primary-write-unconfirmed' }, () => redis.set(`spam:immunity:${userId}`, '1', { EX: SPAM_IMMUNITY_TTL_SECONDS }), undefined, undefined, undefined);
   logger.info({ userId, ttlSeconds: SPAM_IMMUNITY_TTL_SECONDS }, 'Spam immunity granted');
+
+  });
 }
 
 /**
  * Shadow-mute a user -- sets is_muted with a 1-hour expiry and logs to audit.
  */
 async function shadowMute(userId: string): Promise<void> {
+  return runRequiredBundle('moderation', 'autoModService:934f146bbae2', async () => {
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-  await prisma.user.update({
+  await runRequiredMutation('moderation', 'e710bec5a5773891fbca8bf1', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
     where: { id: userId },
     data: { isMuted: true, muteExpiresAt: expiresAt },
-  });
-  await prisma.auditLog.create({
+  }), isPrismaAtomicRefusal, undefined, undefined);
+  await createRequiredAudit(prisma.auditLog, {
     data: {
       action: 'auto_shadow_mute',
       targetId: userId,
@@ -306,6 +311,8 @@ async function shadowMute(userId: string): Promise<void> {
     },
   });
   logger.warn({ userId }, 'Auto shadow-mute applied');
+
+  });
 }
 
 function resetCache(): void {

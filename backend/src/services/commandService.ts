@@ -1,4 +1,5 @@
 import prisma from '../config/prisma';
+import { producerInterval } from '../runtime';
 import logger from '../config/logger';
 import { getServerStatus } from './serverStatusService';
 import { getNukeCodes } from './nukeCodesService';
@@ -107,7 +108,7 @@ function setCooldown(commandId: number, userId: string, cooldownSec: number): ((
 }
 
 // Prune expired entries every 5 minutes to prevent unbounded growth
-setInterval(() => {
+producerInterval('command-cooldown-prune', () => {
   const now = Date.now();
   for (const [key, exp] of cooldownMap.entries()) {
     if (now >= exp) cooldownMap.delete(key);

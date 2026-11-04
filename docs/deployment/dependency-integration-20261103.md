@@ -17,7 +17,9 @@ it does not publish clients or deploy production. Release versions remain propos
 | SSRF address policy | Top-level ipaddr.js 1.9.1 to 2.5.0 | #642 |
 | Desktop runtime | Electron 44.10.0 to 44.10.2 | Same-major alternative to #640 |
 
-Keep #640's Electron 45 upgrade separate. Prisma CLI, client and adapter remain
+At this assessment, keep #640's Electron 45 upgrade separate. The subsequent
+[November 4 integration](dependency-integration-20261104.md) records its native
+reassessment and the other remaining PRs. Prisma CLI, client and adapter remain
 pinned together at 7.10.1. The address-parser update retains proxy-addr's separate
 1.9.1 dependency; only the application's top-level parser is upgraded.
 

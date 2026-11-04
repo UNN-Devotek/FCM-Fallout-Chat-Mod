@@ -6,6 +6,9 @@ Production remote-MCP authorization, client registration, Discord consent, and d
 
 Source root: `backend/src/`
 
+Persistent maintenance fences, local operator commands, accepted-work accounting and ordinary
+restart behavior are documented in [runtime maintenance](runtime-maintenance.md).
+
 ## Folder Map
 
 ```
@@ -25,6 +28,7 @@ backend/src/
 ├── middleware/             # Express middleware (auth, rate-limit, error, validation)
 ├── jobs/                   # Scheduled background tasks (node-cron / setInterval)
 ├── queues/                 # Bull queue definitions (message persistence)
+├── runtime/                # Startup fences, local control and accepted-work drain
 ├── websocket/
 │   └── handlers.ts         # Raw WS server logic (see ../realtime/ docs)
 └── utils/                  # Pure helpers (clientIp, constantTimeEquals, mergeUser, …)

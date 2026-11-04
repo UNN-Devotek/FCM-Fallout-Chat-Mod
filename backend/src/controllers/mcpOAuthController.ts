@@ -1,3 +1,5 @@
+import { beginRuntimeFetch as fetch } from '../runtime/nativeFetch';
+import { runRequiredBundle, runRequiredCallback, runRequiredMutation } from '../lib/requiredEffects';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import env from '../config/environment';
@@ -56,6 +58,7 @@ export async function register(req: Request, res: Response) {
 }
 
 export async function authorize(req: Request, res: Response) {
+  return runRequiredBundle('oauth', 'mcpOAuthController:84edfa109ee8', async () => {
   const clientId = scalar(req.query.client_id), redirectUri = scalar(req.query.redirect_uri), resource = resourceIndicator(req.query.resource);
   const challenge = scalar(req.query.code_challenge), method = scalar(req.query.code_challenge_method), responseType = scalar(req.query.response_type);
   let trustedRedirect: string | undefined; let clientState: string | undefined;
@@ -81,9 +84,10 @@ export async function authorize(req: Request, res: Response) {
     const state = randomBytes(32).toString('base64url');
     const pending: Pending = { sessionId: req.sessionID, clientId, redirectUri, resource, scopes: requested, pkceChallenge: challenge, ...(clientState ? { clientState } : {}) };
     const redis = await getRedisClient();
-    await redis.set(`mcp_oauth_state:${state}`, seal(pending), { EX: STATE_TTL });
+    await runRequiredMutation('oauth', 'd9ab18c117deefc827dc72c7', { stage: 'primary-write-unconfirmed' }, () => redis.set(`mcp_oauth_state:${state}`, seal(pending), { EX: STATE_TTL }), undefined, undefined, undefined);
     (req.session as unknown as Record<string, unknown>).mcpOAuthState = state;
-    await new Promise<void>((resolve, reject) => req.session.save(error => error ? reject(error) : resolve()));
+    await runRequiredCallback('oauth:browser-session-save',
+      { stage: 'oauth-browser-session-save-unconfirmed' }, done => req.session.save(done));
     const params = new URLSearchParams({ client_id: env.DISCORD_CLIENT_ID, redirect_uri: `${issuer()}/oauth/discord/callback`, response_type: 'code', scope: 'identify guilds.members.read', state });
     recordMcpMetric('oauth', { outcome: 'success' });
     res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
@@ -93,16 +97,19 @@ export async function authorize(req: Request, res: Response) {
     if (trustedRedirect) redirectOAuthError(res, trustedRedirect, clientState, known ? 'invalid_request' : 'server_error', message);
     else oauthError(res, known ? 400 : 500, known ? 'invalid_request' : 'server_error', message);
   }
+
+  });
 }
 
 export async function discordCallback(req: Request, res: Response) {
+  return runRequiredBundle('oauth', 'mcpOAuthController:ab64d98b690b', async () => {
   headers(res);
   const code = scalar(req.query.code), state = scalar(req.query.state), providerError = scalar(req.query.error);
   if (!state || (!code && !providerError)) { oauthError(res, 400, 'invalid_request', 'Missing Discord result or state'); return; }
   let pending: Pending | undefined;
   try {
     const redis = await getRedisClient();
-    const raw = await redis.getDel(`mcp_oauth_state:${state}`);
+    const raw = await runRequiredMutation('oauth', 'de9562b8500eb696216d33b2', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`mcp_oauth_state:${state}`), undefined, undefined, reply => reply === null);
     if (!raw) throw new Error('State is invalid, expired, or already used');
     pending = unseal<Pending>(raw);
     if (pending.sessionId !== req.sessionID || (req.session as unknown as Record<string, unknown>).mcpOAuthState !== state) throw new Error('State is not bound to this browser session');
@@ -116,7 +123,7 @@ export async function discordCallback(req: Request, res: Response) {
     const role = await mcpRoleService.authorize(identity.id);
     if (!role.authorized) { recordMcpMetric('role_denial', { reason: classifyMcpRoleDenial(role.reason) }); noteMcpSecurityEvent('role_gate_failure'); redirectOAuthError(res, pending.redirectUri, pending.clientState, 'access_denied', 'This Discord account is not authorized for FCM MCP'); return; }
     const consent = randomBytes(32).toString('base64url');
-    await redis.set(`mcp_oauth_consent:${consent}`, seal({ ...pending, discordId: identity.id }), { EX: STATE_TTL });
+    await runRequiredMutation('oauth', 'c9b04350f6ae665246c7f052', { stage: 'primary-write-unconfirmed' }, () => redis.set(`mcp_oauth_consent:${consent}`, seal({ ...pending, discordId: identity.id }), { EX: STATE_TTL }), undefined, undefined, undefined);
     const client = await resolveOAuthClient(pending.clientId); const metadata = client.metadata as { client_name?: string };
     const name = escapeHtml(metadata.client_name || pending.clientId);
     const scopeFields = pending.scopes.map(scope => `<li>${escapeHtml(scope)}</li>`).join('');
@@ -127,9 +134,12 @@ export async function discordCallback(req: Request, res: Response) {
     if (pending) redirectOAuthError(res, pending.redirectUri, pending.clientState, 'access_denied', message);
     else oauthError(res, 403, 'access_denied', message);
   }
+
+  });
 }
 
 export async function consent(req: Request, res: Response) {
+  return runRequiredBundle('oauth', 'mcpOAuthController:3197d3f679bc', async () => {
   headers(res);
   let pending: (Pending & { discordId: string }) | undefined;
   try {
@@ -142,7 +152,7 @@ export async function consent(req: Request, res: Response) {
     const decision = scalar(req.body.decision);
     if (decision !== 'approve' && decision !== 'deny') throw new McpOAuthError('invalid_grant', 'Consent decision is invalid');
     const decisionKey = `mcp_oauth_consent_decision:${consentToken}`;
-    const claimed = await redis.set(decisionKey, decision, { EX: STATE_TTL, NX: true });
+    const claimed = await runRequiredMutation('oauth', '6e146f7574fbf3ab28f39f26', { stage: 'primary-write-unconfirmed' }, () => redis.set(decisionKey, decision, { EX: STATE_TTL, NX: true }), undefined, undefined, reply => reply === null);
     if (!claimed && await redis.get(decisionKey) !== decision) throw new McpOAuthError('invalid_grant', 'Consent decision is already final');
     const target = new URL(pending.redirectUri);
     if (decision !== 'approve') { target.searchParams.set('error', 'access_denied'); recordMcpMetric('oauth', { outcome: 'failure' }); }
@@ -159,6 +169,8 @@ export async function consent(req: Request, res: Response) {
     if (pending) redirectOAuthError(res, pending.redirectUri, pending.clientState, known ? 'invalid_request' : 'server_error', message);
     else oauthError(res, known ? 400 : 500, known ? 'invalid_request' : 'server_error', message);
   }
+
+  });
 }
 
 export async function token(req: Request, res: Response) {

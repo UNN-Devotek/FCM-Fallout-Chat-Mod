@@ -10,7 +10,9 @@ changed during this assessment.
 The owner subsequently authorized integration of the recommended dependency
 updates into Dev and testing of the combination. Follow the
 [dependency integration record](dependency-integration-20261103.md) for that
-candidate's exact versions and validation. The snapshots and recommendations
+candidate's exact versions and validation. The subsequent
+[November 4 integration](dependency-integration-20261104.md) records the owner-authorized
+review of the remaining PRs and native MSI checks. The snapshots and recommendations
 below describe the initial assessment, before that integration.
 
 ## Source and published baseline

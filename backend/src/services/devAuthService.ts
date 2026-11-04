@@ -27,6 +27,7 @@
  */
 
 import env from '../config/environment';
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 
 export interface VerifyDualRoleInput {
   /** Role IDs the user holds in the production guild. */
@@ -167,6 +168,7 @@ export const discordOAuthDeps: DevAuthDeps = {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) {
+      await discardRuntimeResponse(res);
       throw new Error(`Discord member lookup failed for guild ${guildId} (HTTP ${res.status})`);
     }
     const member = (await res.json()) as { roles?: string[] };
@@ -203,6 +205,7 @@ export const defaultProdVerifyClient: ProdVerifyClient = async (discordId: strin
     headers: { Authorization: `Bearer ${env.PROD_VERIFY_TOKEN}` },
   });
   if (!res.ok) {
+    await discardRuntimeResponse(res);
     throw new Error(`Prod verify endpoint returned HTTP ${res.status}`);
   }
   const body = (await res.json()) as { data?: { hasDevRole?: boolean } };
@@ -245,8 +248,9 @@ export function makeDevSideDeps(
         `https://discord.com/api/v10/guilds/${guildId}/members/${userId}`,
         { headers: { Authorization: `Bot ${devBotToken}` } },
       );
-      if (res.status === 404) return []; // not in dev guild
       if (!res.ok) {
+        await discardRuntimeResponse(res);
+        if (res.status === 404) return []; // not in dev guild
         throw new Error(`Dev-guild member lookup failed (HTTP ${res.status})`);
       }
       const member = (await res.json()) as { roles?: string[] };

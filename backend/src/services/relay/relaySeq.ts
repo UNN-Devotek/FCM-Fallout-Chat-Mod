@@ -1,3 +1,5 @@
+import { runRequiredEffect } from '../../lib/requiredEffects';
+import { runtime } from '../../runtime';
 /**
  * relaySeq.ts — global monotonic relay sequence counter.
  *
@@ -23,6 +25,7 @@ const RELAY_SEQ_KEY = 'relay:seq';
  * write wins. Call once during server startup, before the first request.
  */
 export async function seedRelaySeq(): Promise<void> {
+  let observedSeed: number | undefined;
   try {
     // Find the highest relay_seq already persisted.
     const result = await prisma.$queryRaw<[{ max: bigint | null }]>`
@@ -30,20 +33,23 @@ export async function seedRelaySeq(): Promise<void> {
     `;
     const maxSeq = result[0]?.max ?? null;
     const seed   = maxSeq !== null ? Number(maxSeq) : 0;
+    observedSeed = seed;
 
     const redis = await getRedisClient();
     // SET … NX: only sets when the key does not yet exist.
-    await redis.set(RELAY_SEQ_KEY, String(seed), { NX: true });
+    await runRequiredEffect('relay:seed', { sequence: seed, stage: 'startup-cursor-seed-unconfirmed' },
+      () => redis.set(RELAY_SEQ_KEY, String(seed), { NX: true }));
 
     logger.info({ seed }, '[relaySeq] seeded relay:seq');
   } catch (err) {
-    // Non-fatal on startup — worst case the counter starts from 0 after a
-    // Redis flush (clients will simply re-sync from the beginning of the
-    // window rather than getting a clean diff). Log and continue.
-    logger.warn({ err }, '[relaySeq] seedRelaySeq failed — starting from 0');
+    // Availability is preserved, but an unconfirmed SET is durable failure
+    // evidence. Never replace a known high-water mark with a zero fallback.
+    logger.warn({ err }, '[relaySeq] seedRelaySeq failed — attempting observed seed fallback');
     try {
       const redis = await getRedisClient();
-      await redis.set(RELAY_SEQ_KEY, '0', { NX: true });
+      const seed = observedSeed ?? 0;
+      await runRequiredEffect('relay:seed', { sequence: seed, stage: 'startup-cursor-fallback-seed-unconfirmed' },
+        () => redis.set(RELAY_SEQ_KEY, String(seed), { NX: true }));
     } catch (innerErr) {
       logger.error({ err: innerErr }, '[relaySeq] could not initialise relay:seq at all');
     }
@@ -60,8 +66,12 @@ export async function seedRelaySeq(): Promise<void> {
  * be advanced safely before the first new cursor is allocated.
  */
 export async function backfillMissingRelaySeq(): Promise<number> {
+  let updatedRows = 0;
+  let observedMax: number | undefined;
+  let observedCurrent: number | undefined;
+  let stage = 'legacy-cursor-write-unconfirmed';
   try {
-    const prismaResult = await prisma.$executeRaw`
+    const prismaResult = await runRequiredEffect('relay:backfill', { stage }, () => prisma.$executeRaw`
       WITH legacy AS (
         SELECT id,
                created_at,
@@ -75,8 +85,9 @@ export async function backfillMissingRelaySeq(): Promise<number> {
         FROM legacy
        WHERE m.id = legacy.id
          AND m.created_at = legacy.created_at
-    `;
-    const updatedRows = Number(prismaResult) || 0;
+    `);
+    updatedRows = Number(prismaResult) || 0;
+    stage = 'backfilled-cursor-highwater-query-unconfirmed';
     const rows = await prisma.$queryRaw<[{ max: bigint | null }]>`
       SELECT MAX(relay_seq) AS max FROM messages
     `;
@@ -84,11 +95,16 @@ export async function backfillMissingRelaySeq(): Promise<number> {
       ? 0
       : Number(rows[0].max);
 
+    observedMax = maxSeq;
+    stage = 'backfilled-cursor-current-read-unconfirmed';
     const redis = await getRedisClient();
     const currentRaw = await redis.get(RELAY_SEQ_KEY);
     const currentSeq = currentRaw === null ? 0 : Number(currentRaw);
+    observedCurrent = Number.isFinite(currentSeq) ? currentSeq : undefined;
     if (!Number.isFinite(currentSeq) || currentSeq < maxSeq) {
-      await redis.set(RELAY_SEQ_KEY, String(maxSeq));
+      stage = 'backfilled-cursor-highwater-advance-unconfirmed';
+      await runRequiredEffect('relay:backfill', { maxSeq, currentSeq: observedCurrent, updatedRows, stage },
+        () => redis.set(RELAY_SEQ_KEY, String(maxSeq)));
     }
 
     if (updatedRows > 0) {
@@ -96,6 +112,9 @@ export async function backfillMissingRelaySeq(): Promise<number> {
     }
     return updatedRows;
   } catch (err) {
+    if (updatedRows > 0 && stage !== 'backfilled-cursor-highwater-advance-unconfirmed') {
+      runtime.recordFailure('relay:backfill', err, { updatedRows, maxSeq: observedMax, currentSeq: observedCurrent, stage });
+    }
     logger.warn({ err }, '[relaySeq] legacy cursor backfill failed — continuing without backfill');
     return 0;
   }

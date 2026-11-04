@@ -334,10 +334,7 @@ describe('giveawayService', () => {
     await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
     broadcast.mockClear();
 
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     expect(prisma.giveaway.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'completed', winnerId: 'user-2', winnerName: 'Wastelander' }),
@@ -360,10 +357,7 @@ describe('giveawayService', () => {
 
     await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
     publishCard.mockClear();
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     expect(publishCard).toHaveBeenCalledWith(
       expect.stringContaining('Giveaway winner: Wastelander'), 'channel-1',
@@ -384,10 +378,7 @@ describe('giveawayService', () => {
     await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
     broadcast.mockClear();
 
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     expect(prisma.giveaway.update).toHaveBeenCalledWith(expect.objectContaining({
       data: { status: 'completed' },
@@ -410,10 +401,7 @@ describe('giveawayService', () => {
     await giveawayService.reconcileActive();
 
     broadcast.mockClear();
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     expect(prisma.giveaway.update).toHaveBeenCalledWith(expect.objectContaining({
       data: { status: 'completed' },
@@ -481,10 +469,7 @@ describe('giveawayService', () => {
     await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
     broadcast.mockClear();
 
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     // No winner broadcast — P2025 is handled silently
     expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({
@@ -507,10 +492,7 @@ describe('giveawayService', () => {
     await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
     broadcast.mockClear();
 
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
 
     // No winner broadcast
     expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({

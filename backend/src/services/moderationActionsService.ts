@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Core moderation actions: kick, mute, unmute, ban, reverseBan.
  *
@@ -33,11 +34,12 @@ async function evictRelaySessions(targetId: string, reason: 'banned' | 'kicked')
     const relay = require('./relay/relayHandler') as {
       evictRelayUser?: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
     };
-    if (typeof relay.evictRelayUser === 'function') {
-      await relay.evictRelayUser(targetId, {
+    const evict = relay.evictRelayUser;
+    if (typeof evict === 'function') {
+      await runRequiredEffect('moderation:relay-evict', { targetId, stage: 'relay-eviction-unconfirmed' }, () => evict(targetId, {
         code: reason === 'banned' ? 'user_banned' : 'user_kicked',
         message: reason === 'banned' ? 'This account is banned' : 'This account is temporarily kicked',
-      });
+      }));
     }
   } catch (err) {
     // The primary account-state write and the main /ws eviction remain valid if
@@ -61,7 +63,7 @@ export class ProtectedTargetError extends Error {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function audit(actorId: string | null, action: string, targetId: string, reason: string, metadata?: unknown): Promise<void> {
-  await prisma.auditLog.create({
+  await createRequiredAudit(prisma.auditLog, {
     data: {
       actorId,
       action,
@@ -271,10 +273,11 @@ export async function kickUser(
   reason: string,
   options: { kickDiscord?: boolean } = {},
 ): Promise<{ disconnected: number; until: Date; discordKicked: boolean; discordWarning?: string }> {
+  return runRequiredBundle('moderation', 'moderationActionsService:1fb7d6867234', async () => {
   await ensureNotProtected(targetId);
   if (!reason?.trim()) throw new Error('Kick reason is required');
   const until = new Date(Date.now() + KICK_COOLDOWN_MS);
-  const target = await prisma.user.update({ where: { id: targetId }, data: { kickedUntil: until }, select: { discordId: true } });
+  const target = await runRequiredMutation('moderation', '2628f8edd471e0924f3b2074', { stage: 'primary-write-unconfirmed', rowId: targetId }, () => prisma.user.update({ where: { id: targetId }, data: { kickedUntil: until }, select: { discordId: true } }), isPrismaAtomicRefusal, undefined, undefined);
   const discordKick = options.kickDiscord
     ? await applyDiscordKick(target.discordId, `FCM kick: ${reason}`)
     : { applied: false as const };
@@ -303,6 +306,8 @@ export async function kickUser(
     footerText: `Target ID: ${targetId}`,
   }).catch(() => {});
   return { disconnected, until, discordKicked: discordKick.applied, discordWarning: discordKick.warning };
+
+  });
 }
 
 export async function muteUser(
@@ -313,10 +318,11 @@ export async function muteUser(
   reason: string,
   skipDiscord = false,
 ): Promise<{ until: Date; discordPropagated: boolean }> {
+  return runRequiredBundle('moderation', 'moderationActionsService:985d0f7b5e51', async () => {
   await ensureNotProtected(targetId);
   const clamped = Math.max(60_000, Math.min(durationMs, MAX_MUTE_MS));
   const until = new Date(Date.now() + clamped);
-  const updated = await prisma.user.update({
+  const updated = await (<PreparedArgs extends Parameters<typeof prisma.user.update>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('moderation', 'd2836039ef4eb6fd1c4285c5', { stage: 'primary-write-unconfirmed', rowId: targetId }, () => prisma.user.update(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
     where: { id: targetId },
     data: { isMuted: true, muteExpiresAt: until, muteReason: reason.slice(0, 500), muteCategory: category, mutedById: actorId },
     select: { discordId: true },
@@ -345,14 +351,17 @@ export async function muteUser(
     footerText: `Target ID: ${targetId}`,
   }).catch(() => {});
   return { until, discordPropagated };
+
+  });
 }
 
 export async function unmuteUser(targetId: string, actorId: string, reason: string): Promise<void> {
-  const u = await prisma.user.update({
+  return runRequiredBundle('moderation', 'moderationActionsService:268b04831c0a', async () => {
+  const u = await runRequiredMutation('moderation', '46adc873432309072cd5001f', { stage: 'primary-write-unconfirmed', rowId: targetId }, () => prisma.user.update({
     where: { id: targetId },
     data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
     select: { discordId: true },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   markClientMuted(targetId, false);
   if (u.discordId) await clearDiscordTimeout(u.discordId);
   await audit(actorId, 'unmute', targetId, reason);
@@ -368,6 +377,8 @@ export async function unmuteUser(targetId: string, actorId: string, reason: stri
     timestamp: true,
     footerText: `Target ID: ${targetId}`,
   }).catch(() => {});
+
+  });
 }
 
 export interface NewBanEvidence {
@@ -387,10 +398,11 @@ export async function createBan(
   evidence: NewBanEvidence[],
   options: { banDiscord?: boolean } = {},
 ): Promise<{ banId: string; disconnected: number; discordLockdown: DiscordLockdownResult }> {
+  return runRequiredBundle('moderation', 'moderationActionsService:a83bdbf67288', async () => {
   await ensureNotProtected(targetId);
   if (evidence.length === 0) throw new Error('Ban requires at least one piece of evidence');
 
-  const ban = await prisma.ban.create({
+  const ban = await (<PreparedArgs extends Parameters<typeof prisma.ban.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('moderation', '234393b10c7910e25a503df4', { stage: 'primary-write-unconfirmed', userId: targetId }, () => prisma.ban.create(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
     data: {
       userId: targetId,
       bannedById: actorId,
@@ -417,7 +429,7 @@ export async function createBan(
   const target = await prisma.user.findUnique({ where: { id: targetId }, select: { discordId: true } });
   const lockdown = await applyDiscordBanLockdown(target?.discordId ?? null, bannedUntil === null || options.banDiscord === true, `${category}: ${reasonText}`);
 
-  await prisma.user.update({
+  await (<PreparedArgs extends Parameters<typeof prisma.user.update>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('moderation', '318528ede67adf1297515df7', { stage: 'primary-write-unconfirmed', rowId: targetId }, () => prisma.user.update(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
     where: { id: targetId },
     data: {
       isBanned: true,
@@ -437,18 +449,18 @@ export async function createBan(
   // the user row. Best-effort (non-fatal).
   if (bannedUntil === null) {
     try {
-      const u = await prisma.user.findUnique({ where: { id: targetId }, select: { installToken: true } });
+      const u = await runRequiredLookup('moderation', 'permanent-ban:device-discovery', () => prisma.user.findUnique({ where: { id: targetId }, select: { installToken: true } }));
       if (u?.installToken) {
-        await prisma.device.updateMany({
+        await runRequiredEffect('moderation:device-revoke', { targetId, stage: 'permanent-ban-device-revocation-unconfirmed' }, () => prisma.device.updateMany({
           where: { installToken: u.installToken, revokedAt: null },
           data: { revokedAt: new Date() },
-        });
+        }));
       }
     } catch (err) {
       logger.warn({ err, targetId }, 'failed to revoke device key on permanent ban');
     }
     try {
-      await revokeTokensForLinkedUser(targetId);
+      await runRequiredEffect('moderation:relay-revoke', { targetId, stage: 'permanent-ban-relay-revocation-unconfirmed' }, () => revokeTokensForLinkedUser(targetId));
     } catch (err) {
       logger.warn({ err, targetId }, 'failed to revoke relay token on permanent ban');
     }
@@ -488,6 +500,8 @@ export async function createBan(
     footerText: `Ban ID: ${ban.id} | Target ID: ${targetId}`,
   }).catch(() => {});
   return { banId: ban.id, disconnected, discordLockdown: lockdown };
+
+  });
 }
 
 /**
@@ -496,12 +510,13 @@ export async function createBan(
  * the API even though the database table has a composite primary key.
  */
 export async function deleteMessageById(messageId: string, actorId: string, reason = ''): Promise<void> {
-  const result = await prisma.$executeRaw`
+  return runRequiredBundle('moderation', 'moderationActionsService:3e78ae1aa02c', async () => {
+  const result = await runRequiredMutation('moderation', 'b52323ff5aea65ce0badb849', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
     UPDATE messages SET is_deleted = TRUE
-    WHERE id = ${messageId}::uuid AND NOT is_deleted`;
+    WHERE id = ${messageId}::uuid AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
   if (result === 0) throw new Error('Message not found');
 
-  await prisma.auditLog.create({
+  await createRequiredAudit(prisma.auditLog, {
     data: {
       actorId,
       action: 'delete_message',
@@ -521,16 +536,19 @@ export async function deleteMessageById(messageId: string, actorId: string, reas
     timestamp: true,
     footerText: `Actor ID: ${actorId}`,
   }).catch(() => {});
+
+  });
 }
 
 export async function reverseBan(banId: string, actorId: string, reverseReason: string): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationActionsService:1072e4a69ab4', async () => {
   // Atomic guard: updateMany with where:{id, reversedAt:null} acts as a
   // compare-and-swap — it only writes if the ban hasn't been reversed yet.
   // This eliminates the TOCTOU window that existed between the old findUnique
   // check and the subsequent update, where two concurrent callers could both
   // pass the "already reversed?" guard and both clear the user's ban state and
   // trigger Discord role-restore.
-  const { count } = await prisma.ban.updateMany({
+  const { count } = await (<PreparedArgs extends Parameters<typeof prisma.ban.updateMany>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('moderation', '7fe0589348884b260e4c2140', { stage: 'primary-write-unconfirmed', rowId: banId }, () => prisma.ban.updateMany(preparedArgs), isPrismaAtomicRefusal, undefined, isRowCountNoChange))({
     where: { id: banId, reversedAt: null },
     data: { reversedAt: new Date(), reversedById: actorId, reverseReason: reverseReason.slice(0, 500) },
   });
@@ -546,10 +564,10 @@ export async function reverseBan(banId: string, actorId: string, reverseReason: 
   // (the user has a row for ban.userId where isBanned=true matching this ban).
   const u = await prisma.user.findUnique({ where: { id: ban.userId }, select: { isBanned: true, savedDiscordRoles: true, discordId: true } });
   if (u?.isBanned) {
-    await prisma.user.update({
+    await runRequiredMutation('moderation', '3307b5b2d4082631a3ed1c1b', { stage: 'primary-write-unconfirmed', rowId: ban.userId }, () => prisma.user.update({
       where: { id: ban.userId },
       data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null, savedDiscordRoles: undefined as any },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Restore Discord roles + lift guild ban
     const saved = Array.isArray(u.savedDiscordRoles) ? (u.savedDiscordRoles as unknown as string[]) : [];
     await liftDiscordBanLockdown(u.discordId, saved);
@@ -568,10 +586,13 @@ export async function reverseBan(banId: string, actorId: string, reverseReason: 
     timestamp: true,
     footerText: `Ban ID: ${banId} | Target ID: ${ban.userId}`,
   }).catch(() => {});
+
+  });
 }
 
 // ── Sweep — called by cron every 5 min ────────────────────────────────────────
 export async function sweepExpired(): Promise<{ unbanned: number; unmuted: number; kickCooldownsCleared: number }> {
+  return runRequiredBundle('moderation', 'moderationActionsService:da8a182a3ce3', async () => {
   const now = new Date();
 
   const expiredBans = await prisma.user.findMany({
@@ -579,10 +600,10 @@ export async function sweepExpired(): Promise<{ unbanned: number; unmuted: numbe
     select: { id: true, discordId: true, savedDiscordRoles: true },
   });
   for (const u of expiredBans) {
-    await prisma.user.update({
+    await runRequiredMutation('moderation', 'b7e296dedf2d87821619959c', { stage: 'primary-write-unconfirmed', rowId: u.id }, () => prisma.user.update({
       where: { id: u.id },
       data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null, savedDiscordRoles: undefined as any },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Restore Discord state (roles + lift guild ban — for temp bans this is no-op
     // since temps don't apply guild ban, but role restore still runs).
     const saved = Array.isArray(u.savedDiscordRoles) ? (u.savedDiscordRoles as unknown as string[]) : [];
@@ -602,20 +623,22 @@ export async function sweepExpired(): Promise<{ unbanned: number; unmuted: numbe
     select: { id: true, discordId: true },
   });
   for (const u of expiredMutes) {
-    await prisma.user.update({
+    await runRequiredMutation('moderation', '759b48119dfa487a00006d59', { stage: 'primary-write-unconfirmed', rowId: u.id }, () => prisma.user.update({
       where: { id: u.id },
       data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     markClientMuted(u.id, false);
     if (u.discordId) await clearDiscordTimeout(u.discordId);
   }
 
-  const kickCleared = await prisma.user.updateMany({
+  const kickCleared = await runRequiredMutation('moderation', '689819425a5c9f17ff1a2386', { stage: 'primary-write-unconfirmed' }, () => prisma.user.updateMany({
     where: { kickedUntil: { lte: now } },
     data: { kickedUntil: null },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
   return { unbanned: expiredBans.length, unmuted: expiredMutes.length, kickCooldownsCleared: kickCleared.count };
+
+  });
 }
 
 function formatDuration(ms: number): string {

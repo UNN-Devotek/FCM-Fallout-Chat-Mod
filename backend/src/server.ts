@@ -1,4 +1,11 @@
+import { beginRuntimeFetch as fetch, discardRuntimeResponse } from './runtime/nativeFetch';
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, isPrismaNotFound, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredCallback, runRequiredEffect, runRequiredMutation, runRequiredTransaction } from './lib/requiredEffects';
 // dotenv is loaded in config/environment.ts before any env vars are read
+import { cancelProducerTimer, runtime, producerInterval, producerCron, runProducer } from './runtime';
+import { accountHttpIngress, instrumentHttpHandlers } from './runtime/ingress';
+import { accountFileRead, sendFileRead } from './runtime/fileReads';
+import { createRuntimeDiskUpload } from './runtime/diskUpload';
+import { openRuntimeControl, installRuntimeSignals } from './runtime/control';
 import { constantTimeEquals } from './utils/constantTimeEquals';
 import { clientIp } from './utils/clientIp';
 import { paramStr } from './utils/reqParams';
@@ -7,26 +14,29 @@ import { mergeUserInto } from './utils/mergeUser';
 import { buildAuthUserResponse } from './utils/authUserResponse';
 
 import http from 'http';
+import path from 'path';
+import { pipeline } from 'node:stream/promises';
 
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import session from 'express-session';
-import { RedisStore } from 'connect-redis';
+import { createRuntimeSessionStore } from './runtime/sessionStore';
 import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import cron from 'node-cron';
 
 import env from './config/environment';
 import logger from './config/logger';
-import { getRedisClient, client as redisClient } from './config/redis';
+import { getRedisClient, client as redisClient, subscriberClient } from './config/redis';
 import prisma from './config/prisma';
 import { Prisma } from '@prisma/client';
 import { errorHandler, createError } from './middleware/errorHandler';
 import { apiLimiter, authLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter } from './middleware/rateLimiter';
 import { requireAdminKey } from './middleware/requireAdminKey';
 import { requireClientAuth } from './middleware/requireClientAuth';
-import { query as dbQueryFn } from './config/database';
+import { query as dbQueryFn, pool as dbPool } from './config/database';
+import { getHealth } from './controllers/healthController';
 
 // Routes
 import healthRouter from './routes/health';
@@ -107,7 +117,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { backfillMissingRelaySeq, seedRelaySeq } from './services/relay/relaySeq';
 import { applyPostPushPatches } from './scripts/applyPostPushPatches';
-import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
+import { attachChatUpgradeRouter, closeRelayWss } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import { initActiveQaVersion } from './services/activeQaVersion';
 import { parseBoundOAuthState, serializeBoundOAuthState } from './utils/oauthState';
@@ -141,6 +151,25 @@ import { mcpTransportRouter } from './mcp/transport';
 
 const app = express();
 const server = http.createServer(app);
+
+// Frozen reads bypass sessions, download counters, auth refreshes, MCP and all
+// other middleware that can write even on GET. Public artifacts remain intact.
+const frozenDownloads = accountFileRead(express.static(path.join(__dirname, '../downloads')), runtime);
+app.use(accountHttpIngress(runtime, (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path === '/api/health') {
+    return runtime.run('frozen:health', () => getHealth(req, res, next), true).catch(next);
+  }
+  if (req.path.startsWith('/downloads/')) {
+    const original = req.url;
+    req.url = req.url.slice('/downloads'.length);
+    return Promise.resolve(frozenDownloads(req, res, err => { req.url = original; next(err); })).catch(next);
+  }
+  if (['/install.sh', '/uninstall.sh', '/install.ps1'].includes(req.path)) {
+    return serveScript(req.path.slice(1))(req, res);
+  }
+  next();
+}));
 
 // -- Middleware ----------------------------------------------------------------
 // helmet sets secure HTTP headers (XSS, clickjacking, MIME sniffing, etc.)
@@ -209,7 +238,7 @@ app.use(express.urlencoded({
 
 // Sessions backed by Redis
 app.use(session({
-  store: new RedisStore({ client: redisClient as any }),
+  store: createRuntimeSessionStore({ client: redisClient as any }, runtime),
   secret: env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -243,7 +272,8 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
     markBrowserDevPersonaAccess(req);
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     const dest = DEV_PRIVILEGED_ROLES.includes(persona.role) ? 'server-health' : 'chat';
-    req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${dest}`));
+    return runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done)).catch(err => logger.warn({ err }, 'Browser session save failed')).then(() => { if (!res.destroyed && !res.writableEnded) res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${dest}`); });
   });
 
   // Keep old /auth/dev-login as alias for admin persona
@@ -255,7 +285,8 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
     const persona = getDevPersona('admin');
     markBrowserDevPersonaAccess(req);
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
-    req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/server-health`));
+    return runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done)).catch(err => logger.warn({ err }, 'Browser session save failed')).then(() => { if (!res.destroyed && !res.writableEnded) res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/server-health`); });
   });
 
   // Dev shortcuts for public auth (apply / report) — sets publicUser session, no Discord needed
@@ -269,7 +300,8 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
       avatar: null,
       intent,
     };
-    req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${intent}`));
+    return runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done)).catch(err => logger.warn({ err }, 'Browser session save failed')).then(() => { if (!res.destroyed && !res.writableEnded) res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${intent}`); });
   });
 
 }
@@ -295,20 +327,25 @@ if (env.NODE_ENV === 'development') {
 }
 
 app.get('/auth/discord/profile', authLimiter, requireLinkAuth, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:0d725510fd83', async () => {
   const state = uuidv4();
   const redis = await getRedisClient();
-  await redis.set(`oauth_state:${state}`, serializeBoundOAuthState({
+  await runRequiredMutation('session', '3c7179db355c42ed48120726', { stage: 'primary-write-unconfirmed' }, () => redis.set(`oauth_state:${state}`, serializeBoundOAuthState({
     intent: 'profile', sessionId: req.sessionID, linkUserId: req.user!.id,
-  }), { EX: 300 });
+  }), { EX: 300 }), undefined, undefined, undefined);
   (req.session as any).oauthState = state;
-  await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+  await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
   const params = new URLSearchParams({ client_id: env.DISCORD_CLIENT_ID,
     redirect_uri: env.DISCORD_REDIRECT_URI, response_type: 'code', scope: 'identify', state });
   res.setHeader('Cache-Control', 'no-store');
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+
+  });
 });
 
 app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:91a6b995f463', async () => {
   // CSRF protection: store state token in Redis and bind it to the initiating
   // browser session. A random state alone does not stop a callback captured
   // from one browser being replayed into another browser's session.
@@ -316,11 +353,11 @@ app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(
+    await runRequiredMutation('session', 'e4224e9dd0920c5140ee9370', { stage: 'primary-write-unconfirmed' }, () => redis.set(
       `oauth_state:${state}`,
       serializeBoundOAuthState({ intent, sessionId: req.sessionID }),
       { EX: 300 },
-    ); // 5 min TTL
+    ), undefined, undefined, undefined); // 5 min TTL
   } catch (err) {
     logger.error({ err }, 'Failed to store OAuth state in Redis');
     res.status(500).send('Internal error');
@@ -332,9 +369,8 @@ app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
   // CSRF-bound state check below to succeed on a fresh /link visit.
   (req.session as any).oauthState = state;
   try {
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
   } catch (err) {
     logger.error({ err }, 'Failed to persist Discord OAuth browser session');
     res.status(500).send('Internal error');
@@ -349,9 +385,13 @@ app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
   });
   res.setHeader('Cache-Control', 'no-store');
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+
+  });
 });
 
 app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('audit', 'server:7e9d443bc4b2', async () => {
+  return runRequiredBundle('identity', 'server:7e9d443bc4b2', async () => {
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code) { res.status(400).send('Missing code'); return; }
 
@@ -359,7 +399,7 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
   let stateData: { intent: string; sessionId: string; linkUserId?: string };
   try {
     const redis = await getRedisClient();
-    const valid = await redis.getDel(`oauth_state:${state}`);
+    const valid = await runRequiredMutation('identity', 'ae93e30ad7e2fd0b469e6fb2', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`oauth_state:${state}`), undefined, undefined, reply => reply === null);
     if (!state || !valid) {
       res.status(403).send('Invalid OAuth state -- possible CSRF. Please try logging in again.');
       return;
@@ -416,22 +456,23 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
         res.redirect(`${profileUrl}?linkError=unavailable`); return;
       }
       try {
-        await prisma.$transaction(async tx => {
+        await runRequiredTransaction('identity', '71aa515cc25fac972be7e27a', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async tx => {
+      bindRequiredTransactionClient(tx);
           const account = await tx.user.findUnique({ where: { id: owner.userId } });
           if (!account || (account.isBanned && (!account.bannedUntil || account.bannedUntil.getTime() > Date.now()))) {
             throw new Error('account unavailable');
           }
           // Never merge accounts or replace a different Discord identity implicitly.
-          const updated = await tx.user.updateMany({
+          const updated = await (<PreparedArgs extends Parameters<typeof tx.user.updateMany>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('identity', '4473cca82b27a847d7d8f4c7', { stage: 'primary-write-unconfirmed', rowId: owner.userId, discordId: discordUser.id }, () => tx.user.updateMany(preparedArgs), isPrismaAtomicRefusal, tx, isRowCountNoChange))({
             where: { id: owner.userId, OR: [{ discordId: null }, { discordId: discordUser.id }] },
             data: { discordId: discordUser.id, discordUsername: String(discordUser.username),
               discordDisplayName: String(discordUser.global_name || discordUser.username).slice(0, 128),
               discordAvatar: discordUser.avatar || null, discordAuthedAt: new Date() },
           });
           if (updated.count !== 1) throw new Error('identity conflict');
-          await tx.auditLog.create({ data: { actorId: owner.userId, targetId: owner.userId,
-            targetType: 'user', action: 'discord_profile_linked' } });
-        });
+          await runRequiredMutation('audit', '53cca1bd95607076ba1664da', { stage: 'primary-write-unconfirmed', actorId: owner.userId, targetId: owner.userId }, () => tx.auditLog.create({ data: { actorId: owner.userId, targetId: owner.userId,
+            targetType: 'user', action: 'discord_profile_linked' } }), undefined, tx, undefined);
+        }), { confirmedRollback: isPrismaAtomicRefusal });
       } catch {
         res.redirect(`${profileUrl}?linkError=conflict`); return;
       }
@@ -448,20 +489,22 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
     );
 
     if (!memberRes.ok) {
+      await discardRuntimeResponse(memberRes);
       res.redirect(`${frontendBase}/login?error=not_in_discord`);
       return;
     }
 
     if (isPublicAuth) {
+      await discardRuntimeResponse(memberRes);
       // Public auth (report/apply) — no admin role enforcement
       // global_name is Discord's display name (may differ from username handle)
       // SR-008: coerce to string — discordUser is typed any, guard against unexpected types
       const discordDisplayName: string = String(discordUser.global_name || discordUser.username).slice(0, 128);
       // Upsert discord_display_name on any linked user record
-      await prisma.user.updateMany({
+      await runRequiredMutation('identity', '6872b3a101faaca7dc171b22', { stage: 'primary-write-unconfirmed', discordId: discordUser.id }, () => prisma.user.updateMany({
         where: { discordId: discordUser.id },
         data: { discordDisplayName },
-      });
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
       (req.session as any).publicUser = {
         discordId: discordUser.id,
         username: discordUser.username,
@@ -469,7 +512,8 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
         avatar: discordUser.avatar,
         intent: stateData.intent,
       };
-      await new Promise<void>(resolve => req.session.save(() => resolve()));
+      await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
       res.redirect(`${frontendBase}/${stateData.intent}`);
       return;
     }
@@ -488,11 +532,11 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
     // Only upsert into admin_users for actual admin/mod roles — keep that
     // table reserved for elevated identities, not every member.
     if (adminRole !== 'member') {
-      await prisma.adminUser.upsert({
+      await runRequiredEffect('auth:admin-authority', { discordId: discordUser.id, stage: 'oauth-admin-authority-write-unconfirmed' }, () => prisma.adminUser.upsert({
         where: { discordId: discordUser.id },
         update: { username: discordUser.username, role: adminRole },
         create: { discordId: discordUser.id, username: discordUser.username, role: adminRole },
-      }).catch((err: Error) => logger.warn({ err }, 'Failed to upsert admin_users (non-fatal)'));
+      })).catch((err: Error) => logger.warn({ err }, 'Failed to upsert admin_users (non-fatal)'));
     }
 
     // Persist the canonical account before establishing a browser session.
@@ -505,7 +549,7 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       discordAvatar: discordUser.avatar || null,
       discordDisplayName,
     };
-    await prisma.user.upsert({
+    await runRequiredMutation('identity', '7e3edb4516aaca90ce1c3c42', { stage: 'primary-write-unconfirmed', discordId: discordUser.id }, () => prisma.user.upsert({
       where: { discordId: discordUser.id },
       update: discordProfile,
       create: {
@@ -516,7 +560,7 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
         discordId: discordUser.id,
         ...discordProfile,
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Capture avatar to MinIO (fire-and-forget)
     captureAvatar(discordUser.id, discordUser.avatar).catch(() => { /* non-fatal */ });
@@ -540,12 +584,17 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
     const dest = stateData.intent === 'link'
       ? '/link'
       : (adminRole === 'member' ? '/chat' : '/server-health');
-    await new Promise<void>(resolve => req.session.save(() => resolve()));
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
     res.redirect(`${frontendBase}${dest}`);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth callback error');
     res.status(500).send('Authentication failed.');
   }
+
+  });
+
+  });
 });
 
 // -- Discord OAuth2 link routes (desktop game clients) ------------------------
@@ -617,6 +666,7 @@ const PIP_BOY_HTML = (title: string, heading: string, body: string) => `<!DOCTYP
  * Initiates Discord OAuth linking for a desktop game client identified by installToken.
  */
 app.get('/auth/discord/link', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:f11b5f8acb2a', async () => {
   const { installToken } = req.query as { installToken?: string };
   if (!installToken) { res.status(400).send('Missing installToken'); return; }
 
@@ -628,7 +678,7 @@ app.get('/auth/discord/link', authLimiter, async (req: Request, res: Response) =
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(`oauth_link_state:${state}`, installToken, { EX: 300 }); // 5 min TTL
+    await runRequiredMutation('session', '8e38cc4018b908084773c9a1', { stage: 'primary-write-unconfirmed' }, () => redis.set(`oauth_link_state:${state}`, installToken, { EX: 300 }), undefined, undefined, undefined); // 5 min TTL
   } catch (err) {
     logger.error({ err }, 'Failed to store OAuth link state in Redis');
     res.status(500).send('Internal error');
@@ -650,6 +700,8 @@ app.get('/auth/discord/link', authLimiter, async (req: Request, res: Response) =
   // and replaying an old redirect/state on a later link or relink attempt.
   res.setHeader('Cache-Control', 'no-store');
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+
+  });
 });
 
 /**
@@ -657,6 +709,7 @@ app.get('/auth/discord/link', authLimiter, async (req: Request, res: Response) =
  * OAuth callback for desktop game client Discord linking.
  */
 app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('identity', 'server:84408c107182', async () => {
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code) { res.status(400).send('Missing code'); return; }
 
@@ -669,7 +722,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     if (state && env.NODE_ENV === 'development') {
       hostedDevPersonaPending = await defaultDevPersonaCallbackDeps.consumeState(state);
     }
-    const stored = hostedDevPersonaPending ? null : await redis.getDel(`oauth_link_state:${state}`);
+    const stored = hostedDevPersonaPending ? null : await runRequiredMutation('identity', '6f382d3ff19fbe596d56a082', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`oauth_link_state:${state}`), undefined, undefined, reply => reply === null);
     if (!state || (!stored && !hostedDevPersonaPending)) {
       res.status(403).send('Invalid OAuth state — possible CSRF. Please try again.');
       return;
@@ -714,6 +767,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     );
 
     if (!memberRes.ok) {
+      await discardRuntimeResponse(memberRes);
       res.status(403).send(PIP_BOY_HTML(
         'Not a Member — Fallout Chat Mod',
         'Access Denied',
@@ -767,15 +821,16 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
       // row, ALL FK tables re-pointed, then the placeholder deleted. mergeUserInto()
       // handles every FK table including collision-safe @@unique tables.
       const placeholder = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
-      await prisma.$transaction(async (tx) => {
+      await runRequiredTransaction('identity', '943d18dc61595e58d2a5926c', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
         if (placeholder && placeholder.id !== existingAccount.id) {
           await mergeUserInto(existingAccount.id, placeholder.id, tx);
         }
-        await tx.user.update({
+        await runRequiredMutation('identity', '7c658200696f2ffc5cdb4e3d', { stage: 'primary-write-unconfirmed', rowId: existingAccount.id }, () => tx.user.update({
           where: { id: existingAccount.id },
           data: { installToken, discordUsername: discordUser.username, discordAvatar: discordUser.avatar, discordDisplayName, discordAuthedAt: new Date() },
-        });
-      });
+        }), isPrismaAtomicRefusal, tx, undefined);
+      }), { confirmedRollback: isPrismaAtomicRefusal });
 
       captureAvatar(discordUser.id, discordUser.avatar).catch(() => {});
 
@@ -794,7 +849,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         logger.warn({ err, userId: existingAccount.id }, 'Discord link reclaim: refreshClientIdentity failed (non-fatal)');
       }
 
-      await redis.set(
+      await runRequiredMutation('session', '813e549e8619243fae4e99cd', { stage: 'primary-write-unconfirmed' }, () => redis.set(
         `discord_link:${installToken}`,
         JSON.stringify({
           discordId: discordUser.id,
@@ -805,7 +860,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
           existingUsername: existingAccount.username,
         }),
         { EX: 600 },
-      );
+      ), undefined, undefined, undefined);
 
       logger.info({ installToken, discordId: discordUser.id, existingUsername: existingAccount.username }, 'Discord link — account reclaimed');
 
@@ -824,7 +879,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     // created before this fix was deployed). Placeholder = pending-*, Overlay\d+,
     // or discord: synthetic relay users. Never touch real-name rows (that would
     // break register()-side self-reclaim for already-linked users).
-    await prisma.user.updateMany({
+    await runRequiredMutation('identity', '7ab8b938dd874776f019da99', { stage: 'primary-write-unconfirmed', discordId: discordUser.id }, () => prisma.user.updateMany({
       where: {
         discordId: discordUser.id,
         NOT: { installToken },
@@ -834,7 +889,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         ],
       },
       data: { discordId: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
     // Persist Discord identity. UPSERT (not update): the install row no longer
     // exists until this point (the link endpoint no longer pre-creates it and
@@ -844,7 +899,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     // and renders discordDisplayName until the user sets a real FO76 name.
     // We refresh discordDisplayName on every callback so the chat name tracks any
     // Discord global/nick change.
-    const linkedUser = await prisma.user.upsert({
+    const linkedUser = await runRequiredMutation('identity', 'af15ab0c02e3fa1814cf4025', { stage: 'primary-write-unconfirmed', discordId: discordUser.id }, () => prisma.user.upsert({
       where: { installToken },
       update: {
         discordId: discordUser.id,
@@ -863,7 +918,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordAuthedAt: new Date(),
       },
       select: { id: true, username: true, chatName: true, steamDisplayName: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Push updated identity to any open WS sessions so rendered names update live.
     try {
@@ -882,7 +937,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
 
     captureAvatar(discordUser.id, discordUser.avatar).catch(() => { /* non-fatal */ });
 
-    await redis.set(
+    await runRequiredMutation('session', 'a4f76b5742cdcb3a46f6acf6', { stage: 'primary-write-unconfirmed' }, () => redis.set(
       `discord_link:${installToken}`,
       JSON.stringify({
         discordId: discordUser.id,
@@ -891,7 +946,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
       }),
       { EX: 600 },
-    );
+    ), undefined, undefined, undefined);
 
     logger.info({ installToken, discordId: discordUser.id }, 'Discord account linked to game client');
 
@@ -910,6 +965,8 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
        <p class="dim">If this keeps happening, try closing the setup wizard and reopening it.</p>`
     ));
   }
+
+  });
 });
 
 /**
@@ -1058,21 +1115,21 @@ function steamFailure(
  * code and, unlike the old Discord-only gate, may be the user's only provider.
  */
 app.get('/auth/steam', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:c9830d141ab3', async () => {
   const intent = typeof req.query.intent === 'string' ? req.query.intent : 'link';
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(
+    await runRequiredMutation('session', 'fb70dc755bff17e9b5e1d4bb', { stage: 'primary-write-unconfirmed' }, () => redis.set(
       `steam_oauth_state:${state}`,
       serializeBoundOAuthState({ intent, sessionId: req.sessionID }),
       { EX: 600 },
-    );
+    ), undefined, undefined, undefined);
     // saveUninitialized=false means the browser must receive the session cookie
     // before Steam redirects back to the callback.
     (req.session as any).steamOAuthState = state;
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
   } catch (err) {
     logger.error({ err }, 'Failed to store Steam OpenID state');
     res.status(500).send('Internal error');
@@ -1083,6 +1140,8 @@ app.get('/auth/steam', authLimiter, async (req: Request, res: Response) => {
     returnTo: steamReturnTo(req, state),
     realm: steamRealm(req),
   }));
+
+  });
 });
 
 /**
@@ -1091,6 +1150,7 @@ app.get('/auth/steam', authLimiter, async (req: Request, res: Response) => {
  * the one-time Redis state binds the eventual Steam identity to installToken.
  */
 app.get('/auth/steam/link', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:f007ab2cb37c', async () => {
   const installToken = typeof req.query.installToken === 'string' ? req.query.installToken : '';
   if (!STEAM_INSTALL_TOKEN_RE.test(installToken)) {
     res.status(400).send('Missing or invalid installToken');
@@ -1100,7 +1160,7 @@ app.get('/auth/steam/link', authLimiter, async (req: Request, res: Response) => 
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(`steam_link_state:${state}`, installToken, { EX: 600 });
+    await runRequiredMutation('session', 'e67de1b7e28e473bd4f6d4ea', { stage: 'primary-write-unconfirmed' }, () => redis.set(`steam_link_state:${state}`, installToken, { EX: 600 }), undefined, undefined, undefined);
   } catch (err) {
     logger.error({ err }, 'Failed to store Steam desktop link state');
     res.status(500).send('Internal error');
@@ -1111,6 +1171,8 @@ app.get('/auth/steam/link', authLimiter, async (req: Request, res: Response) => 
     returnTo: steamReturnTo(req, state),
     realm: steamRealm(req),
   }));
+
+  });
 });
 
 /**
@@ -1119,6 +1181,8 @@ app.get('/auth/steam/link', authLimiter, async (req: Request, res: Response) => 
  * establishes a browser session for the HUD /link page.
  */
 app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('audit', 'server:ddca9b0dc179', async () => {
+  return runRequiredBundle('identity', 'server:ddca9b0dc179', async () => {
   const query = req.query as Record<string, unknown>;
   const state = typeof query.state === 'string' ? query.state : '';
   let installToken: string | null = null;
@@ -1133,11 +1197,11 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
     const redis = await getRedisClient();
     // Desktop state is intentionally checked first because that flow has no
     // browser session to bind. Both namespaces are one-time consumed.
-    const desktopState = await redis.getDel(`steam_link_state:${state}`);
+    const desktopState = await runRequiredMutation('identity', '0c9e49b7a7f5c6db07a4a44d', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`steam_link_state:${state}`), undefined, undefined, reply => reply === null);
     if (desktopState) {
       installToken = desktopState;
     } else {
-      const browserStateRaw = await redis.getDel(`steam_oauth_state:${state}`);
+      const browserStateRaw = await runRequiredMutation('identity', 'f5f50ff3e07e00ada0b9bc19', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`steam_oauth_state:${state}`), undefined, undefined, reply => reply === null);
       browserState = parseBoundOAuthState(browserStateRaw, req.sessionID);
       if (!browserState) {
         res.redirect('/link?error=steam_state');
@@ -1228,14 +1292,15 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
       }
 
       let targetId = resolution.targetId;
-      await prisma.$transaction(async (tx) => {
+      await runRequiredTransaction('identity', '6d1598adb17e14a534d4d1b0', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
         if (resolution.kind === 'merge-existing-into-install') {
           await mergeUserInto(resolution.targetId, resolution.mergeSourceId, tx);
-          await tx.user.update({
+          await runRequiredMutation('identity', '0ba7c6fd865bf782d4ec6ad3', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({
             where: { id: resolution.targetId },
             data: { installToken, steamId },
-          });
-          await tx.auditLog.create({
+          }), isPrismaAtomicRefusal, tx, undefined);
+          await runRequiredMutation('audit', 'a4f20038f484144a3bc7fe0e', { stage: 'primary-write-unconfirmed', actorId: resolution.targetId, targetId: resolution.mergeSourceId }, () => tx.auditLog.create({
             data: {
               actorId: resolution.targetId,
               action: 'steam_account_reclaimed',
@@ -1244,34 +1309,34 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
               reason: 'Verified Steam link reclaimed a Steam-only account row.',
               metadata: { steamId, canonicalUserId: resolution.targetId },
             },
-          });
+          }), undefined, tx, undefined);
         } else if (resolution.kind === 'merge-install-into-existing') {
           await mergeUserInto(resolution.targetId, resolution.mergeSourceId, tx);
-          await tx.user.update({
+          await runRequiredMutation('identity', 'b050df2e120fc3b7d004c44f', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({
             where: { id: resolution.targetId },
             data: { installToken, steamId },
-          });
+          }), isPrismaAtomicRefusal, tx, undefined);
         } else if (resolution.kind === 'use-install' || resolution.kind === 'use-existing') {
-          await tx.user.update({ where: { id: resolution.targetId }, data: { installToken, steamId } });
+          await runRequiredMutation('identity', 'a692fb64ab60165adc9f762d', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({ where: { id: resolution.targetId }, data: { installToken, steamId } }), isPrismaAtomicRefusal, tx, undefined);
         } else if (resolution.kind === 'create') {
-          const created = await tx.user.create({
+          const created = await (<PreparedArgs extends Parameters<typeof tx.user.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('identity', '7a9f7b4c3f4e5536e3c00092', { stage: 'primary-write-unconfirmed' }, () => tx.user.create(preparedArgs), isPrismaAtomicRefusal, tx, undefined))({
             data: { username: `pending-${installToken.slice(0, 8)}`, installToken, steamId },
             select: { id: true },
           });
           targetId = created.id;
         }
-      });
+      }), { confirmedRollback: isPrismaAtomicRefusal });
 
-      if (steamDisplayName) await prisma.user.update({ where: { id: targetId! }, data: { steamDisplayName } });
-      const target = await prisma.user.findUnique({
+      if (steamDisplayName) await runRequiredMutation('identity', '374dff9b42d29f12348a5da8', { stage: 'primary-write-unconfirmed', rowId: targetId! }, () => prisma.user.update({ where: { id: targetId! }, data: { steamDisplayName } }), isPrismaAtomicRefusal, undefined, undefined);
+      const target = await runRequiredLookup('identity', 'steam-link:target-discovery', () => prisma.user.findUnique({
         where: { id: targetId! },
         select: { id: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true },
-      });
+      }));
       if (target) {
         refreshClientIdentity(target.id, target.username, target.discordUsername, target.discordDisplayName, installToken, target.chatName, target.steamDisplayName);
       }
-      const redis = await getRedisClient();
-      await redis.set(`steam_link:${installToken}`, JSON.stringify({ linked: true, steamLinked: true }), { EX: 600 });
+      const redis = await runRequiredLookup('session', 'steam-link:session-client', () => getRedisClient());
+      await runRequiredMutation('session', '2f48f8e4df333fc0879fd806', { stage: 'primary-write-unconfirmed' }, () => redis.set(`steam_link:${installToken}`, JSON.stringify({ linked: true, steamLinked: true }), { EX: 600 }), undefined, undefined, undefined);
       logger.info({ installToken, steamId }, 'Steam account linked to game client');
       res.send(PIP_BOY_HTML(
         'Steam Linked — Fallout Chat Mod',
@@ -1334,11 +1399,12 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
     }
 
     let userId = resolution.targetId;
-    await prisma.$transaction(async (tx) => {
+    await runRequiredTransaction('identity', '8e44282647abd0bd8083781e', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       if (resolution.kind === 'merge-existing-into-install') {
         await mergeUserInto(resolution.targetId, resolution.mergeSourceId, tx);
-        await tx.user.update({ where: { id: resolution.targetId }, data: { steamId } });
-        await tx.auditLog.create({
+        await runRequiredMutation('identity', '0bac082eda4f780972b0ebd6', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({ where: { id: resolution.targetId }, data: { steamId } }), isPrismaAtomicRefusal, tx, undefined);
+        await runRequiredMutation('audit', 'bb41932bad439d51267e53b6', { stage: 'primary-write-unconfirmed', actorId: resolution.targetId, targetId: resolution.mergeSourceId }, () => tx.auditLog.create({
           data: {
             actorId: resolution.targetId,
             action: 'steam_account_reclaimed',
@@ -1347,14 +1413,14 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
             reason: 'Verified Steam link reclaimed a Steam-only account row.',
             metadata: { steamId, canonicalUserId: resolution.targetId },
           },
-        });
+        }), undefined, tx, undefined);
       } else if (resolution.kind === 'merge-install-into-existing') {
         await mergeUserInto(resolution.targetId, resolution.mergeSourceId, tx);
-        await tx.user.update({ where: { id: resolution.targetId }, data: { steamId } });
+        await runRequiredMutation('identity', '04adb03d8da02f59b56c4a01', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({ where: { id: resolution.targetId }, data: { steamId } }), isPrismaAtomicRefusal, tx, undefined);
       } else if (resolution.kind === 'use-install') {
-        await tx.user.update({ where: { id: resolution.targetId }, data: { steamId } });
+        await runRequiredMutation('identity', '5dc97bf1a157f6906b400ca2', { stage: 'primary-write-unconfirmed', rowId: resolution.targetId }, () => tx.user.update({ where: { id: resolution.targetId }, data: { steamId } }), isPrismaAtomicRefusal, tx, undefined);
       } else if (resolution.kind === 'create') {
-        const created = await tx.user.create({
+        const created = await (<PreparedArgs extends Parameters<typeof tx.user.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('identity', '85ada1b977741faa239a7060', { stage: 'primary-write-unconfirmed' }, () => tx.user.create(preparedArgs), isPrismaAtomicRefusal, tx, undefined))({
           data: {
             username: `pending-${uuidv4().slice(0, 8)}`,
             installToken: `steam-${uuidv4()}`,
@@ -1364,19 +1430,22 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
         });
         userId = created.id;
       }
-    });
+    }), { confirmedRollback: isPrismaAtomicRefusal });
 
-    if (steamDisplayName) await prisma.user.update({ where: { id: userId! }, data: { steamDisplayName } });
+    if (steamDisplayName) await runRequiredMutation('identity', '4c3f287294030d56cc7925a9', { stage: 'primary-write-unconfirmed', rowId: userId! }, () => prisma.user.update({ where: { id: userId! }, data: { steamDisplayName } }), isPrismaAtomicRefusal, undefined, undefined);
     sess.steamUser = { steamId, userId };
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
     const intent = browserState?.intent || 'link';
     res.redirect(intent === 'admin' ? `/profile/${userId}` : '/link?linked=steam');
   } catch (err) {
     logger.error({ err, installToken, steamId }, 'Steam OpenID callback error');
     steamFailure(res, installToken, 'steam_error', 'Authentication Failed', 'Something went wrong linking your Steam account.');
   }
+
+  });
+
+  });
 });
 
 /** GET /api/auth/steam-status/:installToken — desktop link polling endpoint. */
@@ -1405,6 +1474,7 @@ app.get('/api/auth/steam-status/:installToken', async (req: Request, res: Respon
  * Scopes: openid public (scopes_supported per discovery doc).
  */
 app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:3b42b56533a7', async () => {
   if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
     res.status(503).send('Nexus OAuth is not configured on this server.');
     return;
@@ -1420,11 +1490,11 @@ app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
     // Bind the one-time OAuth state to the initiating browser session. The
     // state value is still random, but a stolen callback URL cannot be replayed
     // into a different user's session.
-    await redis.set(
+    await runRequiredMutation('session', 'e7ddeecc90f070da51060a33', { stage: 'primary-write-unconfirmed' }, () => redis.set(
       `nexus_oauth_state:${state}`,
       serializeBoundOAuthState({ codeVerifier, sessionId: req.sessionID }),
       { EX: 600 },
-    );
+    ), undefined, undefined, undefined);
   } catch (err) {
     logger.error({ err }, 'Failed to store Nexus OAuth state');
     res.status(500).send('Internal error');
@@ -1434,9 +1504,8 @@ app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
   // saveUninitialized=false means an untouched session would otherwise not
   // receive a cookie, making the callback look like a different browser.
   try {
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
   } catch (err) {
     logger.error({ err }, 'Failed to persist Nexus OAuth browser session');
     res.status(500).send('Internal error');
@@ -1458,6 +1527,8 @@ app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
   });
   // authorization_endpoint from Nexus OIDC discovery
   res.redirect(`https://users.nexusmods.com/oauth/authorize?${params}`);
+
+  });
 });
 
 /**
@@ -1467,6 +1538,7 @@ app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
  * the stable Nexus user id (stored as providerUid in linked_identities/banned_identities).
  */
 app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('identity', 'server:6876fdb6fdbb', async () => {
   if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
     res.status(503).send('Nexus OAuth is not configured.');
     return;
@@ -1489,7 +1561,7 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
   try {
     const redis = await getRedisClient();
     const stored = await redis.get(`nexus_oauth_state:${state}`);
-    await redis.del(`nexus_oauth_state:${state}`);
+    await runRequiredMutation('session', '87a1d12c41358e9216f6c8c4', { stage: 'primary-write-unconfirmed' }, () => redis.del(`nexus_oauth_state:${state}`), undefined, undefined, isRowCountNoChange);
     if (!stored) {
       res.redirect('/link?error=nexus_state');
       return;
@@ -1528,6 +1600,7 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
     });
 
     if (!tokenRes.ok) {
+      await tokenRes.text();
       logger.error({ status: tokenRes.status }, 'Nexus token exchange failed');
       res.redirect('/link?error=nexus_token');
       return;
@@ -1543,6 +1616,7 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
     });
 
     if (!userRes.ok) {
+      await discardRuntimeResponse(userRes);
       logger.error({ status: userRes.status }, 'Nexus userinfo fetch failed');
       res.redirect('/link?error=nexus_userinfo');
       return;
@@ -1593,7 +1667,7 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
 
     if (!nexusUserId) {
       const safeProviderUid = providerUid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || uuidv4().slice(0, 12);
-      const provisioned = await prisma.user.create({
+      const provisioned = await (<PreparedArgs extends Parameters<typeof prisma.user.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('identity', 'd5fbc6785b653a4b87659eca', { stage: 'primary-write-unconfirmed' }, () => prisma.user.create(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
         data: {
           username: `nexus-${safeProviderUid}-${uuidv4().slice(0, 8)}`,
           installToken: `nexus-${uuidv4()}`,
@@ -1618,19 +1692,20 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
         });
         if (!winner) throw linkErr;
         nexusUserId = winner.userId;
-        await prisma.user.delete({ where: { id: provisioned.id } }).catch(() => {});
+        await runRequiredEffect('auth:provision-cleanup', { userId: provisioned.id, stage: 'provisional-account-cleanup-unconfirmed' }, () => prisma.user.delete({ where: { id: provisioned.id } }), isPrismaNotFound).catch(() => {});
       }
     }
 
     sess.nexusUser = { providerUid, name: nexusUser.name, userId: nexusUserId };
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await runRequiredCallback('browser:session-save', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-save-unconfirmed' }, done => req.session.save(done));
     res.redirect('/link?provider=nexus');
   } catch (err) {
     logger.error({ err }, 'Nexus OAuth callback error');
     res.redirect('/link?error=nexus_error');
   }
+
+  });
 });
 
 /**
@@ -1653,7 +1728,8 @@ app.delete('/auth/nexus', authLimiter, requireAuth, async (req: Request, res: Re
 });
 
 app.get('/auth/logout', apiLimiter, (req: Request, res: Response) => {
-  req.session.destroy(() => res.redirect('/'));
+  return runRequiredCallback('browser:session-destroy', { userId: req.user?.id ?? (req.session as any).steamUser?.userId ?? (req.session as any).nexusUser?.userId,
+      discordId: (req.session as any).discordUser?.id ?? (req.session as any).publicUser?.discordId, source: 'browser', stage: 'browser-session-destroy-unconfirmed' }, done => req.session.destroy(done)).catch(err => logger.warn({ err }, 'Browser session destroy failed')).then(() => { if (!res.destroyed && !res.writableEnded) res.redirect('/'); });
 });
 
 /**
@@ -1662,6 +1738,7 @@ app.get('/auth/logout', apiLimiter, (req: Request, res: Response) => {
  * permission-checked client path as the desktop overlay.
  */
 app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
+  return runRequiredBundle('session', 'server:ff3275c74ca6', async () => {
   if (!(req.session as any)?.discordUser) { res.status(401).json({ data: null }); return; }
 
   const discordUser = (req.session as any).discordUser;
@@ -1692,12 +1769,14 @@ app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
       if (!gameUser) { res.status(403).json({ data: null }); return; }
       ticketPayload = { type: 'web', userId: gameUser.id };
     }
-    await redis.set(`ws_ticket:${ticket}`, JSON.stringify(ticketPayload), { EX: 60 });
+    await runRequiredMutation('session', '86ca1c17a3ee8d96b264f473', { stage: 'primary-write-unconfirmed' }, () => redis.set(`ws_ticket:${ticket}`, JSON.stringify(ticketPayload), { EX: 60 }), undefined, undefined, undefined);
     res.json({ data: { ticket } });
   } catch (err) {
     logger.error({ err }, 'Failed to create WS ticket');
     res.status(500).json({ data: null });
   }
+
+  });
 });
 
 app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
@@ -1810,9 +1889,9 @@ app.get('/avatars/:discordId', apiLimiter, async (req: Request, res: Response) =
     res.setHeader('Content-Type', obj.contentType);
     res.setHeader('Cache-Control', 'public, max-age=300'); // short cache; refreshed each auth
     if (obj.contentLength != null) res.setHeader('Content-Length', String(obj.contentLength));
-    obj.body.on('error', () => { if (!res.headersSent) res.status(404).end(); else res.end(); });
-    obj.body.pipe(res);
+    await pipeline(obj.body, res);
   } catch (err) {
+    if (res.destroyed || res.writableEnded) return;
     logger.warn({ err, discordId }, 'avatar stream failed');
     // Last-ditch: try the Discord CDN before giving up.
     try {
@@ -1839,9 +1918,9 @@ app.get('/party-images/:imageId', apiLimiter, async (req: Request, res: Response
     res.setHeader('Content-Type', obj.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     if (obj.contentLength != null) res.setHeader('Content-Length', String(obj.contentLength));
-    obj.body.on('error', () => { if (!res.headersSent) res.status(404).end(); else res.end(); });
-    obj.body.pipe(res);
+    await pipeline(obj.body, res);
   } catch (err) {
+    if (res.destroyed || res.writableEnded) return;
     logger.warn({ err, imageId }, 'party-image stream failed');
     if (!res.headersSent) res.status(404).end();
   }
@@ -2083,6 +2162,7 @@ app.get('/admin/debug/users/:userId/aliases', apiLimiter, requireAdminKey, async
 // Authed via ADMIN_API_KEY.
 //   POST /admin/debug/set-username  { userId, username }
 app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'server:24d219bcb01d', async () => {
   try {
     const { userId, username } = req.body ?? {};
     if (typeof userId !== 'string' || typeof username !== 'string') {
@@ -2102,11 +2182,11 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
       res.status(400).json({ error: 'username contains control characters' });
       return;
     }
-    const updated = await prisma.user.update({
+    const updated = await runRequiredMutation('identity', '2007468975241fa6ea5b9b76', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
       where: { id: userId },
       data: { username: trimmed },
       select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Refresh any live WS session's cached displayName so chat renders the
     // new name instantly without requiring the overlay to reconnect.
     try {
@@ -2117,6 +2197,8 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
     } catch { /* non-fatal */ }
     res.json({ data: updated });
   } catch (err) { next(err); }
+
+  });
 });
 
 
@@ -2130,6 +2212,7 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
 //
 //   POST /admin/debug/merge-users  { targetId, sourceId }
 app.post('/admin/debug/merge-users', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'server:4faf851fc780', async () => {
   try {
     const { targetId, sourceId } = req.body ?? {};
     if (typeof targetId !== 'string' || typeof sourceId !== 'string' || targetId === sourceId) {
@@ -2154,24 +2237,27 @@ app.post('/admin/debug/merge-users', apiLimiter, requireAdminKey, async (req: Re
     if (!target.discordAvatar      && source.discordAvatar)      patch.discordAvatar      = source.discordAvatar;
     if (!target.discordDisplayName && source.discordDisplayName) patch.discordDisplayName = source.discordDisplayName;
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await runRequiredTransaction('identity', '7fe4916979db419ae95abc80', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       // Null out discordId on source FIRST to avoid a unique collision when it
       // is the identity being retained on the canonical target.
       if (patch.discordId) {
-        await tx.user.update({ where: { id: sourceId }, data: { discordId: null } });
+        await runRequiredMutation('identity', '6d2e48803f0e2515c020409f', { stage: 'primary-write-unconfirmed', rowId: sourceId }, () => tx.user.update({ where: { id: sourceId }, data: { discordId: null } }), isPrismaAtomicRefusal, tx, undefined);
       }
 
-      await tx.user.update({ where: { id: targetId }, data: patch });
+      await runRequiredMutation('identity', '76f04e88474d50687b5a804e', { stage: 'primary-write-unconfirmed', rowId: targetId }, () => tx.user.update({ where: { id: targetId }, data: patch }), isPrismaAtomicRefusal, tx, undefined);
       await mergeUserInto(targetId, sourceId, tx);
 
       return tx.user.findUniqueOrThrow({
         where: { id: targetId },
         select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true },
       });
-    });
+    }), { confirmedRollback: isPrismaAtomicRefusal });
 
     res.json({ data: { message: 'Merged', target: updated, deletedSourceId: sourceId } });
   } catch (err) { next(err); }
+
+  });
 });
 
 
@@ -2234,13 +2320,11 @@ app.get('/auth/me/public', apiLimiter, async (req: Request, res: Response) => {
 });
 
 // -- Downloads — static hosting for installer .exe files ----------------------
-import path from 'path';
-import multer from 'multer';
 import fs from 'fs';
 import { incrementDownloadCount, versionFromFilename } from './controllers/releasesController';
 
 const downloadsDir = path.join(__dirname, '../downloads');
-if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
+if (!runtime.isFrozen() && !fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
 
 // Intercept installer downloads to increment the per-version counter.
 // Must be registered BEFORE the express.static handler so it runs first.
@@ -2265,7 +2349,7 @@ app.use('/downloads', (req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-app.use('/downloads', express.static(downloadsDir));
+app.use('/downloads', accountFileRead(express.static(downloadsDir), runtime));
 
 // ── CLI installers (vanity URLs):
 //     Linux:   curl -fsSL https://falloutchatmod.com/install.sh | bash
@@ -2288,7 +2372,7 @@ const scriptCandidates = (name: string): string[] => {
   ];
 };
 try {
-  for (const name of Object.keys(SCRIPT_SOURCES)) {
+  for (const name of runtime.isFrozen() ? [] : Object.keys(SCRIPT_SOURCES)) {
     const src = scriptCandidates(name).find((p) => p !== path.join(downloadsDir, name) && fs.existsSync(p));
     if (src) fs.copyFileSync(src, path.join(downloadsDir, name));
   }
@@ -2303,8 +2387,8 @@ const serveScript = (name: string) => (_req: Request, res: Response) => {
   }
   res.set('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=300');
-  res.sendFile(file, (err) => {
-    if (err && !res.headersSent) res.status(500).type('text/plain').send(`# failed to read ${name}\n`);
+  return sendFileRead(res, file, runtime).catch(() => {
+    if (!res.headersSent) res.status(500).type('text/plain').send(`# failed to read ${name}\n`);
   });
 };
 app.get('/install.sh', apiLimiter, serveScript('install.sh'));
@@ -2315,8 +2399,8 @@ app.get('/install.ps1', apiLimiter, serveScript('install.ps1'));
 // (`..`, `/`, `\`) or variant naming. Fix #11.
 const RELEASE_FILENAME_RE = /^FalloutChatMod_Setup_v\d+\.\d+\.\d+\.exe$/;
 
-const releaseUpload = multer({
-  storage: multer.diskStorage({
+const releaseUpload = createRuntimeDiskUpload({
+  diskStorage: {
     destination: (_req, _file, cb) => cb(null, downloadsDir),
     filename: (_req, file, cb) => {
       // path.basename strips any directory components from a hostile originalname
@@ -2328,7 +2412,7 @@ const releaseUpload = multer({
       }
       cb(null, safeName);
     },
-  }),
+  },
   limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB max
   fileFilter: (_req, file, cb) => {
     const safeName = path.basename(file.originalname);
@@ -2338,7 +2422,7 @@ const releaseUpload = multer({
     }
     cb(null, true);
   },
-});
+}, runtime);
 
 app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
@@ -2351,7 +2435,7 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
   const validApiKey = !!(adminKey && apiKeyHeader && constantTimeEquals(apiKeyHeader, adminKey));
   if (!validBearer && !validApiKey) { res.status(401).json({ error: 'Unauthorized' }); return; }
   next();
-}, releaseUpload.single('file'), (req: Request, res: Response) => {
+}, releaseUpload.single('file'), async (req: Request, res: Response) => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded or not an .exe' }); return; }
 
   // Defence-in-depth: verify the saved path is still within downloadsDir after
@@ -2367,7 +2451,8 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
   const resolvedFile = path.resolve(resolvedDir, safeBaseName);
   const rel = path.relative(resolvedDir, resolvedFile);
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
-    try { fs.unlinkSync(resolvedFile); } catch { /* best-effort */ }
+    await runtime.required('filesystem:release-validation-cleanup', async () => fs.unlinkSync(resolvedFile),
+      { stage: 'storage-validation-cleanup-unconfirmed' }).catch(() => {});
     res.status(400).json({ error: 'Invalid upload path' });
     return;
   }
@@ -2378,16 +2463,15 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
 
 // -- Admin dashboard (SPA) — served from backend when built into the image ----
 const dashboardDist = path.join(__dirname, '../admin-dashboard/dist');
-app.use(express.static(dashboardDist));
+app.use(accountFileRead(express.static(dashboardDist), runtime));
 // Express 5 (path-to-regexp v8) rejects the bare '*' string path; a RegExp
 // catch-all preserves the SPA-fallback behaviour (matches every path incl. '/').
 app.get(/.*/, (req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/') || req.path === '/relay') {
     return next();
   }
-  res.sendFile(path.join(dashboardDist, 'index.html'), (err) => {
-    if (err) next(); // dashboard not built into this image — fall through to 404
-  });
+  return sendFileRead(res, path.join(dashboardDist, 'index.html'), runtime)
+    .catch(() => next()); // dashboard not built into this image — fall through to 404
 });
 
 // -- 404 handler --------------------------------------------------------------
@@ -2452,14 +2536,14 @@ wss.on('connection', (ws, req) => {
 
 // Heartbeat sweep: terminate sockets that missed the previous ping's pong,
 // then ping the rest. 30s interval stays well under Cloudflare's idle timeout.
-const wsHeartbeat = setInterval(() => {
+const wsHeartbeat = producerInterval('ws-heartbeat', () => {
   wss.clients.forEach((ws) => {
     if ((ws as any).isAlive === false) { ws.terminate(); return; }
     (ws as any).isAlive = false;
     try { ws.ping(); } catch { /* socket already closing */ }
   });
 }, 30_000);
-wss.on('close', () => clearInterval(wsHeartbeat));
+wss.on('close', () => cancelProducerTimer(wsHeartbeat));
 
 // Route /ws and /relay upgrades; reject every other path.
 attachChatUpgradeRouter(server, wss);
@@ -2479,18 +2563,17 @@ attachChatUpgradeRouter(server, wss);
 discordService.setBroadcast(broadcast, broadcastToUsers);
 
 // Update health route with live metrics
-setInterval(() => {
+producerInterval('health-metrics', () => {
   (healthRouter as any).setWsClientCount(getClientCount());
 }, 5000);
 
 // Periodic sessions cleanup -- purge expired DB sessions every hour
-setInterval(() => {
-  prisma.session.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch((err: Error) =>
-    logger.warn({ err }, 'Sessions cleanup failed (non-fatal)')
-  );
+producerInterval('session-cleanup', () => {
+  return runtime.required('session-cleanup', () => prisma.session.deleteMany({ where: { expiresAt: { lt: new Date() } } }));
 }, 60 * 60 * 1000);
 
-if (shouldStartBackgroundJobs(env.NODE_ENV)) {
+function startProducerJobs(): void {
+if (shouldStartBackgroundJobs(env.NODE_ENV) && !runtime.isFrozen()) {
   // Online-snapshot cron — inserts the live WS client count every 5 min so the
   // public stats endpoint can serve an onlineOverTime chart. Purges rows older
   // than 7 days daily at 04:07 UTC.
@@ -2501,18 +2584,20 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
 
   // CAMP database — auto-populate on first boot if the table is empty.
   // A single 7.6 MB JSON fetch; completes in seconds.
-  isCampTableEmpty().then(empty => {
+  void runProducer('camp-initial-ingest', () => isCampTableEmpty().then(empty => {
     if (empty) {
       logger.info('[camp] camp_items table is empty — running initial ingest');
-      ingestCampDatabase().then(({ fetched, upserted }) => {
+      return ingestCampDatabase().then(({ fetched, upserted }) => {
         logger.info({ fetched, upserted }, '[camp] initial CAMP ingest complete');
       }).catch(err => {
+        runtime.recordFailure('camp-initial-ingest', err);
         logger.error({ err }, '[camp] initial CAMP ingest failed');
       });
     }
   }).catch(err => {
+    runtime.recordFailure('camp-initial-ingest', err);
     logger.warn({ err }, '[camp] could not check camp_items table — skipping auto-ingest');
-  });
+  }));
 
   // Party reap sweep — ephemeral parties with 0 online members are soft-deleted every ~60s.
   // Also GCs persistent parties with 0 members and expires stale invites.
@@ -2527,7 +2612,7 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
   });
 
   // Giveaway service — restore draw timers for any in-flight giveaways after restart.
-  void giveawayService.init({
+  void runProducer('giveaway-startup', () => giveawayService.init({
     prisma: prisma as any,
     broadcast,
     publishCard: async (content, channelId, metadata, creatorUserId) => {
@@ -2551,6 +2636,7 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
         if (metadata.type === 'giveaway') await discordService.postGiveawayCard(card);
         else if (metadata.type === 'giveaway_winner') await discordService.updateGiveawayDiscordCard(card, true);
       } catch (err) {
+        runtime.recordFailure('giveaway-discord-publication', err, { giveawayId: giveaway.id });
         logger.warn({ err, giveawayId: giveaway.id }, 'Giveaway Discord publication failed');
       }
     },
@@ -2560,7 +2646,7 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
       await discordService.postGiveawayCard(card);
       await discordService.updateGiveawayDiscordCard(card, giveaway.status !== 'active');
     },
-  });
+  }));
 } else {
   logger.info('Background sync, party reap, and giveaway restore jobs disabled for test runtime');
 }
@@ -2571,7 +2657,7 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
 const modSweepTracker = makeJobTracker('[mod-sweep]');
 // Return the tracker promise so node-cron's overlap detection treats the tick
 // as in-flight while it runs, and the tracker observes failures for escalation.
-cron.schedule('*/5 * * * *', () =>
+producerCron('*/5 * * * *', () =>
   modSweepTracker(async () => {
     const r = await sweepModExpired();
     if (r.unbanned || r.unmuted || r.kickCooldownsCleared) {
@@ -2588,22 +2674,22 @@ if (env.MESSAGE_RETENTION_DAYS > 0) {
   const retentionMs = env.MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const retentionTracker = makeJobTracker('[retention-purge]');
   // Return the tracker promise so node-cron overlap detection + tracker work.
-  cron.schedule('0 3 * * *', () =>
+  producerCron('0 3 * * *', () =>
     retentionTracker(async () => {
       const cutoff = new Date(Date.now() - retentionMs);
-      const msgResult = await dbQueryFn(
+      const msgResult = await runRequiredMutation('producer', '9dcf631b03cbe06a7934f219', { stage: 'primary-write-unconfirmed' }, () => dbQueryFn(
         "DELETE FROM messages WHERE created_at < $1",
         [cutoff.toISOString()]
-      );
-      const auditResult = await dbQueryFn(
+      ), undefined, undefined, undefined);
+      const auditResult = await runRequiredMutation('producer', 'bf2637df983e7d28c5f2151c', { stage: 'primary-write-unconfirmed' }, () => dbQueryFn(
         "DELETE FROM audit_logs WHERE created_at < $1",
         [cutoff.toISOString()]
-      );
+      ), undefined, undefined, undefined);
       // Also purge party messages under the same retention window
-      const partyMsgResult = await dbQueryFn(
+      const partyMsgResult = await runRequiredMutation('producer', '126ce85e07348d085ebc5243', { stage: 'primary-write-unconfirmed' }, () => dbQueryFn(
         "DELETE FROM party_messages WHERE created_at < $1",
         [cutoff.toISOString()]
-      );
+      ), undefined, undefined, undefined);
       logger.info(
         { messagesDeleted: msgResult.rowCount, auditLogsDeleted: auditResult.rowCount, partyMessagesDeleted: partyMsgResult.rowCount, retentionDays: env.MESSAGE_RETENTION_DAYS },
         'Message purge complete'
@@ -2614,9 +2700,43 @@ if (env.MESSAGE_RETENTION_DAYS > 0) {
 } else {
   logger.info('Message retention disabled (MESSAGE_RETENTION_DAYS=0) — keeping messages forever');
 }
+}
+
+instrumentHttpHandlers(app, runtime);
+
+async function closeIngress(): Promise<void> {
+  const httpClosed = new Promise<void>((resolve, reject) => {
+    if (!server.listening) return resolve();
+    server.close(err => err ? reject(err) : resolve());
+  });
+  for (const ws of wss.clients) ws.close(1012, 'Server maintenance');
+  await Promise.all([httpClosed, closeRelayWss(), new Promise<void>((resolve, reject) =>
+    wss.close(err => err ? reject(err) : resolve()))]);
+}
+
+runtime.registerParticipant('discord-client', { inspect: async () => ({ pending: 0 }),
+  close: async () => { await discordService.getDiscordClient()?.destroy(); } });
+runtime.registerParticipant('postgres', { inspect: async () => ({ pending: dbPool.waitingCount }),
+  close: async () => { await prisma.$disconnect(); await dbPool.end(); } });
+runtime.registerParticipant('redis', { inspect: async () => ({ pending: 0 }), close: async () => {
+  if (subscriberClient.isOpen) await subscriberClient.quit();
+  if (redisClient.isOpen) await redisClient.quit();
+} });
+installRuntimeSignals(runtime, closeIngress, () => process.exit(0));
 
 // -- Startup ------------------------------------------------------------------
 async function start(): Promise<void> {
+  await openRuntimeControl(runtime, closeIngress, () => process.exit(0));
+  if (runtime.isFrozen()) {
+    logger.warn({ markerPath: runtime.markerPath }, 'Frozen startup: migrations, seeds, workers and gateway producers suppressed');
+    server.listen(env.PORT);
+    return;
+  }
+  await runtime.run('startup', startActive, true);
+}
+
+async function startActive(): Promise<void> {
+  return runRequiredBundle('producer', 'server:ef5ddc586fc6', async () => {
   try {
     // Verify Redis connection
     await getRedisClient();
@@ -2627,7 +2747,8 @@ async function start(): Promise<void> {
 
     // db push does not replay raw SQL/data-only migrations. Apply the small,
     // idempotent compatibility set before any relay message can be persisted.
-    await applyPostPushPatches(prisma);
+    await runtime.required('startup:compatibility-patches', () => applyPostPushPatches(prisma),
+      { stage: 'compatibility-patches-unconfirmed' });
 
     // Restore cursors for legacy rows before seeding the counter. Must run after
     // Redis is connected and before the first relay send.
@@ -2654,11 +2775,11 @@ async function start(): Promise<void> {
       for (const ch of defaults) {
         const update: any = { parentId: ch.parentId, sortOrder: ch.sortOrder };
         if (ch.forceRename) update.name = ch.name; // force existing row rename
-        await prisma.channel.upsert({
+        await runRequiredMutation('producer', '748c026cf3c12457d120b847', { stage: 'primary-write-unconfirmed', rowId: ch.id }, () => prisma.channel.upsert({
           where: { id: ch.id },
           update,
           create: { id: ch.id, name: ch.name, color: (ch as any).color ?? '#18FF62', parentId: ch.parentId, sortOrder: ch.sortOrder },
-        });
+        }), isPrismaAtomicRefusal, undefined, undefined);
       }
       logger.info('Default channels ensured');
     } catch (err) {
@@ -2703,7 +2824,7 @@ async function start(): Promise<void> {
         },
       ];
       for (const r of automodDefaults) {
-        await (prisma as any).autoModRule.upsert({
+        await runRequiredMutation('producer', '6082092906dee10f921a7d54', { stage: 'primary-write-unconfirmed', rowId: r.id }, () => (prisma as any).autoModRule.upsert({
           where: { id: r.id },
           update: {}, // never clobber admin edits (enabled state, actions, etc.)
           create: {
@@ -2716,14 +2837,14 @@ async function start(): Promise<void> {
             exemptChannelIds: [],
             exemptRoles: [],
           },
-        });
+        }), isPrismaAtomicRefusal, undefined, undefined);
       }
       // mod_log_channel_id: create-only so an admin's later change is preserved.
-      await prisma.moderationSetting.upsert({
+      await runRequiredMutation('producer', '21979c82838e199dfda3c5a2', { stage: 'primary-write-unconfirmed' }, () => prisma.moderationSetting.upsert({
         where: { key: 'mod_log_channel_id' },
         update: {},
         create: { key: 'mod_log_channel_id', value: '1509345764654977035' },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       logger.info('Default automod rules + mod-log channel ensured');
     } catch (err) {
       logger.warn({ err }, 'Failed to ensure default automod rules (non-fatal)');
@@ -2745,11 +2866,11 @@ async function start(): Promise<void> {
         ]),
       };
       for (const [trigger, formFields] of Object.entries(DEFAULT_FORM_FIELDS)) {
-        await prisma.chatCommand.upsert({
+        await runRequiredMutation('producer', 'd6867018d1f992b9d86d2329', { stage: 'primary-write-unconfirmed' }, () => prisma.chatCommand.upsert({
           where: { trigger },
           update: {},  // never overwrite — admin may have customised fields
           create: { trigger, description: trigger === '/apply' ? 'Submit a staff application' : 'Submit a player report', actionType: 'form', formFields, response: '', enabled: true, requiresArgs: false, cooldownSec: 0 },
-        });
+        }), isPrismaAtomicRefusal, undefined, undefined);
       }
       logger.info('Default form commands ensured');
     } catch (err) {
@@ -2760,11 +2881,11 @@ async function start(): Promise<void> {
     // Prisma migrate deploy silently skips data-only migrations when a prior
     // migration is in a failed state — so apply these here idempotently instead.
     try {
-      await prisma.chatCommand.updateMany({
+      await runRequiredMutation('producer', '1c84f23d0b2143a62efd55cb', { stage: 'primary-write-unconfirmed' }, () => prisma.chatCommand.updateMany({
         where: { actionType: 'announce', relayToDiscord: false },
         data:  { relayToDiscord: true },
-      });
-      await prisma.chatCommand.upsert({
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+      await runRequiredMutation('producer', '05fc29fb0beae1a5f439754b', { stage: 'primary-write-unconfirmed' }, () => prisma.chatCommand.upsert({
         where: { trigger: '/ss' },
         update: { response: 'Sinkhole Solutions event on this server.' },
         create: {
@@ -2775,12 +2896,12 @@ async function start(): Promise<void> {
           allowedChannelId: '00000000-0000-0000-0000-000000000001',
           cooldownSec: 30, enabled: true, requiresArgs: false, relayToDiscord: true,
         },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       // Wire Infests channel to its Discord channel if not already set.
-      await prisma.channel.updateMany({
+      await runRequiredMutation('producer', '286500e554212be6c174b67a', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.updateMany({
         where: { id: '983995c1-f9ab-44c0-9b78-8b4cbf497273', discordChannelId: null },
         data:  { discordRelay: true, discordChannelId: '1513363450888454184' },
-      });
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
       logger.info('Event command relay flags and Infests Discord channel ensured');
     } catch (err) {
       logger.warn({ err }, 'Failed to ensure event command defaults (non-fatal)');
@@ -2801,6 +2922,7 @@ async function start(): Promise<void> {
 
     // Start background role re-verification
     roleVerificationService.start();
+    startProducerJobs();
 
     server.listen(env.PORT, () => {
       logger.info({ port: env.PORT, env: env.NODE_ENV }, 'Server listening');
@@ -2809,6 +2931,8 @@ async function start(): Promise<void> {
     logger.error({ err }, 'Startup failed');
     process.exit(1);
   }
+
+  });
 }
 
 // Only auto-start when run directly (not when required by tests)

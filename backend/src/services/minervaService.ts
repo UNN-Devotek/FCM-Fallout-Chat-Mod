@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 /**
  * Minerva's Big Sale — deterministic schedule calculator.
  *
@@ -44,7 +45,7 @@ export async function getMinervaInventory(listNumber: number): Promise<string[]>
   const fileNumber = 60 + listNumber;
   try {
     const response = await fetch(`${INVENTORY_SOURCE}/minerva_${fileNumber}_en.json`, { signal: AbortSignal.timeout(8_000) });
-    if (!response.ok) return [];
+    if (!response.ok) { await discardRuntimeResponse(response); return []; }
     const items = await response.json() as MinervaInventoryItem[];
     const inventory = items.map((item) => item.name_en && `${item.name_en}${item.price_minerva != null ? ` — ${item.price_minerva} Gold` : ''}`).filter((item): item is string => Boolean(item));
     inventoryCache.set(listNumber, inventory);

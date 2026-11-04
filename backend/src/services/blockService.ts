@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * blockService.ts
  *
@@ -132,6 +133,7 @@ export async function listBlocked(blockerId: string): Promise<BlockedUserEntry[]
  * Throws if blockerId === blockedId (self-block) or if blockedId does not exist.
  */
 export async function addBlock(blockerId: string, blockedId: string): Promise<void> {
+  return runRequiredBundle('moderation', 'blockService:3968850da09c', async () => {
   if (blockerId === blockedId) {
     const err = new Error('Cannot block yourself') as any;
     err.statusCode = 400;
@@ -150,9 +152,9 @@ export async function addBlock(blockerId: string, blockedId: string): Promise<vo
   }
 
   try {
-    await prisma.block.create({
+    await runRequiredMutation('moderation', '1cc15bd5d96cda2d53657465', { stage: 'primary-write-unconfirmed' }, () => prisma.block.create({
       data: { blockerId, blockedId },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     logger.info({ blockerId, blockedId }, 'block:added');
   } catch (err: any) {
     // P2002 = unique constraint violation → already blocked (idempotent)
@@ -163,17 +165,22 @@ export async function addBlock(blockerId: string, blockedId: string): Promise<vo
   // Invalidate both sides so the next lookup is fresh
   invalidateUser(blockerId);
   invalidateUser(blockedId);
+
+  });
 }
 
 /**
  * Removes a block. No-op if not blocked.
  */
 export async function removeBlock(blockerId: string, blockedId: string): Promise<void> {
-  await prisma.block.deleteMany({
+  return runRequiredBundle('moderation', 'blockService:21049da29af2', async () => {
+  await runRequiredMutation('moderation', 'e4b46197068ad1752aae26b7', { stage: 'primary-write-unconfirmed' }, () => prisma.block.deleteMany({
     where: { blockerId, blockedId },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
   invalidateUser(blockerId);
   invalidateUser(blockedId);
   logger.info({ blockerId, blockedId }, 'block:removed');
+
+  });
 }

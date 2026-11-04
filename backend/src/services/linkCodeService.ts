@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import crypto from 'crypto';
 import prisma from '../config/prisma';
 
@@ -33,6 +34,7 @@ export function normalizeLinkCode(raw: string): string {
  * Returns the raw code to display in-game as XXXX-XXXX.
  */
 export async function issueLinkCode(relayUserId: string, options: { reuseActive?: boolean } = {}): Promise<string> {
+  return runRequiredBundle('identity', 'linkCodeService:ed318803b259', async () => {
   if (options.reuseActive) {
     const active = await prisma.hudLinkCode.findFirst({
       where: { relayUserId, usedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
@@ -44,13 +46,15 @@ export async function issueLinkCode(relayUserId: string, options: { reuseActive?
   const expiresAt = new Date(Date.now() + TTL_MS);
 
   // Delete any existing code for this relay identity (one active code per relay user)
-  await prisma.hudLinkCode.deleteMany({ where: { relayUserId } });
+  await runRequiredMutation('identity', '38b651440f1aa51b93ed4155', { stage: 'primary-write-unconfirmed' }, () => prisma.hudLinkCode.deleteMany({ where: { relayUserId } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
-  await prisma.hudLinkCode.create({
+  await runRequiredMutation('identity', '0fb5c9d8e9bbb3ef74d1e576', { stage: 'primary-write-unconfirmed' }, () => prisma.hudLinkCode.create({
     data: { code, relayUserId, expiresAt },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   return code;
+
+  });
 }
 
 export type RedeemResult =
@@ -65,6 +69,7 @@ export type RedeemResult =
  * and reads redeemed_by_user_id to bind the relay token to the FCM account.
  */
 export async function redeemLinkCode(rawCode: string, redeemedByUserId: string): Promise<RedeemResult> {
+  return runRequiredBundle('identity', 'linkCodeService:5c35941f3883', async () => {
   const code = normalizeLinkCode(rawCode);
 
   const row = await prisma.hudLinkCode.findUnique({ where: { code } });
@@ -86,7 +91,7 @@ export async function redeemLinkCode(rawCode: string, redeemedByUserId: string):
   // used for the friendly error mapping/relayUserId; the WHERE clause is the
   // concurrency guard. Two simultaneous redeems can therefore produce at
   // most one successful update.
-  const updated = await prisma.hudLinkCode.updateMany({
+  const updated = await runRequiredMutation('identity', '9ccdd2d3eac09d8b43444e76', { stage: 'primary-write-unconfirmed', rowId: row.id }, () => prisma.hudLinkCode.updateMany({
     where: {
       id: row.id,
       usedAt: null,
@@ -98,7 +103,7 @@ export async function redeemLinkCode(rawCode: string, redeemedByUserId: string):
       usedAt: now,
       redeemedByUserId,
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
   if (updated.count !== 1) {
     // Another request may have won the race. Re-read only to report the
@@ -111,6 +116,8 @@ export async function redeemLinkCode(rawCode: string, redeemedByUserId: string):
   }
 
   return { ok: true, relayUserId: row.relayUserId };
+
+  });
 }
 
 export type ValidateResult =
