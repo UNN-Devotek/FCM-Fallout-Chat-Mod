@@ -8667,7 +8667,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -8727,7 +8727,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -8787,7 +8787,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -8847,7 +8847,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -8907,7 +8907,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -8967,7 +8967,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -9248,7 +9248,7 @@
               "owner": "<module>"
             },
             "calls": [],
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd"
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f"
           },
           {
             "identity": {
@@ -9370,7 +9370,7 @@
               "owner": "<module>"
             },
             "calls": [],
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd"
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f"
           },
           {
             "identity": {
@@ -10286,7 +10286,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -10662,7 +10662,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -10781,7 +10781,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -10999,7 +10999,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -11118,7 +11118,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -11720,7 +11720,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": []
           }
         ]
@@ -11773,7 +11773,7 @@
       },
       "family": "filesystem-sdk-command-candidate",
       "operationFingerprint": "1d569db0792922f478aaa29845f47fa566f2b84f0e9ca16964f53173c88c54cb",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2327,
       "sdkReference": "@filesystem:default.existsSync",
@@ -11791,7 +11791,7 @@
       },
       "family": "filesystem-sdk-command-candidate",
       "operationFingerprint": "4d7e819b48c838e69f33392357e56b760057f61c16ad2e028f728f8b781511fb",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2327,
       "sdkReference": "@filesystem:default.mkdirSync",
@@ -11803,7 +11803,7 @@
             "file": "backend/src/server.ts",
             "owner": "<module>"
           },
-          "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+          "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
           "contract": "fenced-application-startup-filesystem"
         }
       ],
@@ -11819,7 +11819,7 @@
       },
       "family": "filesystem-sdk-command-candidate",
       "operationFingerprint": "f14e0918814371e1a794feb4add2b431f9ebf590bbf5f3febb28abba2e38c7db",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2376,
       "sdkReference": "@filesystem:default.existsSync",
@@ -11837,7 +11837,7 @@
       },
       "family": "filesystem-sdk-command-candidate",
       "operationFingerprint": "289d858af42fc29022b29b47b1536d4f85b8af9040947b8ab24ab7c02e8634ab",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2377,
       "sdkReference": "@filesystem:default.copyFileSync",
@@ -11873,7 +11873,7 @@
       },
       "family": "filesystem-upload-configuration",
       "operationFingerprint": "2a7ab900bdf95988a84614db0459dbb71d8cf8b645feaa3f4f6e12e69dbd2706",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2402,
       "sdkReference": "@filesystem-upload:createRuntimeDiskUpload",
@@ -11913,7 +11913,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -11933,7 +11933,7 @@
       },
       "family": "filesystem-upload-middleware",
       "operationFingerprint": "3a094493161d504dfebc810dacad224f2827d23de77b8c2a0053f0599b96cd81",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [],
       "originalLine": 2438,
       "sdkReference": "@filesystem-upload:createRuntimeDiskUpload().single",
@@ -11973,7 +11973,7 @@
               "file": "backend/src/server.ts",
               "owner": "<module>"
             },
-            "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+            "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
             "calls": [
               "createRuntimeDiskUpload",
               "releaseUpload.single"
@@ -12013,7 +12013,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "5a769e520b87a24bf7a593f4a7a49c80f804543c3676dc4762bafd092b5e9f10",
-      "ownerFingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "ownerFingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "boundaries": [
         "runtime.required"
       ],
@@ -36149,7 +36149,7 @@
         "file": "backend/src/server.ts",
         "owner": "<module>"
       },
-      "fingerprint": "489514b25853aa5f56f000bd571f469dd46a99c2249c6e265f637aadeb0d5cfd",
+      "fingerprint": "3ea373e926f4e83227ef4b4f1fa4876961ff1a969e0e37a867babf58f5ba3b2f",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -37333,6 +37333,14 @@
       },
       "fingerprint": "de4adba0a89cdb1028fc984b0fb8d26d3aade3a56389f1090018883d99434554",
       "reason": "Reviewed platform/Prisma adapter and actual application wiring. Native Windows control plus real PostgreSQL query, rollback, after-freeze callback, ambiguous commit and retained-work checks are required."
+    },
+    {
+      "identity": {
+        "file": "backend/src/middleware/cookieRequestOrigin.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "0d0cb5cc1f55011b1bd0f4b135148e4807421e2ae33f3af71f88324213937666",
+      "reason": "Cookie-bearing writes require an exact configured browser Origin or Referer origin before auth/session mutations; cookie-free native/Bearer and safe OAuth navigation retain their own authorization. Focused HTTP and actual server rejection tests are required."
     }
   ],
   "scriptBindings": [

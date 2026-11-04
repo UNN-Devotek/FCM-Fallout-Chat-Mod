@@ -71,6 +71,26 @@ Every subsequent request from the desktop client includes `X-Auth-Token: <sessio
 
 ---
 
+## Browser cookie write origins
+
+Before session middleware, cookie-bearing POST/PUT/PATCH/DELETE requests must
+present an exact trusted `Origin`, or a trusted `Referer` origin when `Origin` is
+absent. Trust comes from configured `CLIENT_ORIGINS`, `FCM_PUBLIC_BASE_URL` and
+`MCP_ISSUER_URL`; Host and forwarded headers never add trusted origins. Missing,
+`null`, malformed or untrusted origins return RFC 7807 HTTP 403 before auth/session
+writes. A present invalid Origin never falls back to Referer. CORS remains enabled,
+but is not treated as a defense against simple cross-origin form submissions.
+
+Keep these URLs accurate for each environment and proxy. Cookie-authenticated
+scripts must supply the trusted Origin or use the existing token-based flow.
+Cookie-free desktop, HUD and Bearer/API clients retain their existing auth rules.
+GET/HEAD/OPTIONS navigation is unchanged; OAuth callbacks still require their
+existing session-bound state and consent validation. This does not authorize a
+caller or replace role, scope, token or OAuth-state checks.
+
+The origin-verification defense follows the
+[OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#using-standard-headers-to-verify-origin).
+
 ## 2. Discord OAuth2 — Admin Dashboard
 
 **Files:** `server.ts` (OAuth2 routes), `middleware/auth.ts` (`requireDiscordRole`), `services/roleVerificationService.ts`

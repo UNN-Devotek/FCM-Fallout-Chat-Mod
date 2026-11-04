@@ -32,6 +32,7 @@ import { getRedisClient, client as redisClient, subscriberClient } from './confi
 import prisma from './config/prisma';
 import { Prisma } from '@prisma/client';
 import { errorHandler, createError } from './middleware/errorHandler';
+import { requireCookieRequestOrigin } from './middleware/cookieRequestOrigin';
 import { apiLimiter, authLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter } from './middleware/rateLimiter';
 import { requireAdminKey } from './middleware/requireAdminKey';
 import { requireClientAuth } from './middleware/requireClientAuth';
@@ -200,6 +201,7 @@ app.use(helmet({
   },
 }));
 
+app.use(requireCookieRequestOrigin([...env.CLIENT_ORIGINS, env.FCM_PUBLIC_BASE_URL, env.MCP_ISSUER_URL]));
 app.use(cors({
   origin: env.CLIENT_ORIGINS,
   credentials: true,
