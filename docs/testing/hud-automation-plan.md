@@ -1,5 +1,20 @@
 # Automated HUD-mod test harness plan
 
+## Simulator startup synchronization - 2026-11-03
+
+The native xScal session and background fast-travel smoke cases wait for the
+existing `#status[data-state=ready]` signal before their behavior assertions.
+The player loads asynchronously after page navigation; counting that work against
+an immediate five-second bridge-construction check could reject a working movie.
+The existing 20-second ready wait, behavior deadlines and 30-second per-test limit
+are retained; no retries or skips were added.
+
+A controlled six-second SWF-response delay reproduced the old construction
+failure and passed with readiness synchronization, including the original travel,
+generation, diagnostics and teardown assertions. The temporary delay was removed.
+Full final-source regression results are recorded in the
+[release assessment](../deployment/hud-bridge-release-readiness-20261103.md).
+
 ## Local input caret candidate
 
 The 2.10.152 native xScal candidate consumes optional UTF-16 `caretIndex` metadata

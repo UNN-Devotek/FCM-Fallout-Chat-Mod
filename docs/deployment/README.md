@@ -8,13 +8,13 @@ This section covers production hosting, the Electron overlay release pipeline, p
 
 | Concern | Detail |
 |---------|--------|
-| Hosting | Production currently runs on the **Hostinger VPS** cutover stack; return to **Mothership/Dokploy** is planned, gated by the [production-return plan](return-production-to-mothership.md) |
+| Hosting | Read-only verification on 2026-11-03 found healthy Prod on **Mothership**, with Hostinger stopped as standby; see the [current release assessment](hud-bridge-release-readiness-20261103.md). The [production-return plan](return-production-to-mothership.md) retains the earlier migration procedure. |
 | Public URL | `https://falloutchatmod.com` |
 | Edge | **Cloudflare Tunnel** (`cloudflared` → backend container, port 7676) |
 | Reverse proxy | **Not Traefik** — the Cloudflare Tunnel is the only ingress; `traefik.enable=false` is set on the backend service label |
-| Auto-deploy | Currently the Hostinger GitHub workflow deploys `prod` pushes when its repository/local gates are enabled. Mothership's dormant Prod Dokploy trigger must be fenced before promotion; see the return plan. |
+| Auto-deploy | Verify the authoritative host and its current deployment fences before any promotion. Hostinger's workflow requires repository/local gates; never enable competing hosts' deployment triggers. See the return plan. |
 | Monitoring | Uptime Kuma |
-| Backups | Inventory and verify the authoritative host's backup jobs and complete restore coverage; a configured Dokploy S3 job alone does not prove recovery of the current Hostinger stack |
+| Backups | Inventory and verify the authoritative host's backup jobs and complete restore coverage; earlier Hostinger snapshots or a configured Dokploy S3 job alone do not prove recovery of the current Mothership stack |
 
 ### Services (docker-compose.yml)
 
@@ -27,7 +27,9 @@ This section covers production hosting, the Electron overlay release pipeline, p
 
 The backend serves the compiled admin dashboard SPA same-origin (baked into the Docker image via a `dashboard-builder` stage). No separate dashboard container is deployed.
 
-No host ports are published for the backend in production — it is reachable only through the Cloudflare Tunnel over `dokploy-network`.
+The live Mothership return stack publishes its origin on loopback
+`127.0.0.1:27677`; public ingress remains the Cloudflare Tunnel. Older manifests
+may use only `dokploy-network`; inspect the active stack before using a runbook.
 
 ### Standby / Failover
 
@@ -117,6 +119,8 @@ No client release is needed for backend/dashboard-only changes.
 
 | File | Contents |
 |------|----------|
+| [dependency-integration-20261103.md](dependency-integration-20261103.md) | Combined pre-release dependency updates, compatibility checks and Dev integration status |
+| [hud-bridge-release-readiness-20261103.md](hud-bridge-release-readiness-20261103.md) | Current HUD/bridge release delta, desktop compatibility, validation and remaining publication gates |
 | [local-dev.md](local-dev.md) | Local stack setup, dev port map, per-platform instructions |
 | [hosted-dev-environment.md](hosted-dev-environment.md) | Isolated hosted dev stack for contributors: sanitizing seed pipeline, secure remote DB/object-store access, dev Discord |
 | [qa-builds.md](qa-builds.md) | QA-tester builds: the dev-guild QA role gate + golden-build lock, and the build / bless / distribute / retire runbook (Linux `dist:qa` + the Build Windows QA runner workflow) |
