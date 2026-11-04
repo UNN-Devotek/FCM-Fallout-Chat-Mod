@@ -25,6 +25,7 @@ const mockRedis = {
 };
 
 jest.mock('../src/config/redis', () => ({
+  client: mockRedis,
   getRedisClient: jest.fn().mockResolvedValue(mockRedis),
   healthCheck: jest.fn().mockResolvedValue(true),
 }));

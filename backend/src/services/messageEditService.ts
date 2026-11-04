@@ -1,3 +1,4 @@
+import { isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import prisma from '../config/prisma';
 import { engineEvaluate } from './autoModEngine';
 import { emojifyShortcodes } from '../utils/emoji';
@@ -66,6 +67,7 @@ async function assertAllowedByAutoMod(content: string, target: string, user: Rec
  * turn a party/private message id into a channel-message update.
  */
 export async function editOwnedMessage(input: EditOwnedMessageInput): Promise<EditedMessage> {
+  return runRequiredBundle('moderation', 'messageEditService:25b1b8cefb45', async () => {
   const isParty = input.source === 'party';
   const isPrivate = input.source === 'pm';
   const maxLength = isPrivate ? EDITABLE_PRIVATE_MESSAGE_MAX_LENGTH : EDITABLE_MESSAGE_MAX_LENGTH;
@@ -82,13 +84,13 @@ export async function editOwnedMessage(input: EditOwnedMessageInput): Promise<Ed
     if (!membership) throw new MessageEditError('You are not a member of this party.', 403);
 
     await assertAllowedByAutoMod(content, input.channelId, input.user);
-    const updated = await prisma.$executeRaw`
+    const updated = await runRequiredMutation('moderation', '63c94495c2680b9a2f4fd1e2', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE party_messages
       SET content = ${content}, edited_at = ${editedAt}
       WHERE id = ${input.messageId}::uuid
         AND party_id = ${input.channelId}::uuid
         AND user_id = ${input.userId}::uuid
-        AND NOT is_deleted`;
+        AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
     if (updated === 0) throw new MessageEditError('Message not found or not editable.');
 
     return {
@@ -126,13 +128,13 @@ export async function editOwnedMessage(input: EditOwnedMessageInput): Promise<Ed
 
     const recipientId = conversation.userAId === input.userId ? conversation.userBId : conversation.userAId;
     await assertAllowedByAutoMod(content, `pm:${recipientId}`, input.user);
-    const updated = await prisma.$executeRaw`
+    const updated = await runRequiredMutation('moderation', '53392a896218b9a0fbe59b62', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
       UPDATE private_messages
       SET content = ${content}, edited_at = ${editedAt}
       WHERE id = ${input.messageId}::uuid
         AND conversation_id = ${input.conversationId}::uuid
         AND sender_id = ${input.userId}::uuid
-        AND NOT is_deleted`;
+        AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
     if (updated === 0) throw new MessageEditError('Message not found or not editable.');
 
     return {
@@ -149,13 +151,13 @@ export async function editOwnedMessage(input: EditOwnedMessageInput): Promise<Ed
 
   if (!input.channelId) throw new MessageEditError('Invalid channelId.', 400);
   await assertAllowedByAutoMod(content, input.channelId, input.user);
-  const updated = await prisma.$executeRaw`
+  const updated = await runRequiredMutation('moderation', '10f6cff123f767f5369fe54e', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
     UPDATE messages
     SET content = ${content}, edited_at = ${editedAt}
     WHERE id = ${input.messageId}::uuid
       AND channel_id = ${input.channelId}::uuid
       AND user_id = ${input.userId}::uuid
-      AND NOT is_deleted`;
+      AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
   if (updated === 0) throw new MessageEditError('Message not found or not editable.');
 
   return {
@@ -166,4 +168,6 @@ export async function editOwnedMessage(input: EditOwnedMessageInput): Promise<Ed
     channelId: input.channelId,
     editedAt: editedAt.toISOString(),
   };
+
+  });
 }

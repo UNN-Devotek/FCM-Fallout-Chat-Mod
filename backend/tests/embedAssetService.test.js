@@ -23,6 +23,8 @@ function fakeRequest(responses) {
       const response = new PassThrough();
       response.statusCode = next.status ?? 200;
       response.headers = next.headers ?? {};
+      response.once('close', () => request.destroy());
+      request.once('close', () => response.destroy());
       callback(response);
       if (next.body) response.end(next.body); else response.end();
     };

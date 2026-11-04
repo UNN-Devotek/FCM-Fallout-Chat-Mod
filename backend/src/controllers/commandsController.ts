@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -31,6 +32,7 @@ export async function listCommands(_req: Request, res: Response, next: NextFunct
 }
 
 export async function createCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'commandsController:61671f0d5b83', async () => {
   const { trigger, alias, description, response, actionType, targetChannelId, allowedChannelId, responseColor, cooldownSec, enabled, requiresArgs, relayToDiscord } = req.body;
   const normalized = String(trigger ?? '').toLowerCase().trim();
 
@@ -61,7 +63,7 @@ export async function createCommand(req: Request, res: Response, next: NextFunct
   }
 
   try {
-    const command = await prisma.chatCommand.create({
+    const command = await runRequiredMutation('domain', '5d3dabecfc30f4ea05e45136', { stage: 'primary-write-unconfirmed' }, () => prisma.chatCommand.create({
       data: {
         trigger: normalized,
         alias: normalizedAlias,
@@ -76,7 +78,7 @@ export async function createCommand(req: Request, res: Response, next: NextFunct
         requiresArgs: Boolean(requiresArgs ?? false),
         relayToDiscord: Boolean(relayToDiscord ?? false),
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     bustCommandCache();
     pushCommandsToClients().catch(() => {});
     res.status(201).json({ data: command });
@@ -87,9 +89,12 @@ export async function createCommand(req: Request, res: Response, next: NextFunct
     }
     next(err);
   }
+
+  });
 }
 
 export async function updateCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'commandsController:6434374da0f2', async () => {
   if (!validId(paramStr(req, 'id'))) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
   const id = parseInt(paramStr(req, 'id'), 10);
 
@@ -128,7 +133,7 @@ export async function updateCommand(req: Request, res: Response, next: NextFunct
       }
     }
 
-    const updated = await prisma.chatCommand.update({ where: { id }, data });
+    const updated = await runRequiredMutation('domain', 'fa91731e31da56ef7bc5249a', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.chatCommand.update({ where: { id }, data }), isPrismaAtomicRefusal, undefined, undefined);
     bustCommandCache();
     pushCommandsToClients().catch(() => {});
     res.json({ data: updated });
@@ -136,9 +141,12 @@ export async function updateCommand(req: Request, res: Response, next: NextFunct
     if (err.code === 'P2002') { res.status(409).json({ title: 'Conflict', detail: 'Trigger already exists.' }); return; }
     next(err);
   }
+
+  });
 }
 
 export async function deleteCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'commandsController:389e4f2c63cb', async () => {
   if (!validId(paramStr(req, 'id'))) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
   const id = parseInt(paramStr(req, 'id'), 10);
 
@@ -149,9 +157,11 @@ export async function deleteCommand(req: Request, res: Response, next: NextFunct
       res.status(422).json({ title: 'Protected', detail: `${existing.trigger} is a system command and cannot be deleted.` });
       return;
     }
-    await prisma.chatCommand.delete({ where: { id } });
+    await runRequiredMutation('domain', 'ccc32fcf080f3ba22b34005d', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.chatCommand.delete({ where: { id } }), isPrismaAtomicRefusal, undefined, undefined);
     bustCommandCache();
     pushCommandsToClients().catch(() => {});
     res.json({ data: { deleted: true } });
   } catch (err) { next(err); }
+
+  });
 }

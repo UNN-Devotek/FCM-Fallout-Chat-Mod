@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * /api/mcp-admin — OWNER-ONLY production MCP router.
  *
@@ -62,11 +63,12 @@ router.get('/channels', async (_req, res, next) => {
 
 // POST /api/mcp-admin/channels
 router.post('/channels', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:2bb29bdf2efd', async () => {
   try {
     const { name, color, parentId, sortOrder, discordRelay, allowGifs, allowEmojis } = req.body || {};
     if (!name || typeof name !== 'string' || name.trim().length === 0)
       return next(createError(400, 'name is required'));
-    const channel = await prisma.channel.create({
+    const channel = await runRequiredMutation('identity', '5cd000c5c53e03c81f54b04c', { stage: 'primary-write-unconfirmed' }, () => prisma.channel.create({
       data: {
         name: name.trim(),
         color: color ?? '#ecbb51',
@@ -77,19 +79,22 @@ router.post('/channels', async (req: Request, res: Response, next: NextFunction)
         allowEmojis: allowEmojis ?? true,
       },
       select: { id: true, name: true, color: true, sortOrder: true, isArchived: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.status(201).json({ data: channel });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // PATCH /api/mcp-admin/channels/:id
 router.patch('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:0d43c8a3f4ff', async () => {
   try {
     const id = paramStr(req, 'id');
     const { name, color, sortOrder, discordRelay, allowGifs, allowEmojis, isArchived } = req.body || {};
-    const channel = await prisma.channel.update({
+    const channel = await runRequiredMutation('identity', 'c2259118c0da6dcea4cbdd56', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.channel.update({
       where: { id },
       data: {
         ...(name !== undefined && { name }),
@@ -101,22 +106,27 @@ router.patch('/channels/:id', async (req: Request, res: Response, next: NextFunc
         ...(isArchived !== undefined && { isArchived }),
       },
       select: { id: true, name: true, color: true, sortOrder: true, isArchived: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: channel });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // DELETE /api/mcp-admin/channels/:id  (archive)
 router.delete('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:aa8987a408d2', async () => {
   try {
     const id = paramStr(req, 'id');
-    await prisma.channel.update({ where: { id }, data: { isArchived: true } });
+    await runRequiredMutation('identity', '205305b500d80eab0340d933', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.channel.update({ where: { id }, data: { isArchived: true } }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: { archived: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // GET /api/mcp-admin/commands
@@ -137,11 +147,12 @@ router.get('/commands', async (_req, res, next) => {
 
 // POST /api/mcp-admin/commands
 router.post('/commands', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:f38c2af5a241', async () => {
   try {
     const { trigger, description, actionType, cooldownSec, requiresArgs, alias } = req.body || {};
     if (!trigger || typeof trigger !== 'string')
       return next(createError(400, 'trigger is required'));
-    const cmd = await prisma.chatCommand.create({
+    const cmd = await runRequiredMutation('identity', 'f55220114385372adb997a42', { stage: 'primary-write-unconfirmed' }, () => prisma.chatCommand.create({
       data: {
         trigger: trigger.trim(),
         description: description ?? '',
@@ -152,20 +163,23 @@ router.post('/commands', async (req: Request, res: Response, next: NextFunction)
         enabled: true,
       },
       select: { id: true, trigger: true, description: true, actionType: true, enabled: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.status(201).json({ data: cmd });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // PATCH /api/mcp-admin/commands/:id
 router.patch('/commands/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:bfc8d35d272a', async () => {
   try {
     const idNum = parseInt(paramStr(req, 'id'), 10);
     if (isNaN(idNum)) return next(createError(400, 'id must be a number'));
     const { trigger, description, actionType, cooldownSec, requiresArgs, alias, enabled } = req.body || {};
-    const cmd = await prisma.chatCommand.update({
+    const cmd = await runRequiredMutation('identity', '9842e34fcb5ff81a7a0bbace', { stage: 'primary-write-unconfirmed', rowId: idNum }, () => prisma.chatCommand.update({
       where: { id: idNum },
       data: {
         ...(trigger !== undefined && { trigger }),
@@ -177,23 +191,28 @@ router.patch('/commands/:id', async (req: Request, res: Response, next: NextFunc
         ...(enabled !== undefined && { enabled }),
       },
       select: { id: true, trigger: true, description: true, actionType: true, enabled: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: cmd });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // DELETE /api/mcp-admin/commands/:id
 router.delete('/commands/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:acbf4d2d0d97', async () => {
   try {
     const delId = parseInt(paramStr(req, 'id'), 10);
     if (isNaN(delId)) return next(createError(400, 'id must be a number'));
-    await prisma.chatCommand.delete({ where: { id: delId } });
+    await runRequiredMutation('identity', '55c4aeced94c13c41192c106', { stage: 'primary-write-unconfirmed', rowId: delId }, () => prisma.chatCommand.delete({ where: { id: delId } }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: { deleted: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // GET /api/mcp-admin/users?limit=50&offset=0
@@ -537,12 +556,13 @@ router.post('/messages/send', async (req: Request, res: Response, next: NextFunc
 
 // DELETE /api/mcp-admin/messages/:id
 router.delete('/messages/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:207e4b14a902', async () => {
   if (!requireConfirm(req, next)) return;
   try {
     const id = paramStr(req, 'id');
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_RE.test(id)) return next(createError(400, 'id must be a valid UUID'));
-    await prisma.message.updateMany({ where: { id }, data: { isDeleted: true } });
+    await runRequiredMutation('identity', '69618cb934904a27728d1d84', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.message.updateMany({ where: { id }, data: { isDeleted: true } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     try {
       const { broadcastMessageDeletion } = require('../websocket/handlers');
       broadcastMessageDeletion(id);
@@ -553,10 +573,13 @@ router.delete('/messages/:id', async (req: Request, res: Response, next: NextFun
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // POST /api/mcp-admin/bans — create ban (no evidence files via MCP — text reason only)
 router.post('/bans', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:50aaaa691d35', async () => {
   if (!requireConfirm(req, next)) return;
   try {
     const { userId, reason, category, expiresAt } = req.body || {};
@@ -567,7 +590,7 @@ router.post('/bans', async (req: Request, res: Response, next: NextFunction) => 
     if (!actor) return next(createError(401, 'MCP user not resolved'));
 
     // Direct write — no evidence required for MCP-issued bans.
-    const ban = await prisma.ban.create({
+    const ban = await runRequiredMutation('identity', '74cc87dd1a422d278471ba6f', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.ban.create({
       data: {
         userId,
         bannedById: actor.id,
@@ -576,13 +599,15 @@ router.post('/bans', async (req: Request, res: Response, next: NextFunction) => 
         bannedUntil: expiresAt ? new Date(expiresAt) : null,
       },
       select: { id: true, userId: true, reasonCategory: true, reasonText: true, bannedUntil: true, createdAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     // Reflect isBanned on the user row
-    await prisma.user.update({ where: { id: userId }, data: { isBanned: true, bannedUntil: expiresAt ? new Date(expiresAt) : null } });
+    await runRequiredMutation('identity', 'b9256793b3e5a3fcfcb9b115', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({ where: { id: userId }, data: { isBanned: true, bannedUntil: expiresAt ? new Date(expiresAt) : null } }), isPrismaAtomicRefusal, undefined, undefined);
     res.status(201).json({ data: ban });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // POST /api/mcp-admin/bans/:id/reverse
@@ -651,13 +676,14 @@ router.post('/kicks', async (req: Request, res: Response, next: NextFunction) =>
 
 // PATCH /api/mcp-admin/reports/:id — resolve a report
 router.patch('/reports/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:aa365d93e22d', async () => {
   if (!requireConfirm(req, next)) return;
   try {
     const { status, resolution } = req.body || {};
     if (!status || typeof status !== 'string') return next(createError(400, 'status is required'));
     const actor = req.user as any;
     if (!actor) return next(createError(401, 'MCP user not resolved'));
-    const report = await prisma.report.update({
+    const report = await runRequiredMutation('identity', 'd5757b262872b05462b80c80', { stage: 'primary-write-unconfirmed' }, () => prisma.report.update({
       where: { id: paramStr(req, 'id') },
       data: {
         status: status as any,
@@ -666,11 +692,13 @@ router.patch('/reports/:id', async (req: Request, res: Response, next: NextFunct
         resolvedBy: actor.id,
       },
       select: { id: true, status: true, notes: true, resolvedAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: report });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // POST /api/mcp-admin/releases
@@ -686,33 +714,39 @@ router.post('/releases', async (req: Request, res: Response, next: NextFunction)
 
 // POST /api/mcp-admin/name-blacklist
 router.post('/name-blacklist', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:59d32f843ac9', async () => {
   if (!requireConfirm(req, next)) return;
   try {
     const { pattern, matchType } = req.body || {};
     if (!pattern || typeof pattern !== 'string') return next(createError(400, 'pattern is required'));
-    const entry = await prisma.nameBlacklistEntry.create({
+    const entry = await runRequiredMutation('identity', 'e9a600d5c68ebe57131d5807', { stage: 'primary-write-unconfirmed' }, () => prisma.nameBlacklistEntry.create({
       data: { pattern: pattern.trim(), matchType: matchType ?? 'exact' },
       select: { id: true, pattern: true, matchType: true, createdAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     const { refreshBlacklist } = require('../services/nameBlacklistService');
     await refreshBlacklist().catch((e: unknown) => logger.warn({ e }, 'blacklist refresh failed'));
     res.status(201).json({ data: entry });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 // DELETE /api/mcp-admin/name-blacklist/:id
 router.delete('/name-blacklist/:id', async (req: Request, res: Response, next: NextFunction) => {
+  return runRequiredBundle('identity', 'mcpAdmin:2664c55224fe', async () => {
   if (!requireConfirm(req, next)) return;
   try {
-    await prisma.nameBlacklistEntry.delete({ where: { id: paramStr(req, 'id') } });
+    await runRequiredMutation('identity', 'd61f452e8facceeffa758535', { stage: 'primary-write-unconfirmed' }, () => prisma.nameBlacklistEntry.delete({ where: { id: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, undefined);
     const { refreshBlacklist } = require('../services/nameBlacklistService');
     await refreshBlacklist().catch((e: unknown) => logger.warn({ e }, 'blacklist refresh failed'));
     res.json({ data: { deleted: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 export default router;

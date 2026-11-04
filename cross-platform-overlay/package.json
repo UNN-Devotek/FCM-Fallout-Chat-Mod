@@ -41,7 +41,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router": "^8.5.0",
-    "ws": "^8.22.0"
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -70,7 +70,10 @@
     "brace-expansion@1": "^1.1.16",
     "brace-expansion@2": "^2.1.4",
     "brace-expansion@5": "^5.0.7",
-    "js-yaml@4": "^4.3.0"
+    "js-yaml@4": "^4.3.0",
+    "minimatch@>=9 <11": "11.0.2",
+    "glob@>=9 <14.0.2": "14.0.3",
+    "joi@>=18 <18.3.1": "18.3.1"
   },
   "build": {
     "appId": "com.falloutchatmod.overlay",

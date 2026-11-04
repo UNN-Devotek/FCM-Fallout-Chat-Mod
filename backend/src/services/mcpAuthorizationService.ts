@@ -1,3 +1,4 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { createHash, createHmac, randomBytes, randomUUID } from 'crypto';
 import env from '../config/environment';
 import { matchesRegisteredRedirectUri } from './mcpClientMetadataService';
@@ -65,6 +66,7 @@ export class McpAuthorizationService {
   }
 
   async issueAuthorizationCode(input: IssueCodeInput): Promise<{ code: string; expiresAt: Date }> {
+  return runRequiredBundle('oauth', 'mcpAuthorizationService:92d6f6c0185d', async () => {
     this.assertEnabled();
     this.assertResource(input.resource);
     if (input.codeChallengeMethod !== 'S256' || !input.pkceChallenge || !PKCE_VALUE.test(input.pkceChallenge)) {
@@ -87,24 +89,27 @@ export class McpAuthorizationService {
       resource: input.resource, scopes, expiresAt,
     };
     if (!input.consentIdempotencyKey) {
-      await this.db.mcpOAuthCode.create({ data });
+      await runRequiredMutation('oauth', 'ae78c9ed58ed2a8d98b0cdc1', { stage: 'primary-write-unconfirmed' }, () => this.db.mcpOAuthCode.create({ data }), isPrismaAtomicRefusal, undefined, undefined);
       return { code, expiresAt };
     }
-    const stored = await this.db.mcpOAuthCode.upsert({
+    const stored = await runRequiredMutation('oauth', 'f6be64664258081887f449c1', { stage: 'primary-write-unconfirmed' }, () => this.db.mcpOAuthCode.upsert({
       where: { codeHash: data.codeHash },
       create: data,
       update: {},
       select: { clientId: true, discordId: true, redirectUri: true, pkceChallenge: true, codeChallengeMethod: true, resource: true, scopes: true, expiresAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     const sameBinding = stored.clientId === data.clientId && stored.discordId === data.discordId
       && stored.redirectUri === data.redirectUri && stored.pkceChallenge === data.pkceChallenge
       && stored.codeChallengeMethod === data.codeChallengeMethod && stored.resource === data.resource
       && stored.scopes.length === data.scopes.length && stored.scopes.every((scope, index) => scope === data.scopes[index]);
     if (!sameBinding) throw new McpOAuthError('invalid_grant', 'Consent replay binding is invalid');
     return { code, expiresAt: stored.expiresAt };
-  }
+
+  }, error => error instanceof McpOAuthError);
+}
 
   async exchangeAuthorizationCode(input: ExchangeCodeInput) {
+  return runRequiredBundle('oauth', 'mcpAuthorizationService:720e043a6cfc', async () => {
     this.assertEnabled();
     this.assertResource(input.resource);
     if (!PKCE_VALUE.test(input.codeVerifier)) throw new McpOAuthError('invalid_grant', 'PKCE verifier is invalid');
@@ -115,16 +120,19 @@ export class McpAuthorizationService {
     await this.requireActiveClient(code.clientId);
     const role = await this.requireRole(code.discordId);
     this.authorizeScopes(role, code.scopes);
-    return this.db.$transaction(async (tx) => {
-      const consumed = await tx.mcpOAuthCode.updateMany({
+    return runRequiredTransaction('oauth', '8d8023fe54324c84e3813b85', { stage: 'transaction-completion-unconfirmed' }, () => this.db.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
+      const consumed = await runRequiredMutation('oauth', 'ad3670ca33c492a1134c3db5', { stage: 'primary-write-unconfirmed' }, () => tx.mcpOAuthCode.updateMany({
         where: { codeHash, consumedAt: null, expiresAt: { gt: now }, clientId: input.clientId,
           redirectUri: input.redirectUri, resource: input.resource, codeChallengeMethod: 'S256',
           pkceChallenge: pkceS256(input.codeVerifier) }, data: { consumedAt: now },
-      });
+      }), isPrismaAtomicRefusal, tx, isRowCountNoChange);
       if (consumed.count !== 1) throw new McpOAuthError('invalid_grant', 'Authorization code is invalid, expired, consumed, or incorrectly bound');
       return this.createGrant(code.discordId, code.clientId, code.resource, code.scopes, tx as PrismaLike);
-    });
-  }
+    }), { confirmedRollback: error => isPrismaAtomicRefusal(error) || error instanceof McpOAuthError && error.code === 'invalid_grant' });
+
+  }, error => error instanceof McpOAuthError);
+}
 
   async refresh(input: RefreshInput) {
     try { return await this.refreshInternal(input); }
@@ -132,6 +140,7 @@ export class McpAuthorizationService {
   }
 
   private async refreshInternal(input: RefreshInput) {
+  return runRequiredBundle('oauth', 'mcpAuthorizationService:b342ffe7a17b', async () => {
     this.assertEnabled();
     this.assertResource(input.resource);
     const refreshHash = hash(input.refreshToken);
@@ -141,7 +150,7 @@ export class McpAuthorizationService {
     ] } });
     if (!grant || grant.clientId !== input.clientId || grant.audience !== input.resource) throw new McpOAuthError('invalid_grant', 'Refresh token binding is invalid');
     if (grant.usedRefreshTokenHashes.includes(refreshHash)) {
-      await this.db.mcpOAuthGrant.updateMany({ where: { familyId: grant.familyId, revokedAt: null }, data: { revokedAt: now } });
+      await runRequiredMutation('oauth', 'd4e5fc3230d33e8cb23272df', { stage: 'primary-write-unconfirmed' }, () => this.db.mcpOAuthGrant.updateMany({ where: { familyId: grant.familyId, revokedAt: null }, data: { revokedAt: now } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
       recordMcpMetric('refresh', { outcome: 'reuse' });
       noteMcpSecurityEvent('refresh_reuse');
       throw new McpOAuthError('invalid_grant', 'Refresh token reuse detected; token family revoked');
@@ -178,20 +187,22 @@ export class McpAuthorizationService {
       grant.refreshTokenExpiresAt.getTime(),
     ));
     const expiresIn = Math.max(1, Math.ceil((accessTokenExpiresAt.getTime() - now.getTime()) / 1000));
-    const updated = await this.db.mcpOAuthGrant.updateMany({ where: { id: grant.id, refreshTokenHash: refreshHash, revokedAt: null }, data: {
+    const updated = await runRequiredMutation('oauth', 'f2fa7b8449b56c55c7254dab', { stage: 'primary-write-unconfirmed', rowId: grant.id }, () => this.db.mcpOAuthGrant.updateMany({ where: { id: grant.id, refreshTokenHash: refreshHash, revokedAt: null }, data: {
       accessTokenHash: hash(accessToken), accessTokenExpiresAt,
       usedRefreshTokenHashes: [...grant.usedRefreshTokenHashes, refreshHash],
       refreshTokenHash: hash(refreshToken), scopes: requested, lastUsedAt: now,
-    } });
+    } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (updated.count !== 1) {
-      await this.db.mcpOAuthGrant.updateMany({ where: { familyId: grant.familyId, revokedAt: null }, data: { revokedAt: now } });
+      await runRequiredMutation('oauth', '05aaede62dcfe6bfd537a4aa', { stage: 'primary-write-unconfirmed' }, () => this.db.mcpOAuthGrant.updateMany({ where: { familyId: grant.familyId, revokedAt: null }, data: { revokedAt: now } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
       recordMcpMetric('refresh', { outcome: 'reuse' });
       noteMcpSecurityEvent('refresh_reuse');
       throw new McpOAuthError('invalid_grant', 'Concurrent refresh reuse detected; token family revoked');
     }
     recordMcpMetric('refresh', { outcome: 'success' });
     return { accessToken, refreshToken, expiresIn, scopes: requested, tokenType: 'Bearer' as const };
-  }
+
+  }, error => error instanceof McpOAuthError);
+}
 
   async verifyAccessToken(token: string, audience: string, requiredScopes: readonly string[] = []) {
     this.assertEnabled();
@@ -230,15 +241,18 @@ export class McpAuthorizationService {
   }
 
   private async createGrant(discordId: string, clientId: string, audience: string, scopes: readonly string[], db: PrismaLike = this.db) {
+  return runRequiredBundle('oauth', 'mcpAuthorizationService:59d4a4c55a0d', async () => {
     const now = this.now();
     const accessToken = opaque('fcm_at_'); const refreshToken = opaque('fcm_rt_');
     const accessTokenExpiresAt = new Date(now.getTime() + this.accessTtl * 1000);
     const refreshTokenExpiresAt = new Date(now.getTime() + this.refreshTtl * 1000);
-    await db.mcpOAuthGrant.create({ data: { familyId: randomUUID(), discordId, clientId, audience,
+    await runRequiredMutation('oauth', '8198d6ce8d260a7b93f16441', { stage: 'primary-write-unconfirmed', discordId: discordId }, () => db.mcpOAuthGrant.create({ data: { familyId: randomUUID(), discordId, clientId, audience,
       scopes: [...scopes], accessTokenHash: hash(accessToken), accessTokenExpiresAt,
-      refreshTokenHash: hash(refreshToken), refreshTokenExpiresAt } });
+      refreshTokenHash: hash(refreshToken), refreshTokenExpiresAt } }), isPrismaAtomicRefusal, db, undefined);
     return { accessToken, refreshToken, expiresIn: this.accessTtl, scopes: [...scopes], tokenType: 'Bearer' as const };
-  }
+
+  }, error => error instanceof McpOAuthError);
+}
 
   private async requireActiveClient(clientId: string): Promise<void> {
     const client = await this.db.mcpOAuthClient.findUnique({ where: { clientId }, select: { disabledAt: true } });
@@ -260,8 +274,11 @@ export class McpAuthorizationService {
     return scopes;
   }
   private async revokeFamily(familyId: string): Promise<void> {
-    await this.db.mcpOAuthGrant.updateMany({ where: { familyId, revokedAt: null }, data: { revokedAt: this.now() } });
-  }
+  return runRequiredBundle('oauth', 'mcpAuthorizationService:dfe22876e374', async () => {
+    await runRequiredMutation('oauth', 'e964e5a5bfc2bd770b2dd6d5', { stage: 'primary-write-unconfirmed' }, () => this.db.mcpOAuthGrant.updateMany({ where: { familyId, revokedAt: null }, data: { revokedAt: this.now() } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+
+  }, error => error instanceof McpOAuthError);
+}
   private async bestEffortRevokeFamily(familyId: string): Promise<void> {
     try { await this.revokeFamily(familyId); } catch { /* preserve non-enumerating OAuth denial */ }
   }

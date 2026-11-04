@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 import prisma from '../config/prisma';
+import { runtime, producerInterval } from '../runtime';
 
 export const ONLINE_USERS_KEY_PREFIX = 'fcm:online:instance:';
 export const DISCORD_ACTIVITY_KEY = 'fcm:online:discord-active';
@@ -51,7 +52,7 @@ export function registerLocalPresenceSource(provider: () => string[], source = '
   localPresenceSources.set(source, provider);
   // Keep quiet HUD-only instances visible to other instances beyond the Redis TTL.
   if (!refreshTimer) {
-    refreshTimer = setInterval(() => { void flushLocalPresenceToRedis(); }, 15_000);
+    refreshTimer = producerInterval('presence-flush', () => flushLocalPresenceToRedis(), 15_000);
     refreshTimer.unref();
   }
 }
@@ -77,6 +78,7 @@ export async function flushLocalPresenceToRedis(): Promise<void> {
     }
     await multi.exec();
   } catch (err) {
+    runtime.recordFailure('presence-flush', err);
     logger.warn({ err }, '[onlinePresenceService] failed to flush local online users');
   }
 }

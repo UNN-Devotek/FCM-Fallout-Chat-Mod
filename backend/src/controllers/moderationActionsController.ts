@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * REST controller for moderator actions (kick, mute, unmute, ban, unban,
  * evidence proxy). All routes gated upstream by requireDiscordRole(OWNER,
@@ -5,6 +6,7 @@
  * moderationActionsService (throws ProtectedTargetError → 409 here).
  */
 import { Request, Response, NextFunction } from 'express';
+import { pipeline } from 'node:stream/promises';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import {
@@ -31,12 +33,13 @@ function requireString(s: any, label: string, max = 4000): asserts s is string {
  * API-key actor is rejected — these actions need to attribute to a real human.
  */
 async function actorUserId(req: Request): Promise<string> {
+  return runRequiredBundle('moderation', 'moderationActionsController:c6ee73eab82e', async () => {
   const a = (req as any).adminUser as { id: string; username?: string; displayName?: string } | undefined;
   if (!a?.id) throw createError(401, 'no admin session');
   if (a.id === 'api-key') throw createError(400, 'moderation actions require Discord OAuth, not API key');
   const existing = await prisma.user.findFirst({ where: { discordId: a.id }, select: { id: true } });
   if (existing) return existing.id;
-  const created = await prisma.user.create({
+  const created = await runRequiredMutation('moderation', '0ace5da94ee4f603cf87ea73', { stage: 'primary-write-unconfirmed', discordId: a.id }, () => prisma.user.create({
     data: {
       username: `admin-discord-${a.id}`,
       installToken: `admin:${a.id}`,
@@ -45,8 +48,10 @@ async function actorUserId(req: Request): Promise<string> {
       discordDisplayName: a.displayName ?? a.username ?? null,
     },
     select: { id: true },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   return created.id;
+
+  });
 }
 function handleProtected(err: unknown, next: NextFunction): boolean {
   if (err instanceof ProtectedTargetError) {
@@ -277,8 +282,8 @@ export async function streamBanEvidenceHandler(req: Request, res: Response, next
     res.setHeader('Content-Disposition', `inline; filename="evidence-${req.params.fileId}"`);
     if (obj.sizeBytes) res.setHeader('Content-Length', String(obj.sizeBytes));
     res.setHeader('Cache-Control', 'private, max-age=300');
-    obj.stream.pipe(res);
-  } catch (err) { next(err); }
+    await pipeline(obj.stream, res);
+  } catch (err) { if (!res.destroyed && !res.writableEnded) next(err); }
 }
 
 // ── GET /api/moderation/evidence — gallery list (all evidence, paginated) ────

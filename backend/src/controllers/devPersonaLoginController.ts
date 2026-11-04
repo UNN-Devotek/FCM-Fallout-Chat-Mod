@@ -1,7 +1,10 @@
+import { beginRuntimeFetch as fetch, discardRuntimeResponse } from '../runtime/nativeFetch';
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import type { Request, Response, RequestHandler } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
 import prisma from '../config/prisma';
+import { runtime } from '../runtime';
 import { getRedisClient } from '../config/redis';
 import { checkDeveloperAccess, makeDevSideDeps } from '../services/devAuthService';
 import { devPersonaDiscordId, devPersonaUsername } from '../utils/devPersonaDiscordId';
@@ -140,6 +143,7 @@ function redirectUri(req: Request): string {
 
 /** GET /auth/discord/dev-login?installToken=...&persona=... -> Discord OAuth. */
 export async function devPersonaStart(req: Request, res: Response): Promise<void> {
+  return runRequiredBundle('session', 'devPersonaLoginController:609b480c48bb', async () => {
   const installToken = String(req.query.installToken || '').trim();
   const persona = String(req.query.persona || '').trim().toLowerCase();
   if (!installToken || !persona) { res.status(400).send('Missing installToken or persona'); return; }
@@ -151,8 +155,8 @@ export async function devPersonaStart(req: Request, res: Response): Promise<void
     // A fresh attempt must not consume the result of a previous attempt for the
     // same install token (the status endpoint is intentionally public and
     // keyed by this token, like the existing QA flow).
-    await redis.del([`dev_persona_grant:${installToken}`, `dev_persona_denied:${installToken}`]);
-    await redis.set(`dev_persona_oauth_state:${state}`, JSON.stringify({ installToken, persona }), { EX: STATE_TTL_SECONDS });
+    await runRequiredMutation('session', 'cdcdf26a00013652387413cf', { stage: 'primary-write-unconfirmed' }, () => redis.del([`dev_persona_grant:${installToken}`, `dev_persona_denied:${installToken}`]), undefined, undefined, isRowCountNoChange);
+    await runRequiredMutation('session', '09c627eef0156d98d61ce4e8', { stage: 'primary-write-unconfirmed' }, () => redis.set(`dev_persona_oauth_state:${state}`, JSON.stringify({ installToken, persona }), { EX: STATE_TTL_SECONDS }), undefined, undefined, undefined);
   } catch {
     res.status(500).send('Internal error');
     return;
@@ -166,6 +170,8 @@ export async function devPersonaStart(req: Request, res: Response): Promise<void
     state,
   });
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+
+  });
 }
 
 /**
@@ -276,11 +282,12 @@ export function makeDevPersonaLoginAsHandler(
 }
 
 export async function issueDevPersonaSession(installToken: string, persona: string): Promise<DevPersonaGrant> {
+  return runRequiredBundle('session', 'devPersonaLoginController:a00b769b5673', async () => {
   const p = getDevPersona(persona);
   if (!p) throw new Error('Unknown dev persona');
 
   const fakeDiscordId = devPersonaDiscordId(persona, installToken);
-  await prisma.user.upsert({
+  await runRequiredMutation('identity', '4b7962ce60dbba2851d0e3a0', { stage: 'primary-write-unconfirmed', discordId: fakeDiscordId }, () => prisma.user.upsert({
     where: { installToken },
     create: {
       installToken,
@@ -296,31 +303,37 @@ export async function issueDevPersonaSession(installToken: string, persona: stri
       discordDisplayName: p.username,
       discordAuthedAt: new Date(),
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   if (DEV_PRIVILEGED_ROLES.includes(p.role)) {
-    await prisma.adminUser.upsert({
+    await runRequiredMutation('identity', '2fb1adf144d458ff611f2292', { stage: 'primary-write-unconfirmed', discordId: fakeDiscordId }, () => prisma.adminUser.upsert({
       where: { discordId: fakeDiscordId },
       create: { discordId: fakeDiscordId, username: p.username, role: p.role, updatedAt: new Date() },
       update: { role: p.role, updatedAt: new Date() },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
   }
   const user = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
   if (!user) throw new Error('User not found after upsert');
   const token = uuidv4();
   const redis = await getRedisClient();
-  await redis.set(`session:${token}`, user.id, { EX: SESSION_TTL_SECONDS });
-  prisma.session.create({ data: { token, userId: user.id, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000) } })
+  await runRequiredMutation('session', '1bcea6e827bc08d815c73f45', { stage: 'primary-write-unconfirmed' }, () => redis.set(`session:${token}`, user.id, { EX: SESSION_TTL_SECONDS }), undefined, undefined, undefined);
+  void runtime.required('session:persist', () => prisma.session.create({ data: { token, userId: user.id, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000) } }),
+    { userId: user.id, source: 'dev-persona' })
     .catch(() => {});
   return { token, userId: user.id, displayName: p.username, role: p.role };
+
+  });
 }
 
 export const defaultDevPersonaCallbackDeps: DevPersonaCallbackDeps = {
   async consumeState(state) {
+  return runRequiredBundle('identity', 'devPersonaLoginController:fd35d3fc846f', async () => {
     const redis = await getRedisClient();
-    const raw = await redis.getDel(`dev_persona_oauth_state:${state}`);
+    const raw = await runRequiredMutation('identity', '793b06fce0c39151dc564b53', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`dev_persona_oauth_state:${state}`), undefined, undefined, reply => reply === null);
     if (!raw) return null;
     try { return JSON.parse(raw) as DevPersonaLoginState; } catch { return null; }
-  },
+
+  });
+},
   async exchangeCode(code, callbackRedirectUri) {
     const r = await fetch('https://discord.com/api/oauth2/token', {
       method: 'POST',
@@ -333,14 +346,14 @@ export const defaultDevPersonaCallbackDeps: DevPersonaCallbackDeps = {
         redirect_uri: callbackRedirectUri,
       }),
     });
-    if (!r.ok) throw new Error(`token exchange HTTP ${r.status}`);
+    if (!r.ok) { await r.text(); throw new Error(`token exchange HTTP ${r.status}`); }
     const json = await r.json() as { access_token?: string };
     if (!json.access_token) throw new Error('No access token from Discord');
     return { accessToken: json.access_token };
   },
   async fetchIdentity(accessToken) {
     const r = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!r.ok) throw new Error(`identity HTTP ${r.status}`);
+    if (!r.ok) { await discardRuntimeResponse(r); throw new Error(`identity HTTP ${r.status}`); }
     return await r.json() as DevPersonaIdentity;
   },
   async checkDeveloperAccess(discordUserId) {
@@ -348,24 +361,36 @@ export const defaultDevPersonaCallbackDeps: DevPersonaCallbackDeps = {
   },
   issueSession: issueDevPersonaSession,
   async storeGrant(installToken, grant) {
+  return runRequiredBundle('session', 'devPersonaLoginController:6a771fc02bd2', async () => {
     const redis = await getRedisClient();
-    await redis.set(`dev_persona_grant:${installToken}`, JSON.stringify(grant), { EX: GRANT_TTL_SECONDS });
-  },
+    await runRequiredMutation('session', 'e36d0c26e01f2eb92b2e8354', { stage: 'primary-write-unconfirmed' }, () => redis.set(`dev_persona_grant:${installToken}`, JSON.stringify(grant), { EX: GRANT_TTL_SECONDS }), undefined, undefined, undefined);
+
+  });
+},
   async storeDenial(installToken, reason) {
+  return runRequiredBundle('session', 'devPersonaLoginController:dee407c08014', async () => {
     const redis = await getRedisClient();
-    await redis.set(`dev_persona_denied:${installToken}`, reason.slice(0, 200), { EX: GRANT_TTL_SECONDS });
-  },
+    await runRequiredMutation('session', '0cf59d746b3a8cc903719e63', { stage: 'primary-write-unconfirmed' }, () => redis.set(`dev_persona_denied:${installToken}`, reason.slice(0, 200), { EX: GRANT_TTL_SECONDS }), undefined, undefined, undefined);
+
+  });
+},
 };
 
 export const defaultDevPersonaStatusDeps: DevPersonaStatusDeps = {
   async consumeGrant(installToken) {
+  return runRequiredBundle('identity', 'devPersonaLoginController:2d7f61044241', async () => {
     const redis = await getRedisClient();
-    const raw = await redis.getDel(`dev_persona_grant:${installToken}`);
+    const raw = await runRequiredMutation('identity', '3080bb742b7554f9e0401e44', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`dev_persona_grant:${installToken}`), undefined, undefined, reply => reply === null);
     if (!raw) return null;
     try { return JSON.parse(raw) as DevPersonaGrant; } catch { return null; }
-  },
+
+  });
+},
   async consumeDenial(installToken) {
+  return runRequiredBundle('identity', 'devPersonaLoginController:73c1e84b8928', async () => {
     const redis = await getRedisClient();
-    return redis.getDel(`dev_persona_denied:${installToken}`);
-  },
+    return runRequiredMutation('identity', '8e7d866bf39dfa71e638e176', { stage: 'primary-write-unconfirmed' }, () => redis.getDel(`dev_persona_denied:${installToken}`), undefined, undefined, reply => reply === null);
+
+  });
+},
 };

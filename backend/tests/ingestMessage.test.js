@@ -205,6 +205,7 @@ describe('ingestMessage — happy path', () => {
       undefined,
       result.messageId,
       undefined,
+      messageQueue.add.mock.calls[0][0].createdAt,
     );
   });
 
@@ -231,6 +232,7 @@ describe('ingestMessage — happy path', () => {
       undefined,
       result.messageId,
       { badges: ['overseer'] },
+      messageQueue.add.mock.calls[0][0].createdAt,
     );
   });
 

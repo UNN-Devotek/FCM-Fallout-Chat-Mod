@@ -119,6 +119,7 @@ No client release is needed for backend/dashboard-only changes.
 
 | File | Contents |
 |------|----------|
+| [dependency-integration-20261104.md](dependency-integration-20261104.md) | Remaining PR integration, backend maintenance fixes, security audit scope and MSI native acceptance |
 | [dependency-integration-20261103.md](dependency-integration-20261103.md) | Combined pre-release dependency updates, compatibility checks and Dev integration status |
 | [hud-bridge-release-readiness-20261103.md](hud-bridge-release-readiness-20261103.md) | Current HUD/bridge release delta, desktop compatibility, validation and remaining publication gates |
 | [local-dev.md](local-dev.md) | Local stack setup, dev port map, per-platform instructions |

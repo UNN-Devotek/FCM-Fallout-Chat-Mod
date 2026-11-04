@@ -1,3 +1,4 @@
+import { runRequiredEffect } from '../lib/requiredEffects';
 /**
  * atomPriceService — fetches last-known Atomic Shop prices from the Fallout wiki
  * for CAMP items, then writes atom_price / atom_bundle / atom_checked_at columns.
@@ -439,13 +440,13 @@ export async function updateCampAtomPrices(): Promise<AtomPriceCoverage> {
       }
 
       // Update the row
-      await prisma.$executeRaw`
+      await runRequiredEffect('camp:atom-price', { campItemId: row.id, stage: 'atom-price-write-unconfirmed' }, () => prisma.$executeRaw`
         UPDATE camp_items
         SET atom_price      = ${atomPrice},
             atom_bundle     = ${atomBundle},
             atom_checked_at = ${checkedAt}
         WHERE id = ${row.id}
-      `;
+      `);
 
       if (atomPrice != null)  withPrice++;
       if (atomBundle != null) withBundle++;

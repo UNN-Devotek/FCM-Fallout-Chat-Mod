@@ -87,7 +87,7 @@ describe('githubService', () => {
 
   it('createIssue throws on a non-2xx response', async () => {
     global.fetch.mockResolvedValueOnce(restResponse(422, { message: 'Validation failed' }));
-    await expect(svc.createIssue({ title: 't', body: 'b' })).rejects.toThrow(/422.*Validation failed/);
+    await expect(svc.createIssue({ title: 't', body: 'b' })).rejects.toThrow('GitHub REST POST -> HTTP 422');
   });
 
   it('addLabels is a no-op for an empty list', async () => {
@@ -111,7 +111,7 @@ describe('githubService', () => {
   });
 
   it('setIssueMilestone PATCHes the issue with the milestone number', async () => {
-    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5 }));
+    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5, milestone: { number: 2 } }));
     await svc.setIssueMilestone(5, 2);
     const [url, opts] = global.fetch.mock.calls[0];
     expect(url).toBe('https://api.github.com/repos/UNN-Devotek/FCM-Fallout-Chat-Mod/issues/5');
@@ -120,7 +120,7 @@ describe('githubService', () => {
   });
 
   it('setIssueMilestone clears the milestone with null', async () => {
-    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5 }));
+    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5, milestone: null }));
     await svc.setIssueMilestone(5, null);
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ milestone: null });
   });
@@ -145,7 +145,9 @@ describe('githubService', () => {
   });
 
   it('deleteIssue surfaces GraphQL FORBIDDEN (caller falls back to close)', async () => {
-    global.fetch.mockResolvedValueOnce(gqlResponse({ errors: [{ message: 'Must have admin access to delete' }] }));
-    await expect(svc.deleteIssue('NODE9')).rejects.toThrow(/admin access/);
+    global.fetch.mockResolvedValueOnce(gqlResponse({ data: { deleteIssue: null }, errors: [{ type: 'FORBIDDEN', path: ['deleteIssue'], message: 'Must have admin access to delete' }] }));
+    const error = await svc.deleteIssue('NODE9').catch(error => error);
+    expect(svc.isIssueDeleteRefused(error)).toBe(true);
+    expect(error.message).toBe('GitHub issue deletion was refused');
   });
 });

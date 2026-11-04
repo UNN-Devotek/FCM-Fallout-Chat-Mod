@@ -1,3 +1,4 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 import logger from '../config/logger';
 import { cachedFetch } from '../lib/cachedFetch';
 
@@ -28,6 +29,7 @@ async function fetchFromBethesda(): Promise<ServerStatus | null> {
       headers: { 'User-Agent': 'FalloutChatMod/1.x (falloutchatmod.com)' },
     });
     if (!res.ok) {
+      await discardRuntimeResponse(res);
       logger.warn({ status: res.status }, 'Bethesda status endpoint returned non-OK');
       return null;
     }

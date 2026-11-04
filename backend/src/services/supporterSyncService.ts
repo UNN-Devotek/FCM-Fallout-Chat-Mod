@@ -1,3 +1,4 @@
+import { cancelProducerTimer, runtime, producerInterval, producerTimeout } from '../runtime';
 /**
  * Keeps supporter entitlements in lockstep with Discord tier roles and the
  * admin-role cosmetics bypass.
@@ -206,13 +207,14 @@ async function applyHudRoleResult(
 ): Promise<void> {
   const syncRoles = deps.syncRoles ?? ((id, roleIds, source) =>
     syncFromDiscordRolesWithResult(id, roleIds, source, { skipUnchanged: true }));
-  const result = await syncRoles(discordId, roles, 'discord_sub');
+  const result = await requiredSupporterEffect(request, discordId, 'entitlement-sync-unconfirmed',
+    () => syncRoles(discordId, roles, 'discord_sub'));
   if (!result.changed) {
     // A role read is an authoritative consistency boundary even when the DB row was
     // already active. This matters after the feature flag has been re-enabled: a
     // stale Redis "none" value must not survive a successful Discord verification.
-    await (deps.bustTier ?? bustTierCache)(discordId);
-    await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
+    await requiredSupporterEffect(request, discordId, 'tier-cache-delete-unconfirmed', () => (deps.bustTier ?? bustTierCache)(discordId));
+    await requiredSupporterEffect(request, discordId, 'cosmetics-cache-delete-unconfirmed', () => (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId));
     return;
   }
 
@@ -220,11 +222,21 @@ async function applyHudRoleResult(
   // cache after a real tier transition, then push the refreshed identity to
   // connected web/overlay sessions. The HUD message itself is decorated after
   // this helper returns.
-  await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
-  await (deps.refreshPresentation ?? refreshSupporterPresentation)(discordId, {
+  await requiredSupporterEffect(request, discordId, 'cosmetics-cache-delete-unconfirmed', () => (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId));
+  await requiredSupporterEffect(request, discordId, 'presentation-refresh-unconfirmed', () => (deps.refreshPresentation ?? refreshSupporterPresentation)(discordId, {
     syncNickname: false,
     syncRoles: false,
-  });
+  }));
+}
+
+async function requiredSupporterEffect<T>(request: HudRoleRefreshRequest | null, discordId: string, stage: string,
+  effect: () => Promise<T>): Promise<T> {
+  try { return await effect(); }
+  catch (err) {
+    runtime.recordFailure('supporter:live-refresh', new Error('Required supporter state effect was not confirmed'),
+      { ...(request ? { userId: request.userId } : {}), discordId, stage });
+    throw new Error('Required supporter state effect was not confirmed');
+  }
 }
 
 /**
@@ -287,8 +299,8 @@ export async function refreshSupporterFromDiscord(
       // pre-refresh `none` projections: the tier and resolved-cosmetics caches are
       // shared, cheap to rebuild, and are the values consumed immediately after
       // this helper by the HUD send path.
-      await (deps.bustTier ?? bustTierCache)(discordId);
-      await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
+      await requiredSupporterEffect(request, discordId, 'tier-cache-delete-unconfirmed', () => (deps.bustTier ?? bustTierCache)(discordId));
+      await requiredSupporterEffect(request, discordId, 'cosmetics-cache-delete-unconfirmed', () => (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId));
       return;
     }
 
@@ -372,6 +384,8 @@ async function onGuildMemberUpdate(
       '[supporterSync] tier changed via GuildMemberUpdate',
     );
   } catch (err) {
+    runtime.recordFailure('supporter:guild-member-update', new Error('Supporter member update was not confirmed'),
+      { discordId: newMember.id, stage: 'guild-member-state-unconfirmed' });
     logger.warn({ err }, '[supporterSync] GuildMemberUpdate handler failed (non-fatal)');
   }
 }
@@ -395,6 +409,8 @@ async function onGuildMemberRemove(member: GuildMember | PartialGuildMember): Pr
       await refreshSupporterPresentation(member.id, { syncNickname: false, syncRoles: false });
     }
   } catch (err) {
+    runtime.recordFailure('supporter:guild-member-remove', new Error('Supporter member removal was not confirmed'),
+      { discordId: member.id, stage: 'guild-member-state-unconfirmed' });
     logger.warn({ err }, '[supporterSync] GuildMemberRemove handler failed (non-fatal)');
   }
 }
@@ -445,9 +461,9 @@ export async function runReconcile(
   for (const [discordId, roles] of roleMembers) {
     const tier = resolveTier(roles);
     if (tier === 'none') continue;
-    const result = await syncRoles(discordId, roles, 'discord_sub');
+    const result = await requiredSupporterEffect(null, discordId, 'entitlement-sync-unconfirmed', () => syncRoles(discordId, roles, 'discord_sub'));
     if (result.changed) {
-      await refreshPresentation(discordId);
+      await requiredSupporterEffect(null, discordId, 'presentation-refresh-unconfirmed', () => refreshPresentation(discordId));
       granted++;
     }
   }
@@ -460,9 +476,10 @@ export async function runReconcile(
       const tier = resolveTier(roleMembers.get(row.discordId) ?? []);
       if (tier !== 'none') continue;
     }
-    const changed = await lapse({ discordId: row.discordId, reason: 'reconcile: tier role not held' });
+    const changed = await requiredSupporterEffect(null, row.discordId, 'entitlement-sync-unconfirmed',
+      () => lapse({ discordId: row.discordId, reason: 'reconcile: tier role not held' }));
     if (changed) {
-      await refreshPresentation(row.discordId);
+      await requiredSupporterEffect(null, row.discordId, 'presentation-refresh-unconfirmed', () => refreshPresentation(row.discordId));
       lapsed++;
     }
   }
@@ -511,11 +528,11 @@ export function register(client: Client): void {
   client.on('guildMemberRemove', (m) => void onGuildMemberRemove(m));
 
   client.once('ready', () => {
-    firstRunHandle = setTimeout(() => {
+    firstRunHandle = producerTimeout('supporter-first-reconcile', () => {
       void track(async () => { await runReconcile(); });
     }, FIRST_RUN_DELAY_MS);
 
-    intervalHandle = setInterval(() => {
+    intervalHandle = producerInterval('supporter-reconcile', () => {
       void track(async () => { await runReconcile(); });
     }, RECONCILE_INTERVAL_MS);
 
@@ -528,8 +545,8 @@ export function register(client: Client): void {
 
 /** Test/shutdown helper. */
 export function stop(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  if (firstRunHandle) clearTimeout(firstRunHandle);
+  if (intervalHandle) cancelProducerTimer(intervalHandle);
+  if (firstRunHandle) cancelProducerTimer(firstRunHandle);
   intervalHandle = null;
   firstRunHandle = null;
 }

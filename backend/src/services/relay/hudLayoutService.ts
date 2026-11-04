@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 import prisma from '../../config/prisma';
 
 export const HUD_LAYOUT_CONTROL = 'FCMCTL/1/LAYOUT/';
@@ -67,7 +68,10 @@ export async function readHudLayout(relayUserId: string): Promise<HudLayout | nu
 }
 
 export async function writeHudLayout(relayUserId: string, layout: HudLayout): Promise<void> {
-  await prisma.hudPairingToken.updateMany({
+  return runRequiredBundle('session', 'hudLayoutService:b4f55e3564bc', async () => {
+  await runRequiredMutation('session', '2f69e7b9406c3ae7ead0a783', { stage: 'primary-write-unconfirmed', userId: relayUserId }, () => prisma.hudPairingToken.updateMany({
     where: { userId: relayUserId, revokedAt: null }, data: { hudLayout: { ...layout } },
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+
   });
 }

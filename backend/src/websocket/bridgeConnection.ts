@@ -1,3 +1,4 @@
+import { cancelProducerTimer, runtime, producerTimeout } from '../runtime';
 import { bridgeBindingId, resolveOverlayBridge, type BridgeBinding, type BridgeResolution } from '../services/relay/overlayServerBridge';
 import { getServerHistory, SERVER_HISTORY_ROOM, type ServerRoomEvent, type ServerEventEnvelope } from '../services/relay/serverChat';
 import { sendServerMessage, ServerMessageError } from '../services/relay/serverMessageService';
@@ -41,10 +42,10 @@ export class BridgeConnection {
     this.disposed = true; this.binding = null; this.seen.clear();
     this.stopNative();
     this.epoch++;
-    void this.local?.close().catch(() => {});
+    void this.local?.close().catch(err => runtime.recordFailure('bridge:socket-close', err, { accountId: this.accountId }));
   }
   private stopNative(): void {
-    if (this.nativeTimer) clearTimeout(this.nativeTimer);
+    if (this.nativeTimer) cancelProducerTimer(this.nativeTimer);
     this.nativeTimer = undefined; this.nativeSession = ''; this.nativeSequence = 0;
     nativeBridgePrototype.release(this);
   }
@@ -60,7 +61,7 @@ export class BridgeConnection {
   }
   private async pollNative(): Promise<void> {
     if (this.nativeBusy || !this.nativeSession || this.disposed) return;
-    if (this.nativeTimer) clearTimeout(this.nativeTimer);
+    if (this.nativeTimer) cancelProducerTimer(this.nativeTimer);
     this.nativeTimer = undefined;
     this.nativeBusy = true;
     const session = this.nativeSession, epoch = this.epoch;
@@ -84,7 +85,7 @@ export class BridgeConnection {
     finally {
       this.nativeBusy = false;
       if (!this.disposed && this.nativeSession === session && epoch === this.epoch) {
-        this.nativeTimer = setTimeout(() => { void this.pollNative(); }, 1000);
+        this.nativeTimer = producerTimeout('bridge-native-poll', () => this.pollNative(), 1000);
         this.nativeTimer.unref?.();
       }
     }

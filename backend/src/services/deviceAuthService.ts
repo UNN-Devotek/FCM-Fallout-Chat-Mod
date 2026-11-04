@@ -1,3 +1,4 @@
+import { runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Device keypair auth — verifies ECDSA P-256 / SHA-256 request signatures.
  *
@@ -62,6 +63,7 @@ export async function verifySignedRequest(
   rawBody: Buffer,
   hdrs: SignatureHeaders,
 ): Promise<VerifyResult> {
+  return runRequiredBundle('authority', 'deviceAuthService:15f78a835248', async () => {
   // 1. Timestamp window
   const ts = Number(hdrs.timestamp);
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > SKEW_WINDOW_MS) {
@@ -84,7 +86,7 @@ export async function verifySignedRequest(
   // 4. Single-use nonce (replay protection). SET NX — fails if seen before.
   try {
     const redis = await getRedisClient();
-    const set = await redis.set(`device_nonce:${hdrs.installToken}:${hdrs.nonce}`, '1', { NX: true, EX: NONCE_TTL_SECONDS });
+    const set = await runRequiredMutation('authority', '98b8cfdc133b4328d50b26ba', { stage: 'primary-write-unconfirmed' }, () => redis.set(`device_nonce:${hdrs.installToken}:${hdrs.nonce}`, '1', { NX: true, EX: NONCE_TTL_SECONDS }), undefined, undefined, reply => reply === null);
     if (set !== 'OK') return { ok: false, status: 401, reason: 'nonce replay' };
   } catch (err) {
     // Fail CLOSED on nonce-store failure — replay protection is load-bearing.
@@ -115,6 +117,8 @@ export async function verifySignedRequest(
     .catch(() => { /* non-fatal */ });
 
   return { ok: true, installToken: hdrs.installToken };
+
+  });
 }
 
 /**

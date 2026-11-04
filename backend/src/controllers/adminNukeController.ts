@@ -1,3 +1,4 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
@@ -26,6 +27,7 @@ import { getRedisClient } from '../config/redis';
  * Then SCAN+UNLINK every `session:*` key in Redis.
  */
 async function nukeUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'adminNukeController:70c2f231d802', async () => {
   try {
     const queryConfirm = typeof req.query.confirm === 'string' ? req.query.confirm : undefined;
     const body = (req.body ?? {}) as { confirm?: unknown };
@@ -43,27 +45,38 @@ async function nukeUsers(req: Request, res: Response, next: NextFunction): Promi
     logger.warn({ audit: 'admin-nuke-users', sourceIp: req.ip }, 'Admin nuke-users initiated');
 
     // 1. DB transaction — delete children then users.
-    const deletedUsers = await prisma.$transaction(async (tx) => {
-      await tx.message.deleteMany({});
-      await tx.auditLog.deleteMany({});
-      await tx.playerReport.deleteMany({});
-      await tx.report.deleteMany({});
-      await tx.staffApplication.deleteMany({});
-      const { count } = await tx.user.deleteMany({});
+    const deletedUsers = await runRequiredTransaction('identity', 'b5b129a90401503c72492cf2', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
+      await runRequiredMutation('identity', '37bda99ec72ce09c0b735c2f', { stage: 'primary-write-unconfirmed' }, () => tx.message.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+      await runRequiredMutation('identity', '254b65de5c9148fafc2a6658', { stage: 'primary-write-unconfirmed' }, () => tx.auditLog.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+      await runRequiredMutation('identity', '555bb686a8a1b01de1935fe0', { stage: 'primary-write-unconfirmed' }, () => tx.playerReport.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+      await runRequiredMutation('identity', 'daafb05633f68e1488da7e28', { stage: 'primary-write-unconfirmed' }, () => tx.report.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+      await runRequiredMutation('identity', '35f3a3a18510723e545b6dc8', { stage: 'primary-write-unconfirmed' }, () => tx.staffApplication.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+      const { count } = await runRequiredMutation('identity', 'd461354ac404ceef3d672064', { stage: 'primary-write-unconfirmed' }, () => tx.user.deleteMany({}), isPrismaAtomicRefusal, tx, isRowCountNoChange);
       return count;
-    });
+    }), { confirmedRollback: isPrismaAtomicRefusal });
 
     // 2. Clear Redis session keys via SCAN + UNLINK (safer than KEYS).
-    const redis = await getRedisClient();
+    // Confirmation and the completed SQL phase accept coupled session cleanup.
+    // A failed discovery cannot prove absent Redis authority, even with zero SQL
+    // rows. Successful discovery is a read, not committed mutation progress.
+    const redis = await runRequiredMutation('session', 'c094786b8c7957313166e338', {
+      stage: 'session-cleanup-client-discovery-unconfirmed',
+    }, () => getRedisClient(), undefined, undefined, () => true);
     let clearedSessions = 0;
     // node-redis v5+ uses STRING cursors for SCAN (argument and return). Start at
     // '0' and terminate on '0'; a numeric cursor mistypes redis.scan() under v6.
     let cursor = '0';
     do {
-      const reply = await redis.scan(cursor, { MATCH: 'session:*', COUNT: 500 });
+      const reply = await runRequiredMutation('session', 'ac0baf2a565a8e4cf5d9aaf4', {
+        stage: 'session-cleanup-scan-unconfirmed', count: clearedSessions,
+      }, () => redis.scan(cursor, { MATCH: 'session:*', COUNT: 500 }), undefined, undefined, () => true);
       const keys: string[] = reply.keys;
       if (keys.length > 0) {
-        await redis.unlink(keys);
+        await runRequiredMutation('session', 'f523d75dc27aee7414c4a2ef', {
+          stage: 'session-unlink-unconfirmed', targetCount: keys.length,
+          count: clearedSessions,
+        }, () => redis.unlink(keys), undefined, undefined, isRowCountNoChange);
         clearedSessions += keys.length;
       }
       cursor = reply.cursor;
@@ -79,6 +92,8 @@ async function nukeUsers(req: Request, res: Response, next: NextFunction): Promi
     logger.error({ err }, 'Admin nuke-users failed');
     next(err);
   }
+
+  });
 }
 
 export { nukeUsers };

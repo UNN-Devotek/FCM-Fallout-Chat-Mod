@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -35,34 +36,40 @@ async function listWordFilters(_req: Request, res: Response, next: NextFunction)
  * POST /api/moderation/word-filter
  */
 async function addWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:3927d47b6abe', async () => {
   const { phrase, isRegex, testMode } = req.body;
   try {
-    const result = await dbQuery(
+    const result = await runRequiredMutation('moderation', 'cc92328fe294659b3a8266e4', { stage: 'primary-write-unconfirmed' }, () => dbQuery(
       'INSERT INTO word_filter (phrase, is_regex, test_mode) VALUES ($1, $2, $3) ON CONFLICT (phrase) DO NOTHING RETURNING *',
       [phrase.toLowerCase(), isRegex, testMode || false]
-    );
+    ), undefined, undefined, undefined);
     resetCache();
     res.status(201).json({ data: result.rows[0] || null });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/moderation/word-filter/:id
  */
 async function deleteWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:c147129bd89c', async () => {
   if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid word filter ID'));
   try {
     const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.wordFilter.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Filter entry not found'));
-    await prisma.wordFilter.delete({ where: { id } });
+    await runRequiredMutation('moderation', 'a6673fbe610f87fc236c97c9', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.wordFilter.delete({ where: { id } }), isPrismaAtomicRefusal, undefined, undefined);
     resetCache();
     res.json({ data: { deleted: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -87,6 +94,7 @@ async function listDiscordRelayMappings(_req: Request, res: Response, next: Next
  * POST /api/moderation/discord-relay-mappings
  */
 async function createDiscordRelayMapping(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:88c36aa613f1', async () => {
   const { inGameChannelId, discordChannelId } = req.body;
   if (!inGameChannelId || !discordChannelId) {
     return next(createError(400, 'inGameChannelId and discordChannelId are required'));
@@ -101,31 +109,36 @@ async function createDiscordRelayMapping(req: Request, res: Response, next: Next
       return next(createError(400, 'Maximum 20 relay pairs allowed per deployment'));
     }
 
-    const result = await dbQuery(
+    const result = await runRequiredMutation('moderation', 'a0d3a2b279c649cdd00eec7c', { stage: 'primary-write-unconfirmed' }, () => dbQuery(
       `INSERT INTO discord_relay_mappings (in_game_channel_id, discord_channel_id)
        VALUES ($1, $2) ON CONFLICT (in_game_channel_id, discord_channel_id) DO NOTHING RETURNING *`,
       [inGameChannelId, discordChannelId]
-    );
+    ), undefined, undefined, undefined);
     res.status(201).json({ data: result.rows[0] || null });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
  * DELETE /api/moderation/discord-relay-mappings/:id
  */
 async function deleteDiscordRelayMapping(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:43c59c215d36', async () => {
   if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid relay mapping ID'));
   try {
     const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordRelayMapping.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Mapping not found'));
-    await prisma.discordRelayMapping.delete({ where: { id } });
+    await runRequiredMutation('moderation', 'd46f73267eff85d4b9142e29', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.discordRelayMapping.delete({ where: { id } }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: { deleted: true } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 // Voice ("join-to-create") settings live in the moderation_settings k/v store.
@@ -164,6 +177,7 @@ async function getVoiceSettings(_req: Request, res: Response, next: NextFunction
  * Body: { enabled, lobbyChannelId, categoryId, nameTemplate }. Upserts each key.
  */
 async function updateVoiceSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:d5318752f942', async () => {
   const { enabled, lobbyChannelId, categoryId, nameTemplate } = req.body ?? {};
 
   if (typeof enabled !== 'boolean') return next(createError(400, 'enabled must be a boolean'));
@@ -186,15 +200,16 @@ async function updateVoiceSettings(req: Request, res: Response, next: NextFuncti
   ];
 
   try {
-    await prisma.$transaction(
+    const actorId = await resolveActorId(req);
+    await runRequiredTransaction('moderation', '5f760b6dca342f91e72abb61', { stage: 'voice-settings-transaction-unconfirmed' }, () => prisma.$transaction(
       entries.map(([key, value]) =>
         prisma.moderationSetting.upsert({ where: { key }, update: { value }, create: { key, value } }),
       ),
-    );
+    ), { lazyArray: true, confirmedRollback: isPrismaAtomicRefusal, confirmedNoChange: replies => replies.length === 0 });
     invalidateVoiceCache();
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: await resolveActorId(req),
+        actorId,
         action: 'update_voice_settings',
         targetType: 'moderation_setting',
         reason: `Voice ${enabled ? 'enabled' : 'disabled'} (lobby=${lobby || 'none'})`,
@@ -203,6 +218,8 @@ async function updateVoiceSettings(req: Request, res: Response, next: NextFuncti
     }).catch(() => {});
     res.json({ data: { enabled, lobbyChannelId: lobby, categoryId: category, nameTemplate: template || "{user}'s Channel" } });
   } catch (err) { next(err); }
+
+  });
 }
 
 /**
@@ -261,6 +278,7 @@ async function resolveActorId(req: Request): Promise<string | null> {
  * the mod_log_channel_id key (Discord snowflake string).
  */
 async function updateSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:5fcfc91bf846', async () => {
   const { key, value } = req.body;
   if (!key || value === undefined || value === null) return next(createError(400, 'key and value required'));
 
@@ -271,15 +289,16 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
       return next(createError(422, 'mod_log_channel_id must be a valid Discord snowflake (17-20 digits)'));
     }
     try {
-      await prisma.moderationSetting.upsert({
+      const actorId = await resolveActorId(req);
+      await runRequiredMutation('moderation', '3b5711433f86cf0c6c9bbebc', { stage: 'primary-write-unconfirmed' }, () => prisma.moderationSetting.upsert({
         where: { key },
         update: { value: strVal },
         create: { key, value: strVal },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       invalidateModLogCache();
-      await prisma.auditLog.create({
+      await createRequiredAudit(prisma.auditLog, {
         data: {
-          actorId: await resolveActorId(req),
+          actorId,
           action: 'update_setting',
           targetType: 'moderation_setting',
           reason: `Updated ${key} to ${strVal}`,
@@ -308,15 +327,16 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
     }
 
     try {
-      await prisma.moderationSetting.upsert({
+      const actorId = await resolveActorId(req);
+      await runRequiredMutation('moderation', 'ec0f489e0091ff8c48318ffd', { stage: 'primary-write-unconfirmed' }, () => prisma.moderationSetting.upsert({
         where: { key },
         update: { value: strVal },
         create: { key, value: strVal },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       invalidateAiModerationCache();
-      await prisma.auditLog.create({
+      await createRequiredAudit(prisma.auditLog, {
         data: {
-          actorId: await resolveActorId(req),
+          actorId,
           action: 'update_setting',
           targetType: 'moderation_setting',
           reason: `Updated ${key} to ${strVal.slice(0, 200)}`,
@@ -335,14 +355,15 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
     return next(createError(422, 'Window must be 1-300 seconds (1000-300000ms)'));
 
   try {
-    await prisma.moderationSetting.update({
+    const actorId = await resolveActorId(req);
+    await runRequiredMutation('moderation', '6f0ad12eff27267c6fad09cf', { stage: 'primary-write-unconfirmed' }, () => prisma.moderationSetting.update({
       where: { key },
       data: { value: String(numVal) },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     invalidateSettingsCache();
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: await resolveActorId(req),
+        actorId,
         action: 'update_setting',
         targetType: 'moderation_setting',
         reason: `Updated ${key} to ${numVal}`,
@@ -351,12 +372,15 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
     });
     res.json({ data: { key, value: String(numVal) } });
   } catch (err) { next(err); }
+
+  });
 }
 
 /**
  * PATCH /api/moderation/word-filters/:id
  */
 async function updateWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:b82b8748462e', async () => {
   const { phrase, testMode } = req.body;
   const id = parseInt(paramStr(req, 'id'), 10);
   if (isNaN(id)) return next(createError(400, 'Invalid filter ID'));
@@ -367,6 +391,7 @@ async function updateWordFilter(req: Request, res: Response, next: NextFunction)
   }
 
   try {
+    const actorId = await resolveActorId(req);
     const existing = await prisma.wordFilter.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Filter not found'));
 
@@ -388,15 +413,15 @@ async function updateWordFilter(req: Request, res: Response, next: NextFunction)
       changes.testMode = !!testMode;
     }
 
-    await prisma.wordFilter.update({ where: { id }, data });
+    await runRequiredMutation('moderation', '2228dbd81afe9a5232a9a1aa', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.wordFilter.update({ where: { id }, data }), isPrismaAtomicRefusal, undefined, undefined);
     resetCache();
 
     const reason = changes.newPhrase
       ? `Changed "${changes.oldPhrase}" to "${changes.newPhrase}"`
       : `Updated filter id=${id}`;
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: await resolveActorId(req),
+        actorId,
         action: 'edit_word_filter',
         targetType: 'word_filter',
         reason,
@@ -410,15 +435,19 @@ async function updateWordFilter(req: Request, res: Response, next: NextFunction)
     });
     res.json({ data: updated });
   } catch (err) { next(err); }
+
+  });
 }
 
 /**
  * POST /api/moderation/word-filters/bulk
  */
 async function bulkImportWordFilters(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'moderationController:47f4b5fb61db', async () => {
   if (!(req as any).file) return next(createError(400, 'No file uploaded'));
 
   try {
+    const actorId = await resolveActorId(req);
     const content = (req as any).file.buffer.toString('utf-8');
     const phrases = content.split(/[\n,]/).map((p: string) => p.trim()).filter(Boolean);
     if (phrases.length === 0) return next(createError(422, 'File contains no valid phrases'));
@@ -430,12 +459,12 @@ async function bulkImportWordFilters(req: Request, res: Response, next: NextFunc
     if (newPhrases.length === 0) return next(createError(422, 'All phrases already exist'));
 
     const values = newPhrases.map((_, i) => `($${i + 1})`).join(', ');
-    await dbQuery(`INSERT INTO word_filter (phrase) VALUES ${values}`, newPhrases);
+    await runRequiredMutation('moderation', 'b63a6e9d5f5b2668988982c3', { stage: 'primary-write-unconfirmed' }, () => dbQuery(`INSERT INTO word_filter (phrase) VALUES ${values}`, newPhrases), undefined, undefined, undefined);
     resetCache();
 
-    await prisma.auditLog.create({
+    await createRequiredAudit(prisma.auditLog, {
       data: {
-        actorId: await resolveActorId(req),
+        actorId,
         action: 'bulk_import_word_filter',
         targetType: 'word_filter',
         reason: `Imported ${newPhrases.length} phrases`,
@@ -445,6 +474,8 @@ async function bulkImportWordFilters(req: Request, res: Response, next: NextFunc
 
     res.json({ data: { imported: newPhrases.length, skipped: phrases.length - newPhrases.length } });
   } catch (err) { next(err); }
+
+  });
 }
 
 // =============================================================================

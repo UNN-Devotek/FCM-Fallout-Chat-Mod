@@ -1,3 +1,4 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import prisma from '../config/prisma';
 import { Prisma } from '@prisma/client';
 import { getBlockedIds, getBlockerIds } from './blockService';
@@ -135,16 +136,19 @@ function conversationSummaryForUser(
 }
 
 export async function getOrCreatePrivateConversation(requesterId: string, targetUserId: string) {
+  return runRequiredBundle('domain', 'privateMessagingService:881ad7e497c3', async () => {
   await assertConversationAvailable(requesterId, targetUserId);
   const [userAId, userBId] = sortParticipantIds(requesterId, targetUserId);
 
-  return prisma.privateConversation.upsert({
+  return runRequiredMutation('domain', '00c6d12edd0e2f5a21bc1f6f', { stage: 'primary-write-unconfirmed' }, () => prisma.privateConversation.upsert({
     where: { userAId_userBId: { userAId, userBId } },
     update: {},
     create: {
       userAId,
       userBId,
     },
+  }), isPrismaAtomicRefusal, undefined, undefined);
+
   });
 }
 
@@ -278,6 +282,7 @@ export async function getPrivateHistory(userId: string, conversationId: string, 
 }
 
 export async function sendPrivateMessage(senderId: string, recipientId: string, content: string) {
+  return runRequiredBundle('domain', 'privateMessagingService:eda527afeef9', async () => {
   const trimmed = typeof content === 'string' ? content.trim() : '';
   if (!trimmed) {
     const err = new Error('Invalid message content.');
@@ -293,18 +298,19 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
   await assertConversationAvailable(senderId, recipientId);
   const [userAId, userBId] = sortParticipantIds(senderId, recipientId);
 
-  return prisma.$transaction(async (tx) => {
-    const conversation = await tx.privateConversation.upsert({
+  return runRequiredTransaction('domain', '786ead5d3869d389744c7fc1', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
+    const conversation = await runRequiredMutation('domain', 'd6e224b022209f1fbc3eab84', { stage: 'primary-write-unconfirmed' }, () => tx.privateConversation.upsert({
       where: { userAId_userBId: { userAId, userBId } },
       update: {},
       create: {
         userAId,
         userBId,
       },
-    });
+    }), isPrismaAtomicRefusal, tx, undefined);
 
     const createdAt = new Date();
-    const message = await tx.privateMessage.create({
+    const message = await runRequiredMutation('domain', 'c97c61df018982f0ca63e914', { stage: 'primary-write-unconfirmed' }, () => tx.privateMessage.create({
       data: {
         conversationId: conversation.id,
         senderId,
@@ -319,9 +325,9 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
         createdAt: true,
         editedAt: true,
       },
-    });
+    }), isPrismaAtomicRefusal, tx, undefined);
 
-    await tx.privateConversation.update({
+    await runRequiredMutation('domain', '67eebb72c0f0a8288de2c5b3', { stage: 'primary-write-unconfirmed', rowId: conversation.id }, () => tx.privateConversation.update({
       where: { id: conversation.id },
       data: {
         lastMessageAt: createdAt,
@@ -329,7 +335,7 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
           ? { userALastReadAt: createdAt }
           : { userBLastReadAt: createdAt }),
       },
-    });
+    }), isPrismaAtomicRefusal, tx, undefined);
 
     const sender = await tx.user.findUnique({
       where: { id: senderId },
@@ -350,24 +356,29 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
       createdAt: message.createdAt.toISOString(),
       editedAt: message.editedAt?.toISOString() ?? null,
     };
+  }), { confirmedRollback: isPrismaAtomicRefusal });
+
   });
 }
 
 export async function markPrivateConversationRead(userId: string, conversationId: string) {
+  return runRequiredBundle('domain', 'privateMessagingService:a2baacbfd404', async () => {
   const conversation = await getParticipantConversation(userId, conversationId);
   const readAt = new Date();
 
-  await prisma.privateConversation.update({
+  await runRequiredMutation('domain', '1554a2f71a9df6a9515818e0', { stage: 'primary-write-unconfirmed', rowId: conversationId }, () => prisma.privateConversation.update({
     where: { id: conversationId },
     data: conversation.userAId === userId
       ? { userALastReadAt: readAt }
       : { userBLastReadAt: readAt },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   return {
     conversationId,
     readAt: readAt.toISOString(),
   };
+
+  });
 }
 
 module.exports = {

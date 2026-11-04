@@ -21,6 +21,7 @@ jest.mock('rate-limit-redis', () => ({
 }));
 
 jest.mock('../src/config/redis', () => ({
+  client: {},
   getRedisClient: jest.fn().mockResolvedValue({
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
@@ -53,8 +54,19 @@ jest.mock('../src/queues/messagePersist', () => ({
 }));
 
 const { app } = require('../src/server');
+const { runtime } = require('../src/runtime');
 
 describe('GET /api/health', () => {
+  it('refuses serving readiness while maintenance is active, even with healthy stores', async () => {
+    const frozen = jest.spyOn(runtime, 'isFrozen').mockReturnValue(true);
+    try {
+      const res = await request(app).get('/api/health');
+      expect(res.status).toBe(503);
+      expect(res.body.data.status).toBe('maintenance');
+      expect(res.body.data.database).toBe('connected');
+      expect(res.body.data.redis).toBe('connected');
+    } finally { frozen.mockRestore(); }
+  });
   it('returns status ok with required fields', async () => {
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);

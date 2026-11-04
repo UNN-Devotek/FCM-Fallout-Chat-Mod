@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramsOf } from '../utils/reqParams';
 import { z } from 'zod';
@@ -143,7 +144,7 @@ export async function incrementDownloadCount(version: string): Promise<void> {
       data: { downloadCount: { increment: 1 } },
     });
   } catch {
-    // non-fatal — don't break the download if the DB write fails
+    // Optional telemetry: a metric failure does not affect published downloads.
   }
 }
 
@@ -155,6 +156,7 @@ export { versionFromFilename };
  * Auth: Bearer ADMIN_RELEASE_TOKEN or X-Admin-API-Key: ADMIN_API_KEY.
  */
 async function publishRelease(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'releasesController:3a90035d4fc7', async () => {
   try {
     const authHeader = req.headers['authorization'];
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -237,7 +239,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       }
     }
 
-    const saved = await prisma.release.upsert({
+    const saved = await runRequiredMutation('domain', '89a9d2f410a9441eafb930bc', { stage: 'primary-write-unconfirmed' }, () => prisma.release.upsert({
       where: { version },
       update: {
         downloadUrl,
@@ -247,7 +249,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
         ...(hudModUrl && hudModVersion ? { hudModUrl, hudModVersion } : {}),
       },
       create: { version, downloadUrl, portableDownloadUrl, releaseNotes, hudModUrl, hudModVersion, publishedAt },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Refresh the in-memory latest-version cache so newly connecting overlays
     // receive the updated version in their app:update-available handshake message.
@@ -271,6 +273,8 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -290,6 +294,7 @@ async function getReleases(_req: Request, res: Response, next: NextFunction): Pr
  * Auth: Bearer ADMIN_RELEASE_TOKEN or X-Admin-API-Key: ADMIN_API_KEY.
  */
 async function deleteRelease(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('domain', 'releasesController:1a8b7ec4d17a', async () => {
   try {
     const authHeader = req.headers['authorization'];
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -302,12 +307,14 @@ async function deleteRelease(req: Request, res: Response, next: NextFunction): P
       return next(createError(401, 'Unauthorized'));
     }
     const { version } = paramsOf(req);
-    const deleted = await prisma.release.deleteMany({ where: { version } });
+    const deleted = await runRequiredMutation('domain', '230a638e43f4376be07cbfb8', { stage: 'primary-write-unconfirmed' }, () => prisma.release.deleteMany({ where: { version } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (deleted.count === 0) return next(createError(404, `Release ${version} not found`));
     res.json({ data: { deleted: true, version } });
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 export { publishRelease, getReleases, deleteRelease };

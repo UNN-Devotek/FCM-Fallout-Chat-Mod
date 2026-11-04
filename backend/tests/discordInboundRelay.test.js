@@ -15,6 +15,8 @@ const mockClient = {
   destroy: jest.fn(),
   user: { tag: 'FCM#0001', setPresence: jest.fn() },
   channels: { fetch: jest.fn() },
+  emit: jest.fn(),
+  rest: { request: jest.fn().mockResolvedValue(undefined) },
   guilds: { cache: { first: jest.fn() } },
 };
 

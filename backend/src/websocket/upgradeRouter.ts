@@ -18,6 +18,7 @@ import { handleRelayConnection } from '../services/relay/relayHandler';
 import logger from '../config/logger';
 import { clientIp, clientIpRef } from '../utils/clientIp';
 import { randomUUID } from 'node:crypto';
+import { runtime } from '../runtime';
 
 /** Path for the main chat WebSocket. */
 export const CHAT_WS_PATH = '/ws';
@@ -106,6 +107,10 @@ export function attachChatUpgradeRouter(
   wss: WebSocketServer,
 ): void {
   server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (runtime.isFrozen()) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 30\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     const pathname = upgradePathname(req.url);
     if (pathname === CHAT_WS_PATH) {
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -131,6 +136,7 @@ export function attachChatUpgradeRouter(
 export function closeRelayWss(): Promise<void> {
   return new Promise((resolve) => {
     if (!relayWss) return resolve();
+    for (const ws of relayWss.clients) ws.close(1012, 'Server maintenance');
     relayWss.close(() => {
       relayWss = null;
       resolve();

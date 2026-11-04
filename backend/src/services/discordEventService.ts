@@ -1,3 +1,5 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
+import { cancelProducerTimer, runtime as maintenance, producerInterval } from '../runtime';
 import { createHash } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -405,24 +407,28 @@ async function ensureAnnouncement(snapshot: EventSourceSnapshot, announcementMes
 }
 
 async function ensureEventBotUser(): Promise<{ id: string; username: string }> {
-  if (!runtime?.client.user) throw new Error('Discord client is not ready');
-  const user = await prisma.user.upsert({
+  return runRequiredBundle('domain', 'discordEventService:e0e798172828', async () => {
+  const bot = runtime?.client.user;
+  if (!bot) throw new Error('Discord client is not ready');
+  const user = await runRequiredMutation('domain', 'd4c97fa837d76dbf9942f1e2', { stage: 'primary-write-unconfirmed', discordId: bot.id }, () => prisma.user.upsert({
     where: { installToken: EVENT_BOT_INSTALL_TOKEN },
     update: {
-      discordId: runtime.client.user.id,
-      discordUsername: runtime.client.user.username,
+      discordId: bot.id,
+      discordUsername: bot.username,
       discordDisplayName: '[EVENT] FCM',
     },
     create: {
       username: EVENT_BOT_USERNAME,
       installToken: EVENT_BOT_INSTALL_TOKEN,
-      discordId: runtime.client.user.id,
-      discordUsername: runtime.client.user.username,
+      discordId: bot.id,
+      discordUsername: bot.username,
       discordDisplayName: '[EVENT] FCM',
     },
     select: { id: true, username: true },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   return user;
+
+  });
 }
 
 async function readStoredProjection(messageId: string): Promise<StoredProjectionRow | null> {
@@ -456,6 +462,7 @@ async function updateFcmProjection(
   announcementUrl: string | null,
   existingFcmMessageId: string | null,
 ): Promise<string> {
+  return runRequiredBundle('domain', 'discordEventService:0ac81d727507', async () => {
   const metadata = compactProjection(snapshot, announcementUrl);
   const hudRow = buildCompactHudEventRow({
     name: snapshot.name,
@@ -487,14 +494,14 @@ async function updateFcmProjection(
         return messageIdToUpdate;
       }
       const relaySeq = await nextRelaySeq();
-      await prisma.$executeRaw`
+      await runRequiredMutation('domain', 'e5218ff24bc85e87b56d94c0', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
         UPDATE messages
            SET content = ${content},
                metadata = ${JSON.stringify(metadata)}::jsonb,
                relay_seq = ${BigInt(relaySeq)},
                edited_at = ${now}
          WHERE id = ${messageIdToUpdate}::uuid
-      `;
+      `, undefined, undefined, isRowCountNoChange);
       runtime?.broadcast({
         type: 'chat:edit',
         payload: {
@@ -542,9 +549,13 @@ async function updateFcmProjection(
     },
   });
   return messageId;
+
+  });
 }
 
 async function reconcileSubscribers(event: GuildScheduledEvent, mirrorId: string): Promise<SubscriberReconciliation> {
+  // Snapshot reads are retriable before reconciliation accepts any writes.
+  // syncEvent owns their lifetime and preserves its last-count fallback.
   const beforeRows = await prisma.discordEventSubscriber.findMany({
     where: { mirrorId },
     select: { discordUserId: true, linkedFcmUserId: true },
@@ -584,9 +595,11 @@ async function reconcileSubscribers(event: GuildScheduledEvent, mirrorId: string
   );
   const syncedAt = new Date();
 
-  await prisma.$transaction(async (tx) => {
+  return runRequiredBundle('domain', 'discordEventService:92fa6edab724', async () => {
+  try { await runRequiredTransaction('domain', 'de68826df8a7e11db42d8eb3', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
     for (const discordUserId of currentDiscordUserIds) {
-      await tx.discordEventSubscriber.upsert({
+      await runRequiredMutation('domain', '803fcd576fd6ce72ca86b458', { stage: 'primary-write-unconfirmed' }, () => tx.discordEventSubscriber.upsert({
         where: { mirrorId_discordUserId: { mirrorId, discordUserId } },
         update: {
           linkedFcmUserId: linkedByDiscordId.get(discordUserId) ?? null,
@@ -599,15 +612,19 @@ async function reconcileSubscribers(event: GuildScheduledEvent, mirrorId: string
           subscribedAt: syncedAt,
           lastSyncedAt: syncedAt,
         },
-      });
+      }), isPrismaAtomicRefusal, tx, undefined);
     }
-    await tx.discordEventSubscriber.deleteMany({
+    await runRequiredMutation('domain', '1d0bbd58b9ab613b23a3bdcb', { stage: 'primary-write-unconfirmed' }, () => tx.discordEventSubscriber.deleteMany({
       where: {
         mirrorId,
         ...(currentDiscordUserIds.length > 0 ? { discordUserId: { notIn: currentDiscordUserIds } } : {}),
       },
-    });
-  });
+    }), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+  }), { confirmedRollback: isPrismaAtomicRefusal }); } catch {
+    maintenance.recordFailure('discord-event:subscriber-reconcile', new Error('Scheduled-event subscriber transaction was not confirmed'),
+      { guildId: event.guildId, scheduledEventId: event.id, mirrorId, stage: 'subscriber-transaction-unconfirmed' });
+    throw new Error('Scheduled-event subscriber transaction was not confirmed');
+  }
   const beforeByDiscordId = new Map(beforeRows.map((row) => [row.discordUserId, row.linkedFcmUserId]));
   const currentSet = new Set(currentDiscordUserIds);
   const viewerChanges: SubscriberReconciliation['viewerChanges'] = [];
@@ -631,6 +648,8 @@ async function reconcileSubscribers(event: GuildScheduledEvent, mirrorId: string
     previousInterestedCount: beforeRows.length,
     viewerChanges,
   };
+
+  });
 }
 
 async function broadcastViewerChanges(
@@ -666,6 +685,7 @@ async function appendAnnouncementLink(
   announcementUrl: string,
   previousGeneratedSuffix?: string | null,
 ): Promise<void> {
+  return runRequiredBundle('domain', 'discordEventService:95b108e91349', async () => {
   const creatorDescription = sourceDescription(event, previousGeneratedSuffix);
   const unboundedDescription = appendOrReplaceEventDetailsSuffix(
     event.description ?? '',
@@ -689,29 +709,42 @@ async function appendAnnouncementLink(
         // longer fits. Never leave a stale announcement URL in creator text.
         await event.edit({ description: creatorDescription });
       } catch (err) {
+        maintenance.recordFailure('discord-event:description-link', new Error('Scheduled-event description edit was not confirmed'),
+          { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId, eventCode: snapshot.eventCode, stage: 'description-edit-unconfirmed' });
         logger.warn({ err, eventCode: snapshot.eventCode }, '[discord-events] could not remove stale generated description suffix during overflow repair');
       }
     }
-    await prisma.discordEventMirror.update({
+    try { await runRequiredMutation('domain', '1921b508563494fb1abb069d', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEventMirror.update({
       where: { guildId_scheduledEventId: { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId } },
       data: { generatedDescriptionLink: suffix },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined); } catch {
+      maintenance.recordFailure('discord-event:description-link', new Error('Scheduled-event generated link persistence was not confirmed'),
+        { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId, eventCode: snapshot.eventCode, stage: 'generated-link-persistence-unconfirmed' });
+      throw new Error('Scheduled-event generated link persistence was not confirmed');
+    }
     return;
   }
   if (nextDescription === (event.description ?? '')) return;
 
+  let linkStage = 'description-edit-unconfirmed';
   try {
     await event.edit({ description: nextDescription });
-    await prisma.discordEventMirror.update({
+    linkStage = 'generated-link-persistence-unconfirmed';
+    await runRequiredMutation('domain', 'b95aab4ec3f2b46d6d35528a', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEventMirror.update({
       where: { guildId_scheduledEventId: { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId } },
       data: { generatedDescriptionLink: suffix },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
   } catch (err) {
+    maintenance.recordFailure('discord-event:description-link', new Error('Scheduled-event description link effect was not confirmed'),
+      { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId, eventCode: snapshot.eventCode, stage: linkStage });
     logger.warn({ err, eventCode: snapshot.eventCode }, '[discord-events] failed to append FCM announcement link; will retry');
   }
+
+  });
 }
 
 async function syncEvent(event: GuildScheduledEvent): Promise<void> {
+  return runRequiredBundle('domain', 'discordEventService:e30911c53709', async () => {
   if (!runtime || event.guildId !== env.DISCORD_SERVER_ID) return;
   const existing = await prisma.discordEventMirror.findUnique({
     where: { guildId_scheduledEventId: { guildId: event.guildId, scheduledEventId: event.id } },
@@ -727,7 +760,7 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
     : 0;
   let interestedCount = Math.max(0, Math.floor(event.userCount ?? existing?.finalInterestedCount ?? mirroredSubscriberCount));
   let snapshot = eventSnapshot(event, interestedCount, existing?.generatedDescriptionLink);
-  let mirror = await prisma.discordEventMirror.upsert({
+  let mirror = await runRequiredMutation('domain', '02ad22d2158bb4908e4c1b9e', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEventMirror.upsert({
     where: { guildId_scheduledEventId: { guildId: snapshot.guildId, scheduledEventId: snapshot.scheduledEventId } },
     update: {
       eventCode: snapshot.eventCode,
@@ -758,7 +791,7 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
       sourceFingerprint: snapshot.sourceFingerprint,
       lastSyncedAt: new Date(),
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   if (mirror.announcementChannelId !== env.DISCORD_EVENTS_CHANNEL_ID) {
     logger.error({
@@ -770,11 +803,13 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
   }
 
   if (state === 'SCHEDULED' || state === 'ACTIVE') {
+    let subscriberWriteStage: string | undefined;
     try {
       const reconciliation = await reconcileSubscribers(event, mirror.id);
       interestedCount = reconciliation.interestedCount;
       snapshot = eventSnapshot(event, interestedCount, existing?.generatedDescriptionLink);
-      mirror = await prisma.discordEventMirror.update({
+      subscriberWriteStage = 'subscriber-mirror-update-unconfirmed';
+      mirror = await runRequiredMutation('domain', 'df68bc45285f56c080328148', { stage: 'primary-write-unconfirmed', rowId: mirror.id }, () => prisma.discordEventMirror.update({
         where: { id: mirror.id },
         data: {
           sourceStatus: snapshot.sourceState,
@@ -788,7 +823,8 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
           sourceFingerprint: snapshot.sourceFingerprint,
           lastSyncedAt: new Date(),
         },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
+      subscriberWriteStage = 'subscriber-presentation-unconfirmed';
       await broadcastViewerChanges(snapshot.eventCode, snapshot.publicStatus, reconciliation.viewerChanges);
       if (reconciliation.interestedCount !== reconciliation.previousInterestedCount) {
         runtime.broadcast({
@@ -802,6 +838,8 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
         });
       }
     } catch (err) {
+      if (subscriberWriteStage) maintenance.recordFailure('discord-event:subscriber-reconcile', new Error('Scheduled-event subscriber projection was not confirmed'),
+        { guildId: event.guildId, scheduledEventId: event.id, mirrorId: mirror.id, stage: subscriberWriteStage });
       // The mirror is still useful when a transient permissions/rate-limit error
       // prevents the subscriber endpoint from responding; the next reconciliation
       // retries it and the persisted count never contains attendee identities.
@@ -814,14 +852,14 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
   const announcement = await ensureAnnouncement(snapshot, mirror.announcementMessageId);
   const announcementUrl = validHttpUrl(announcement.url) ?? announcement.url;
   const fcmMessageId = await updateFcmProjection(mirror.id, snapshot, announcementUrl, mirror.fcmMessageId);
-  const updatedMirror = await prisma.discordEventMirror.update({
+  const updatedMirror = await runRequiredMutation('domain', '2ab34a88c3a1f125e533a4cf', { stage: 'primary-write-unconfirmed', rowId: mirror.id }, () => prisma.discordEventMirror.update({
     where: { id: mirror.id },
     data: {
       announcementMessageId: announcement.id,
       announcementUrl,
       fcmMessageId,
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   if (snapshot.publicStatus !== 'Deleted') {
     await appendAnnouncementLink(event, snapshot, announcementUrl, mirror.generatedDescriptionLink);
@@ -829,9 +867,12 @@ async function syncEvent(event: GuildScheduledEvent): Promise<void> {
   if (updatedMirror.sourceFingerprint !== snapshot.sourceFingerprint) {
     logger.debug({ eventCode: snapshot.eventCode }, '[discord-events] projection source fingerprint changed during repair');
   }
+
+  });
 }
 
 async function markDeleted(scheduledEventId: string): Promise<void> {
+  return runRequiredBundle('domain', 'discordEventService:60e0493dc652', async () => {
   if (!runtime) return;
   const mirror = await prisma.discordEventMirror.findUnique({
     where: { guildId_scheduledEventId: { guildId: env.DISCORD_SERVER_ID, scheduledEventId } },
@@ -887,7 +928,7 @@ async function markDeleted(scheduledEventId: string): Promise<void> {
       // Keep the mirror non-terminal until the known announcement repair has
       // succeeded. Reconciliation will retry it; otherwise a partial delete
       // could become invisible to the repair pass after source removal.
-      await prisma.discordEventMirror.update({
+      await runRequiredMutation('domain', '38229963cd54796693a19dfc', { stage: 'primary-write-unconfirmed', rowId: mirror.id }, () => prisma.discordEventMirror.update({
         where: { id: mirror.id },
         data: {
           fcmMessageId,
@@ -895,19 +936,19 @@ async function markDeleted(scheduledEventId: string): Promise<void> {
           announcementUrl,
           lastSyncedAt: new Date(),
         },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
       return;
     }
   } else {
     logger.error({ eventCode, channelId: mirror.announcementChannelId }, '[discord-events] skipped Deleted announcement repair because mirror channel differs from configured channel');
-    await prisma.discordEventMirror.update({
+    await runRequiredMutation('domain', '7ea542aec9ef83b3a2197f35', { stage: 'primary-write-unconfirmed', rowId: mirror.id }, () => prisma.discordEventMirror.update({
       where: { id: mirror.id },
       data: { fcmMessageId, lastSyncedAt: new Date() },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     return;
   }
 
-  await prisma.discordEventMirror.update({
+  await runRequiredMutation('domain', 'c12213de8851e3d5e4f6ccbe', { stage: 'primary-write-unconfirmed', rowId: mirror.id }, () => prisma.discordEventMirror.update({
     where: { id: mirror.id },
     data: {
       sourceStatus: 'DELETED',
@@ -916,6 +957,8 @@ async function markDeleted(scheduledEventId: string): Promise<void> {
       announcementMessageId,
       announcementUrl,
     },
+  }), isPrismaAtomicRefusal, undefined, undefined);
+
   });
 }
 
@@ -934,7 +977,10 @@ function queueEventSync(scheduledEventId: string): Promise<void> {
   const next = prior
     .catch(() => undefined)
     .then(() => syncEventById(scheduledEventId))
-    .catch((err) => logger.warn({ err, scheduledEventId }, '[discord-events] event sync failed; reconciliation will retry'));
+    .catch((err) => {
+      maintenance.recordFailure('discord-event:sync', new Error('Scheduled-event sync was incomplete'), { scheduledEventId, stage: 'event-sync-unconfirmed' });
+      logger.warn({ err, scheduledEventId }, '[discord-events] event sync failed; reconciliation will retry');
+    });
   runtime.queuedSyncs.set(scheduledEventId, next);
   void next.finally(() => {
     if (runtime?.queuedSyncs.get(scheduledEventId) === next) runtime.queuedSyncs.delete(scheduledEventId);
@@ -943,6 +989,7 @@ function queueEventSync(scheduledEventId: string): Promise<void> {
 }
 
 async function syncSubscriberChange(eventRef: GuildScheduledEvent | PartialGuildScheduledEvent, user: User, subscribed: boolean): Promise<void> {
+  return runRequiredBundle('domain', 'discordEventService:b7d6bcfc3fc9', async () => {
   if (!runtime || eventRef.guildId !== env.DISCORD_SERVER_ID || user.bot) return;
   const mirror = await prisma.discordEventMirror.findUnique({
     where: { guildId_scheduledEventId: { guildId: env.DISCORD_SERVER_ID, scheduledEventId: eventRef.id } },
@@ -952,7 +999,7 @@ async function syncSubscriberChange(eventRef: GuildScheduledEvent | PartialGuild
   const linked = await prisma.user.findFirst({ where: { discordId: user.id }, select: { id: true } });
   const now = new Date();
   if (subscribed) {
-    await prisma.discordEventSubscriber.upsert({
+    await runRequiredMutation('domain', '07e62ca867c76bc0ca0420d8', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEventSubscriber.upsert({
       where: { mirrorId_discordUserId: { mirrorId: mirror.id, discordUserId: user.id } },
       update: { linkedFcmUserId: linked?.id ?? null, lastSyncedAt: now },
       create: {
@@ -962,9 +1009,9 @@ async function syncSubscriberChange(eventRef: GuildScheduledEvent | PartialGuild
         subscribedAt: now,
         lastSyncedAt: now,
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
   } else {
-    await prisma.discordEventSubscriber.deleteMany({ where: { mirrorId: mirror.id, discordUserId: user.id } });
+    await runRequiredMutation('domain', '22a44a512c95aa368f3460f9', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEventSubscriber.deleteMany({ where: { mirrorId: mirror.id, discordUserId: user.id } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
   }
 
   await queueEventSync(eventRef.id);
@@ -994,6 +1041,8 @@ async function syncSubscriberChange(eventRef: GuildScheduledEvent | PartialGuild
       },
     }, [linked.id]);
   }
+
+  });
 }
 
 async function reconcileGuild(): Promise<void> {
@@ -1016,7 +1065,11 @@ async function reconcileGuild(): Promise<void> {
     }
     await Promise.all([...runtime.queuedSyncs.values()]);
   })()
-    .catch((err) => logger.warn({ err }, '[discord-events] reconciliation failed; bounded retry will run later'))
+    .catch((err) => {
+      maintenance.recordFailure('discord-event:reconcile', new Error('Scheduled-event reconciliation was incomplete'),
+        { guildId: env.DISCORD_SERVER_ID, stage: 'event-reconcile-incomplete' });
+      logger.warn({ err }, '[discord-events] reconciliation failed; bounded retry will run later');
+    })
     .finally(() => {
       if (runtime) runtime.reconciliationInFlight = null;
     });
@@ -1030,6 +1083,8 @@ async function validateAndReconcile(): Promise<void> {
     await reconcileGuild();
   } catch (err) {
     runtime.eventChannel = null;
+    maintenance.recordFailure('discord-event:configuration', new Error('Scheduled-event configuration was not verified'),
+      { guildId: env.DISCORD_SERVER_ID, channelId: env.DISCORD_EVENTS_CHANNEL_ID, stage: 'configuration-unverified' });
     logger.error({ err, guildId: env.DISCORD_SERVER_ID, channelId: env.DISCORD_EVENTS_CHANNEL_ID }, '[discord-events] configuration or permission validation failed; event mirroring is waiting for repair');
   }
 }
@@ -1050,7 +1105,7 @@ export function register(client: Client, broadcast: Broadcast, broadcastToUsers:
     if (runtime?.reconcileTimer === null) {
       // Revalidate channel ownership/permissions on every bounded pass so a
       // deployment that starts degraded can recover without a process restart.
-      runtime.reconcileTimer = setInterval(() => { void validateAndReconcile(); }, RECONCILE_INTERVAL_MS);
+      runtime.reconcileTimer = producerInterval('discord-event-reconcile', () => validateAndReconcile(), RECONCILE_INTERVAL_MS);
       runtime.reconcileTimer.unref();
     }
   });
@@ -1058,19 +1113,28 @@ export function register(client: Client, broadcast: Broadcast, broadcastToUsers:
   client.on('guildScheduledEventUpdate', (_oldEvent, event) => queueEventSync(event.id));
   client.on('guildScheduledEventDelete', (event) => {
     if (event.guildId === env.DISCORD_SERVER_ID) {
-      void markDeleted(event.id).catch((err) => logger.warn({ err, eventId: event.id }, '[discord-events] delete projection failed'));
+      void markDeleted(event.id).catch((err) => {
+        maintenance.recordFailure('discord-event:delete', new Error('Scheduled-event deletion projection was incomplete'), { scheduledEventId: event.id, stage: 'delete-projection-unconfirmed' });
+        logger.warn({ err, eventId: event.id }, '[discord-events] delete projection failed');
+      });
     }
   });
   client.on('guildScheduledEventUserAdd', (event, user) => {
-    void syncSubscriberChange(event, user, true).catch((err) => logger.warn({ err, eventId: event.id, userId: user.id }, '[discord-events] subscriber add failed'));
+    void syncSubscriberChange(event, user, true).catch((err) => {
+      maintenance.recordFailure('discord-event:subscriber-add', new Error('Scheduled-event subscription was not confirmed'), { scheduledEventId: event.id, userId: user.id, stage: 'subscriber-add-unconfirmed' });
+      logger.warn({ err, eventId: event.id, userId: user.id }, '[discord-events] subscriber add failed');
+    });
   });
   client.on('guildScheduledEventUserRemove', (event, user) => {
-    void syncSubscriberChange(event, user, false).catch((err) => logger.warn({ err, eventId: event.id, userId: user.id }, '[discord-events] subscriber remove failed'));
+    void syncSubscriberChange(event, user, false).catch((err) => {
+      maintenance.recordFailure('discord-event:subscriber-remove', new Error('Scheduled-event unsubscribe was not confirmed'), { scheduledEventId: event.id, userId: user.id, stage: 'subscriber-remove-unconfirmed' });
+      logger.warn({ err, eventId: event.id, userId: user.id }, '[discord-events] subscriber remove failed');
+    });
   });
 }
 
 export function _resetForTests(): void {
-  if (runtime?.reconcileTimer) clearInterval(runtime.reconcileTimer);
+  if (runtime?.reconcileTimer) cancelProducerTimer(runtime.reconcileTimer);
   runtime = null;
 }
 
