@@ -1,0 +1,6 @@
+feat(hud): add a blinking cursor that follows left and right arrow editing while chat input is active on supported ZFE and xScal input; the cursor disappears when chat closes and is never sent as a message
+fix(bridge): improve Server chat and blue-name recovery when the game switches between account and character names
+fix(bridge): keep valid roster identity consistent through brief loading and travel transitions
+fix(overlay): support the updated optional Server Bridge while retaining compatibility with older bridge exports
+fix(connections): improve reconnect reliability after an interrupted chat connection attempt
+fix(security): update app and server dependencies with security and reliability fixes

@@ -1,6 +1,16 @@
 # Drop-in Server bridge: one room across HUD and overlay
 
-**Current release: FCMServerBridge 0.2.8.** It is published as a separate, optional
+**Published bundled release: FCMServerBridge 0.2.19**, included with Overlay 1.4.3
+on 2026-10-23. Current source still reports 0.2.19 but also contains unreleased
+self-alias/evidence-sequence recovery changes. Those require a new bridge version
+and a matching desktop reader; released Overlay 1.4.3 rejects the new export
+fields. The proposed next set is Overlay 1.4.4 / bridge 0.2.20. See the
+[release readiness assessment](../../deployment/hud-bridge-release-readiness-20261103.md)
+for the compatibility proof, test status and publication gates.
+
+### Historical 0.2.8-0.2.18 release and candidate evidence
+
+FCMServerBridge 0.2.8 was published as a separate, optional
 HUDModLoader child and was installed locally with xScal 0.2.17 for a bridge test.
 The distributed DEV 0.2.10 candidate retains 0.2.9's unchanged-roster xScal write
 coalescing and adds an optional [blue-name cosmetic receiver](blue-nameplates.md).

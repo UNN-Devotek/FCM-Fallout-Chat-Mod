@@ -79,6 +79,8 @@ for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-
 for (const scenario of ['xscal-session-input', 'xscal-session-fallback', 'xscal-shared-config']) {
   test(`xScal session lifecycle and compatibility: ${scenario}`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=xscal&scenario=${scenario}`);
+    // Separate asynchronous player startup from the native-input scenario.
+    await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(`XSCAL-SESSION-INPUT PASS ${scenario}`);
     await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
@@ -267,6 +269,8 @@ for (const provider of ['xscal', 'zfe']) {
 
   test(`preserves background bridge membership through ${provider} fast travel`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=bridge-fast-travel`);
+    // Start bridge assertions only after the player has finished loading.
+    await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(`HARNESS bridge constructed provider=${provider}`);
     await expect(page.locator('#log')).toContainText(/BRIDGE-ROSTER (PASS|FAIL)/, { timeout: 25_000 });
     const log = await page.locator('#log').textContent();
