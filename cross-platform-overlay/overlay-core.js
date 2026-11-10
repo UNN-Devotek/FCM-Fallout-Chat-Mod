@@ -1040,6 +1040,14 @@ function resolveRelayProxyUrl(reqPath, relayHttp) {
   return url;
 }
 
+// True when a relay WebSocket close means the server no longer accepts our
+// session token: it expires 24h after issue (no sliding window), or the session
+// was revoked. The other 4001 reasons ("Auth service unavailable", "Database
+// error", "...ticket") are not fixed by a new token.
+function isSessionRejectedClose(code, reason) {
+  return code === 4001 && /invalid or expired token|user not found/i.test(String(reason || ''));
+}
+
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null, nativeWaylandOptIn = false } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
@@ -1394,6 +1402,7 @@ module.exports = {
   syntheticDevDiscordId,
   filterProxyHeaders,
   resolveRelayProxyUrl,
+  isSessionRejectedClose,
   FO76_APPID,
   buildFo76GrabPointerRegArgs,
   protontricksIndicatesNoPrefix,

@@ -119,7 +119,15 @@ userId = await redis.get(`session:${token}`);
 ```
 `handlers.ts:1480`
 
-No token renewal on use — the 24h TTL is absolute from issuance, not a sliding window. The overlay silently re-registers via its install token on reconnect.
+No token renewal on use — the 24h TTL is absolute from issuance, not a sliding window.
+
+The overlay keeps the token in memory only and can run for days. When the relay closes a
+socket with `4001 Invalid or expired token` (or `User not found`), its main process
+re-registers with the install token (`renewRejectedSession` → `startRelay` in `main.js`) and
+the renderer's normal backoff retry connects with the new token, as the same account. This runs
+at most once a minute. Other `4001` reasons are retried with the same token. Official QA
+builds are excluded: their sessions come only from browser OAuth, so an expired one still needs
+a relaunch. Expiry is noticed only on a reconnect; an already-open socket is not re-validated.
 
 ---
 

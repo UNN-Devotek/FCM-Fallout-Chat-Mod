@@ -2235,6 +2235,10 @@ function openRelaySocket(id) {
       return;
     }
     sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
+    // A socket opened with an older token is ignored: that token is already replaced.
+    if (socketToken === sessionToken && overlayCore.isSessionRejectedClose(code, reason && reason.toString())) {
+      renewRejectedSession();
+    }
   });
   sock.on('error', (err) => {
     if (relaySockets.get(id) === sock && socketToken === sessionToken) {
@@ -3425,6 +3429,7 @@ ipcMain.on('overlay:save-settings', (_evt, settings) => {
 // the retry UI rather than a silent failure. Backoff: 429 → 10 s, other → 5 s.
 async function startRelay(retryCount = 0) {
   const requestGeneration = authGeneration;
+  const tokenAtStart = sessionToken;
   const clientKey = resolveAppClientKey();
   if (!clientKey) {
     sendToRenderer('relay:status', { state: 'error', message: 'No APP_CLIENT_KEY (set env or run from inside the repo).' });
@@ -3432,7 +3437,9 @@ async function startRelay(retryCount = 0) {
   }
   try {
     const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, steamDisplayName, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
-    if (requestGeneration !== authGeneration) return;
+    // Another sign-in path installed a token while this request was in flight
+    // (a session renewal can overlap a provider link or rename): theirs stands.
+    if (requestGeneration !== authGeneration || sessionToken !== tokenAtStart) return;
     setSessionToken(token);
     providerLoginRequested = false;
     flushPendingWsOpens();
@@ -3474,8 +3481,13 @@ async function startRelay(retryCount = 0) {
       avatarUrl: regAvatarUrl || loadState()?.avatarUrl || null,
     });
   } catch (err) {
+    // Same as on success: a newer sign-in must not be undone by this failure.
+    if (sessionToken !== tokenAtStart) return;
     const msg = err && err.message ? err.message : String(err);
     if (err && (err.authRequired || err.discordAuthRequired)) {
+      // A renewal can land here with a token still installed. It is dead; drop it
+      // so the provider sign-in re-registers (that path requires no session).
+      setSessionToken(null);
       // Portable QA keeps a stable install identity in its adjacent FCMData.
       // Returning users reach this branch only when that identity is no longer
       // authorized; first-time users still get the QA role-gated OAuth flow.
@@ -3534,6 +3546,28 @@ async function startRelay(retryCount = 0) {
     diag('[relay] register FAILED: ' + msg);
     sendToRenderer('relay:status', { state: 'error', message: 'register failed: ' + msg });
   }
+}
+
+// ─── Session renewal ──────────────────────────────────────────────────────────
+// The session token lives only in memory and the backend expires it 24h after
+// issue, so an overlay left running eventually reconnects with a dead token. The
+// relay accepts the upgrade and then closes 4001; retrying the same token can
+// never succeed, and used to loop until the app was restarted. Re-register
+// instead, as a relaunch would. At most once a minute, so a token the relay keeps
+// refusing cannot turn the renderer's reconnect loop into a registration loop
+// (limiter: 10/min/install). If registration fails, startRelay's error card
+// unmounts the chat while it retries, so no further closes stack attempts.
+const SESSION_RENEW_MIN_INTERVAL_MS = 60_000;
+let lastSessionRenewalAt = 0;
+function renewRejectedSession() {
+  // Official QA sessions come only from the browser OAuth grant; registering the
+  // install token cannot re-issue one.
+  if (!IS_PORTABLE && BUILD_CHANNEL === 'qa') return;
+  const now = Date.now();
+  if (now - lastSessionRenewalAt < SESSION_RENEW_MIN_INTERVAL_MS) return;
+  lastSessionRenewalAt = now;
+  diag('[relay] session token rejected by relay — re-registering');
+  startRelay();
 }
 
 // ─── Window show / focus helpers ──────────────────────────────────────────────
