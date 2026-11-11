@@ -2104,7 +2104,8 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
 
   return new Promise((resolve) => {
     const outHeaders = overlayCore.filterProxyHeaders(headers);
-    if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
+    const requestToken = sessionToken;
+    if (requestToken) outHeaders['X-Auth-Token'] = requestToken;
     outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
@@ -2141,6 +2142,12 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
           }
           if (isCfChallenge(res.statusCode, res.headers, data)) {
             return resolve({ status: res.statusCode, body: JSON.stringify({ detail: `Connection blocked by edge (CF challenge/WAF, HTTP ${res.statusCode}) — please retry.` }), cfTransient: true });
+          }
+          // A socket that stays open is never re-validated, so past 24h the API is
+          // the only thing refusing the token. This request still fails; the next
+          // one uses the new token. A request sent with an older token is ignored.
+          if (requestToken && requestToken === sessionToken && overlayCore.isSessionRejectedResponse(res.statusCode, data)) {
+            renewRejectedSession();
           }
           resolve({ status: res.statusCode, body: data });
         });
@@ -3553,9 +3560,10 @@ async function startRelay(retryCount = 0) {
 // issue, so an overlay left running eventually reconnects with a dead token. The
 // relay accepts the upgrade and then closes 4001; retrying the same token can
 // never succeed, and used to loop until the app was restarted. Re-register
-// instead, as a relaunch would. At most once a minute, so a token the relay keeps
-// refusing cannot turn the renderer's reconnect loop into a registration loop
-// (limiter: 10/min/install). If registration fails, startRelay's error card
+// instead, as a relaunch would. The API proxy calls this too, on a 401 for the
+// same reason. At most once a minute, so a token the relay keeps refusing cannot
+// turn the renderer's reconnect loop into a registration loop (limiter:
+// 10/min/install). If registration fails, startRelay's error card
 // unmounts the chat while it retries, so no further closes stack attempts.
 const SESSION_RENEW_MIN_INTERVAL_MS = 60_000;
 let lastSessionRenewalAt = 0;

@@ -14,6 +14,7 @@ const main = readFileSync(join(resolve(import.meta.dirname, '..'), 'main.js'), '
 const section = (from, to) => main.slice(main.indexOf(from), main.indexOf(to, main.indexOf(from)));
 
 const EXPIRED = 'Invalid or expired token';
+const EXPIRED_API = 'Invalid or expired session token';
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-06T21:12:21Z')); });
 afterEach(() => vi.useRealTimers());
@@ -35,10 +36,34 @@ describe('isSessionRejectedClose', () => {
   });
 });
 
-describe('relay socket closed 4001', () => {
+describe('isSessionRejectedResponse', () => {
+  it('recognises both API error shapes', () => {
+    expect(overlayCore.isSessionRejectedResponse(401, JSON.stringify({ error: EXPIRED_API }))).toBe(true);
+    expect(overlayCore.isSessionRejectedResponse(401, JSON.stringify({ title: 'Unauthorized', detail: EXPIRED_API }))).toBe(true);
+    expect(overlayCore.isSessionRejectedResponse(401, JSON.stringify({ detail: 'User not found' }))).toBe(true);
+  });
+
+  it('ignores responses a new token cannot fix', () => {
+    for (const [status, body] of [
+      [401, JSON.stringify({ detail: 'Authentication required' })],
+      [401, JSON.stringify({ error: 'Missing or invalid X-Auth-Token header' })],
+      [403, JSON.stringify({ error: EXPIRED_API })],
+      [404, JSON.stringify({ detail: 'User not found' })],
+      [200, JSON.stringify({ data: { text: EXPIRED_API } })],
+      [401, JSON.stringify({ data: { detail: EXPIRED_API } })],
+      [401, '<html>Invalid or expired session token</html>'], [401, 'null'], [401, ''], [401, undefined],
+    ]) {
+      expect(overlayCore.isSessionRejectedResponse(status, body), `${status} ${body}`).toBe(false);
+    }
+  });
+});
+
+describe('relay rejects the session token', () => {
   function overlay({ buildChannel = 'production', portable = false } = {}) {
     const sockets = [];
     const closes = [];
+    const requests = [];
+    let proxyHttp;
     class FakeSocket extends EventEmitter {
       constructor(_url, options) { super(); this.token = options.headers['X-Auth-Token']; sockets.push(this); }
       close() {}
@@ -51,11 +76,35 @@ describe('relay socket closed 4001', () => {
       localBridge: { opened() {}, closed() {}, outgoing: (_id, _sock, data) => data, incoming: () => true },
       sendToRenderer: (channel, payload) => { if (channel === 'proxy:ws:close') closes.push(payload); },
       diag() {}, showUpdateNotification() {}, startRelay: vi.fn(),
+      Buffer, app: { isPackaged: true }, isCfChallenge: () => false,
+      ipcMain: { handle: (_channel, handler) => { proxyHttp = handler; } },
+      // One pending upstream request per call; the test answers it with respond().
+      httpModule: () => ({
+        request(options, onResponse) {
+          const req = Object.assign(new EventEmitter(), { setTimeout() {}, write() {}, destroy() {}, end() {} });
+          requests.push({
+            token: options.headers['X-Auth-Token'],
+            respond(status, body) {
+              const res = Object.assign(new EventEmitter(), { statusCode: status, headers: {} });
+              onResponse(res);
+              res.emit('data', body);
+              res.emit('end');
+            },
+          });
+          return req;
+        },
+      }),
     });
+    vm.runInContext(section("ipcMain.handle('proxy:http'", '// ─── WebSocket proxy'), context);
     vm.runInContext(section('function openRelaySocket(id) {', '/**\n * Process all pending proxy:ws:open'), context);
     vm.runInContext(section('// ─── Session renewal', '// ─── Window show / focus helpers'), context);
     const open = (id) => { context.__id = id; vm.runInContext('openRelaySocket(__id)', context); return sockets.at(-1); };
-    return { context, open, closes, startRelay: context.startRelay };
+    // Sends one API request through the proxy and returns the upstream request to answer.
+    const api = (path = '/api/chat/rooms') => {
+      const answer = proxyHttp(null, { method: 'GET', path, headers: {} });
+      return Object.assign(requests.at(-1), { answer });
+    };
+    return { context, open, api, closes, startRelay: context.startRelay };
   }
 
   it('re-registers when the relay rejects the session token, and still forwards the close', () => {
@@ -92,9 +141,52 @@ describe('relay socket closed 4001', () => {
     expect(o.startRelay).not.toHaveBeenCalled();
   });
 
+  it.each([[{ error: EXPIRED_API }], [{ title: 'Unauthorized', detail: EXPIRED_API }], [{ detail: 'User not found' }]])(
+    're-registers when the API answers 401 %j, and still returns the 401', async (body) => {
+      const o = overlay();
+      const request = o.api();
+      expect(request.token).toBe('token-1');
+      request.respond(401, JSON.stringify(body));
+      expect(await request.answer).toEqual({ status: 401, body: JSON.stringify(body) });
+      expect(o.startRelay).toHaveBeenCalledTimes(1);
+    });
+
+  it.each([[401, { detail: 'Authentication required' }], [403, { error: 'User is banned' }], [200, { data: [] }]])(
+    'does not re-register for API response %i %j', async (status, body) => {
+      const o = overlay();
+      const request = o.api();
+      request.respond(status, JSON.stringify(body));
+      await request.answer;
+      expect(o.startRelay).not.toHaveBeenCalled();
+    });
+
+  it('ignores an API 401 for a request sent with a token since replaced, or with none', async () => {
+    const o = overlay();
+    const stale = o.api();
+    o.context.sessionToken = 'token-2';
+    stale.respond(401, JSON.stringify({ error: EXPIRED_API }));
+    await stale.answer;
+    o.context.sessionToken = null;
+    const anonymous = o.api();
+    expect(anonymous.token).toBeUndefined();
+    anonymous.respond(401, JSON.stringify({ error: EXPIRED_API }));
+    await anonymous.answer;
+    expect(o.startRelay).not.toHaveBeenCalled();
+  });
+
+  it('shares the once-a-minute limit between the socket and the API', async () => {
+    const o = overlay();
+    o.open('ws1').drop(4001, EXPIRED);
+    const request = o.api();
+    request.respond(401, JSON.stringify({ error: EXPIRED_API }));
+    await request.answer;
+    expect(o.startRelay).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves official QA sessions alone but renews portable QA', () => {
     const official = overlay({ buildChannel: 'qa' });
     official.open('ws1').drop(4001, EXPIRED);
+    official.api().respond(401, JSON.stringify({ error: EXPIRED_API }));
     expect(official.startRelay).not.toHaveBeenCalled();
     const portable = overlay({ buildChannel: 'qa', portable: true });
     portable.open('ws1').drop(4001, EXPIRED);

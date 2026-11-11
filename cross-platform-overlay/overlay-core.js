@@ -1040,12 +1040,24 @@ function resolveRelayProxyUrl(reqPath, relayHttp) {
   return url;
 }
 
-// True when a relay WebSocket close means the server no longer accepts our
-// session token: it expires 24h after issue (no sliding window), or the session
-// was revoked. The other 4001 reasons ("Auth service unavailable", "Database
-// error", "...ticket") are not fixed by a new token.
+// The relay no longer accepts our session token: it expires 24h after issue (no
+// sliding window), or the session was revoked. Sockets say "Invalid or expired
+// token", the API "Invalid or expired session token"; both say "User not found".
+// The other 4001 reasons ("Auth service unavailable", "Database error",
+// "...ticket") and other 401s are not fixed by a new token.
+const SESSION_REJECTED_RE = /invalid or expired (session )?token|user not found/i;
+
 function isSessionRejectedClose(code, reason) {
-  return code === 4001 && /invalid or expired token|user not found/i.test(String(reason || ''));
+  return code === 4001 && SESSION_REJECTED_RE.test(String(reason || ''));
+}
+
+// The same verdict on a proxied API response. requireAuth answers RFC 7807
+// ({ detail }); requireClientAuth answers { error }.
+function isSessionRejectedResponse(status, body) {
+  if (status !== 401) return false;
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { return false; }
+  return [parsed?.detail, parsed?.error].some(text => typeof text === 'string' && SESSION_REJECTED_RE.test(text));
 }
 
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null, nativeWaylandOptIn = false } = {}) {
@@ -1403,6 +1415,7 @@ module.exports = {
   filterProxyHeaders,
   resolveRelayProxyUrl,
   isSessionRejectedClose,
+  isSessionRejectedResponse,
   FO76_APPID,
   buildFo76GrabPointerRegArgs,
   protontricksIndicatesNoPrefix,
