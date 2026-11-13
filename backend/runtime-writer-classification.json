@@ -4317,7 +4317,7 @@
               "file": "backend/src/controllers/usersController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "9a995ae0e576e40db4f9f5f2a5dc7a0b0d74d93f3dd8bac86af4742e3a1aa9f6",
+            "fingerprint": "1e26d992f64ebdfd1c3fc99f54d7be33dde37e4504f97797c6fb73f652b8bf88",
             "calls": []
           }
         ]
@@ -35400,7 +35400,7 @@
         "file": "backend/src/controllers/usersController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "9a995ae0e576e40db4f9f5f2a5dc7a0b0d74d93f3dd8bac86af4742e3a1aa9f6",
+      "fingerprint": "1e26d992f64ebdfd1c3fc99f54d7be33dde37e4504f97797c6fb73f652b8bf88",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36691,7 +36691,7 @@
         "owner": "<module>"
       },
       "contract": "reviewed-shared-source",
-      "fingerprint": "317b9b2676729e51ffa28fa04602c121dd5949b24263d1db5e515d428f04b3c0",
+      "fingerprint": "fafdeebab7baa3954df47a7bad6846b1bf4992b192f620cc8557efaeb284cd74",
       "reason": "V19 required-effects fixture retains all original effect/audit/privacy assertions. Both module and VM loaders bind the exact native helper to the guarded current coordinator. Actual source/compiled POST, held body/callback, before-instance and removed-binding controls accompany strict child status and complete explicit artifact validation without stdout filtering, quiet mode or helper stubbing."
     },
     {
@@ -36700,7 +36700,7 @@
         "owner": "<module>"
       },
       "contract": "reviewed-shared-source",
-      "fingerprint": "82bbde07f1188695839d44a63b5ee5379cd7b369768fbcff0ac6976ffafd0cc4",
+      "fingerprint": "5dad201f1b9b3ac5a918c0b63b87be01c88932c91cf8d27d1fa4025110c79961",
       "reason": "V19 required-effects fixture retains all original effect/audit/privacy assertions. Both module and VM loaders bind the exact native helper to the guarded current coordinator. Actual source/compiled POST, held body/callback, before-instance and removed-binding controls accompany strict child status and complete explicit artifact validation without stdout filtering, quiet mode or helper stubbing."
     },
     {

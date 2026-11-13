@@ -847,6 +847,7 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
  * Reverses a mute and grants 60-minute spam immunity window.
  */
 async function unmuteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'usersController:unmute-with-immunity', async () => {
   const id = paramStr(req, 'id');
   if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
   try {
@@ -857,6 +858,7 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
   } catch (err) {
     if (!handleModerationError(err, next)) next(err);
   }
+  });
 }
 
 /**
