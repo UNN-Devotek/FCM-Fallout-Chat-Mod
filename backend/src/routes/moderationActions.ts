@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { requireDiscordRole } from '../middleware/auth';
+import { requireDiscordRole, requireStaffRole } from '../middleware/auth';
 import env from '../config/environment';
 import {
   kickUserHandler, muteUserHandler, unmuteUserHandler,
@@ -15,14 +15,17 @@ const upload = multer({
 const router = express.Router();
 
 const mod = requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID);
+// Same threshold, but also accepts an overlay X-Auth-Token (the overlay's HTTP
+// proxy carries no cookies). Only the actions the overlay menu issues use it.
+const modOrOverlay = requireStaffRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID);
 
 // User lookup for the ban-form prefill / search bar
 router.get('/users/lookup', mod, lookupUserHandler);
 
 // Kick / Mute / Unmute
-router.post('/kicks', mod, kickUserHandler);
-router.post('/mutes', mod, muteUserHandler);
-router.delete('/mutes/:userId', mod, unmuteUserHandler);
+router.post('/kicks', modOrOverlay, kickUserHandler);
+router.post('/mutes', modOrOverlay, muteUserHandler);
+router.delete('/mutes/:userId', modOrOverlay, unmuteUserHandler);
 
 // Bans
 router.post('/bans', mod, upload.array('evidenceFiles', 5), createBanHandler);

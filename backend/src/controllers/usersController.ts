@@ -20,6 +20,15 @@ import { mergeUserInto } from '../utils/mergeUser';
 import { setChatName } from '../services/chatNameService';
 import { refreshSupporterFromDiscord } from '../services/supporterSyncService';
 import { isValidSteamId } from '../services/steamAuthService';
+import {
+  REASON_CATEGORIES,
+  createBan as moderationCreateBan,
+  kickUser as moderationKickUser,
+  muteUser as moderationMuteUser,
+  unbanUser as moderationUnbanUser,
+  unmuteUser as moderationUnmuteUser,
+} from '../services/moderationActionsService';
+import { actorUserId, handleModerationError } from './moderationActionsController';
 
 // 24 hours — ephemeral overlay session; the overlay silently re-registers via its install
 // token on reconnect. Discord re-auth enforced separately by the 30-day window (discordAuthedAt).
@@ -793,36 +802,44 @@ async function getUserMessages(req: Request, res: Response, next: NextFunction):
   }
 }
 
+/*
+ * Legacy per-user moderation routes (POST/DELETE /api/users/:id/{mute,kick,ban}).
+ * Kept for the dashboard Users page and ChatOverlay callers, but every action
+ * now goes through moderationActionsService so it gets the same protected-
+ * target check, bans/evidence rows, audit + mod-log, live socket and relay
+ * eviction, and Discord propagation as /api/moderation/*.
+ */
 /**
- * POST /api/users/:id/mute -- moderator+
+ * Resolve the acting moderator's users.id. resolveInternalActorId keeps the
+ * existing attribution contract (503 ActorAttributionError on a lookup outage,
+ * before any write); an OAuth admin without a game account then gets the same
+ * discord-only users row the /api/moderation routes create. API-key callers
+ * are rejected (400): these actions must be attributed to a real person.
+ */
+async function legacyActor(req: Request): Promise<string> {
+  const internal = await resolveInternalActorId(req.adminUser?.id);
+  return internal ?? actorUserId(req);
+}
+
+function legacyReason(req: Request, fallback: string): string {
+  const raw = req.body?.reason;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : fallback;
+}
+
+/**
+ * POST /api/users/:id/mute -- moderator+  { duration (minutes), reason, category? }
  */
 async function muteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  return runRequiredBundle('identity', 'usersController:b4fece25a352', async () => {
-  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
-  const { duration, reason } = req.body;
-  const muteExpiresAt = new Date(Date.now() + duration * 60 * 1000);
-
+  const id = paramStr(req, 'id');
+  if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
+  const { duration, category } = req.body ?? {};
   try {
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
-    await runRequiredMutation('identity', '9498707a4fb888f9cff53268', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
-      where: { id: paramStr(req, 'id') },
-      data: { isMuted: true, muteExpiresAt },
-    }), isPrismaAtomicRefusal, undefined, undefined);
-    await createRequiredAudit(prisma.auditLog, {
-      data: {
-        actorId,
-        action: 'mute',
-        targetId: paramStr(req, 'id'),
-        targetType: 'user',
-        reason,
-      },
-    });
-    res.json({ data: { muted: true, expiresAt: muteExpiresAt } });
+    const cat = typeof category === 'string' && (REASON_CATEGORIES as readonly string[]).includes(category) ? category : 'Other';
+    const result = await moderationMuteUser(id, await legacyActor(req), Number(duration) * 60_000, cat, legacyReason(req, 'Muted by moderator'));
+    res.json({ data: { muted: true, expiresAt: result.until, discordPropagated: result.discordPropagated } });
   } catch (err) {
-    next(err);
+    if (!handleModerationError(err, next)) next(err);
   }
-
-  });
 }
 
 /**
@@ -830,129 +847,64 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
  * Reverses a mute and grants 60-minute spam immunity window.
  */
 async function unmuteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  return runRequiredBundle('identity', 'usersController:bb4eaa3bab81', async () => {
-  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
+  const id = paramStr(req, 'id');
+  if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
   try {
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
-    await runRequiredMutation('identity', 'ce8b838f6799746efaa1aa36', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
-      where: { id: paramStr(req, 'id') },
-      data: { isMuted: false, muteExpiresAt: null },
-    }), isPrismaAtomicRefusal, undefined, undefined);
+    await moderationUnmuteUser(id, await legacyActor(req), 'Moderator reversed mute -- spam immunity granted');
     // Grant spam immunity so the user isn't immediately re-flagged
-    await setSpamImmunity(paramStr(req, 'id'));
-    await createRequiredAudit(prisma.auditLog, {
-      data: {
-        actorId,
-        action: 'unmute',
-        targetId: paramStr(req, 'id'),
-        targetType: 'user',
-        reason: 'Moderator reversed mute -- spam immunity granted',
-      },
-    });
+    await setSpamImmunity(id);
     res.json({ data: { unmuted: true, immunityMinutes: 60 } });
   } catch (err) {
-    next(err);
+    if (!handleModerationError(err, next)) next(err);
   }
-
-  });
 }
 
 /**
- * POST /api/users/:id/kick -- moderator+
+ * POST /api/users/:id/kick -- moderator+  { reason? }
+ * 5-minute kick cooldown + live socket/relay disconnect (same as POST /api/moderation/kicks).
  */
 async function kickUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  return runRequiredBundle('session', 'usersController:47c269e6cfe9', async () => {
-  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
+  const id = paramStr(req, 'id');
+  if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
   try {
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
-    // Invalidate all active Redis sessions for this user
-    const redis = await getRedisClient();
-    const sessions = await prisma.session.findMany({
-      where: { userId: paramStr(req, 'id'), expiresAt: { gt: new Date() } },
-      select: { token: true },
-    });
-    await Promise.all(sessions.map((s) => runRequiredMutation('session', 'd84a18de83e33f4e7e642bc3', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${s.token}`), undefined, undefined, isRowCountNoChange)));
-    await runRequiredMutation('session', '65ada479590ef0000959ac84', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
-    await createRequiredAudit(prisma.auditLog, {
-      data: {
-        actorId,
-        action: 'kick',
-        targetId: paramStr(req, 'id'),
-        targetType: 'user',
-      },
-    });
-    res.json({ data: { kicked: true, sessionsInvalidated: sessions.length } });
+    const result = await moderationKickUser(id, await legacyActor(req), legacyReason(req, 'Kicked by moderator').slice(0, 300));
+    res.json({ data: { kicked: true, until: result.until.toISOString(), disconnected: result.disconnected } });
   } catch (err) {
-    next(err);
+    if (!handleModerationError(err, next)) next(err);
   }
-
-  });
 }
 
 /**
- * POST /api/users/:id/ban -- admin+
+ * POST /api/users/:id/ban -- admin+  { reason }
+ * Permanent ban through the ban service; the reason is stored as text evidence.
  */
 async function banUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  return runRequiredBundle('session', 'usersController:294daaed5a91', async () => {
-  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
-  const { reason } = req.body;
+  const id = paramStr(req, 'id');
+  if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
+  const reason = legacyReason(req, '');
+  if (!reason) return next(createError(400, 'reason is required'));
   try {
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
-    await runRequiredMutation('identity', '2cd3def01499b57e8d1b0fdc', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
-      where: { id: paramStr(req, 'id') },
-      data: { isBanned: true, banReason: reason },
-    }), isPrismaAtomicRefusal, undefined, undefined);
-    // Kick active sessions
-    const redis = await runRequiredLookup('session', 'ban:session-client', () => getRedisClient());
-    const sessions = await runRequiredLookup('session', 'ban:session-discovery', () => prisma.session.findMany({
-      where: { userId: paramStr(req, 'id') },
-      select: { token: true },
-    }));
-    await Promise.all(sessions.map((s) => runRequiredMutation('session', '03514fb80342242efb7f2e6d', { stage: 'primary-write-unconfirmed' }, () => redis.del(`session:${s.token}`), undefined, undefined, isRowCountNoChange)));
-    await runRequiredMutation('session', '54c9c946fcbc862e23365c7f', { stage: 'primary-write-unconfirmed' }, () => prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
-    await createRequiredAudit(prisma.auditLog, {
-      data: {
-        actorId,
-        action: 'ban',
-        targetId: paramStr(req, 'id'),
-        targetType: 'user',
-        reason,
-      },
-    });
-    res.json({ data: { banned: true } });
+    const result = await moderationCreateBan(id, await legacyActor(req), 'Other', reason, null, [{ type: 'text', textContent: reason.slice(0, 8000) }]);
+    res.json({ data: { banned: true, banId: result.banId, disconnected: result.disconnected, discordWarnings: result.discordLockdown.warnings } });
   } catch (err) {
-    next(err);
+    if (!handleModerationError(err, next)) next(err);
   }
-
-  });
 }
 
 /**
  * DELETE /api/users/:id/ban -- owner+
+ * Reverses the user's active ban(s) through the ban service (restores Discord
+ * roles, lifts the guild ban and the provider deny-list).
  */
 async function unbanUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  return runRequiredBundle('identity', 'usersController:d62826d17498', async () => {
-  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
+  const id = paramStr(req, 'id');
+  if (!validateUuid(id)) return next(createError(400, 'Invalid user ID format'));
   try {
-    const actorId = await resolveInternalActorId(req.adminUser?.id);
-    await runRequiredMutation('identity', '21d198fa263251e418ac6bb0', { stage: 'primary-write-unconfirmed' }, () => prisma.user.update({
-      where: { id: paramStr(req, 'id') },
-      data: { isBanned: false, banReason: null },
-    }), isPrismaAtomicRefusal, undefined, undefined);
-    await createRequiredAudit(prisma.auditLog, {
-      data: {
-        actorId,
-        action: 'unban',
-        targetId: paramStr(req, 'id'),
-        targetType: 'user',
-      },
-    });
-    res.json({ data: { unbanned: true } });
+    const result = await moderationUnbanUser(id, await legacyActor(req), legacyReason(req, 'Unbanned from the dashboard Users page'));
+    res.json({ data: { unbanned: true, reversedBanIds: result.reversedBanIds } });
   } catch (err) {
-    next(err);
+    if (!handleModerationError(err, next)) next(err);
   }
-
-  });
 }
 
 /**

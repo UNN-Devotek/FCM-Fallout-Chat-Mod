@@ -79,4 +79,14 @@ describe('playerReportHelpers', () => {
       expect(h.buildPlayerReportThreadName('', '', 5)).toBe('Player Report · #5 · player');
     });
   });
+  describe('createReportRateLimiter', () => {
+    it('allows three reports per reporter per window, then reports the wait', () => {
+      const limiter = h.createReportRateLimiter(3, 600_000);
+      const t0 = 1_000_000;
+      expect([0, 1, 2].map((i) => limiter.take('a', t0 + i).allowed)).toEqual([true, true, true]);
+      expect(limiter.take('a', t0 + 60_000)).toEqual({ allowed: false, retryAfterMs: 540_000 });
+      expect(limiter.take('b', t0 + 60_000).allowed).toBe(true);
+      expect(limiter.take('a', t0 + 600_000).allowed).toBe(true);
+    });
+  });
 });

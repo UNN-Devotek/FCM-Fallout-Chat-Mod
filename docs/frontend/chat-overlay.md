@@ -231,6 +231,7 @@ forked component.
 - **Conversation view:** a `< BACK TO INBOX` row, then the other participant's display name as the header, followed by the normal shared message renderer plus the normal 255-character composer/counter.
 - **Composer routing:** when `activeMainId === PM_MAIN_ID` and `pmView !== 'inbox'`, Enter sends `pm:send` only. PM content never reuses `chat:send` or `party:send`.
 - **Context menu:** authenticated message rows add a `Message` item near the top. Selecting it switches to PM and sends `pm:open` for the sender's database user UUID; it is hidden for self, missing `userId`, bots/system rows, and public mode. If the socket is still connecting, the action reports that state instead of silently doing nothing.
+- **Staff actions on a PM:** moderators see Kick / Mute / Unmute / Ban on a PM row like any other user message, but never `Delete message`: there is no staff PM delete route (see Staff moderation actions below).
 - **Self-edit:** authenticated users get an `Edit message` item when right-clicking their own persisted channel, party, or PM message. The composer is prefilled, `Enter` sends `chat:edit`, and a successful update shows an `(edited)` marker. The server re-checks ownership, participation, deletion state, length, mute/rate policy, and AutoMod; bot/system/server-feed messages and public mode never expose the action. Public channel edits mirror the bot-authored Discord copy when one exists, while human edits made in Discord arrive through the same `chat:edit` patch and update the overlay in real time.
 - **WebSocket state:** the overlay requests `pm:list` when the authenticated user opens the `PM` tab (and rehydrates it after a reconnect while that tab is active), not during ordinary overlay startup; opening a conversation requests `pm:history`; incoming `pm:message` frames update the inbox summary and active thread in place; active-thread receives trigger `pm:read`. A background `pm:list` failure is kept out of the startup action-toast stream; the PM tab shows an inline temporary-unavailable message with a `RETRY` action so transient hydration failures do not interrupt ordinary overlay activation.
 - **Isolation:** The server-feed and server-roster views require an active channel tab; a remembered Server sub-tab must not render over PM or Party views. Public channel history and live @mentions stay in their original channels and never create PM conversations. PM messages live only in `privateMessages` state. They never merge into the shared `messages` array, so they cannot leak into the combined feed, sub-channel views, party views, or public-mode REST polling.
@@ -393,6 +394,25 @@ local time for every reader, with zero extra wire data.
   dashboard) and the Electron shell's Appearance panel (`shell.ts`, mirrored into
   `WEB_SETTINGS_KEY` as `showTimestamps` / `timestampFormat`). The 12h/24h picker
   only appears while the toggle is on.
+
+## Staff moderation actions
+
+Authenticated owners, admins and moderators (never public mode) get staff items in the message
+context menu and the party member menu. The REST calls live in `staffModeration.ts`; on the website
+they carry the dashboard session cookie and in the Electron overlay the bridge's proxied `fetch`
+carries the install `X-Auth-Token`. The backend accepts either on these routes (`requireStaffRole`,
+see [../backend/auth.md](../backend/auth.md)) with the same role thresholds.
+
+| Item | Route | Result |
+| ---- | ----- | ------ |
+| Kick (5 min)... | `POST /api/moderation/kicks` | Modal needs a reason. The target is disconnected with a 5-minute reconnect cooldown and sees the reason; the staff mod log records it (nothing is posted publicly). Success shows a toast; failure keeps the modal open with the server's message. |
+| Mute... | `POST /api/moderation/mutes` | Duration, category and reason. The target sees the mute reason; the staff mod log records it. Success toast / inline server error as above. |
+| Unmute | `DELETE /api/moderation/mutes/:userId` | No modal. Clears any active mute and shows a toast with the result (a target who was not muted is simply left unmuted). |
+| Ban... | opens `/moderation/bans/new` in the browser | Dashboard web session; unchanged. |
+| Delete message | channel: `DELETE /api/messages/:id`; party: `DELETE /api/admin/parties/:partyId/messages/:id` | Optional reason sent as `?reason=`. Channel deletes go through `deleteMessageById` (audit row with reason, live `chat:delete`, mod alert). Party deletes need owner/admin, so the item is hidden from moderators on party rows. Hidden on PM and Server-room rows, which have no staff delete route. |
+| View Profile | `GET /api/users/:id/aliases` | Owner/admin only. |
+
+Refusals such as `ProtectedTarget` (the target holds a staff role) are shown with the server's text.
 
 ## Moderator Party Feed Mutes
 

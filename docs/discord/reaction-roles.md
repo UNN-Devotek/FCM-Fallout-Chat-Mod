@@ -22,6 +22,40 @@ defaults).
 
 ---
 
+## Role policy (what a panel may hand out)
+
+A reaction panel is self-service, so it must never grant a staff or gated role.
+`reactionRoleRefusal()` in `reactionRoleService.ts` refuses a role when it:
+
+- is a configured staff, access or entitlement role: `OWNER_ROLE_ID`,
+  `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID`,
+  `PROD_DEVELOPER_ROLE_ID`, `DEV_DEVELOPER_ROLE_ID`, `DEV_QA_ROLE_ID`,
+  `SUPPORT_ROLE_ID`, `SUPPORTER_ROLE_ID`, or `OVERSEER_CIRCLE_ROLE_ID`;
+- carries a moderation permission: Administrator, Manage Server, Manage Roles,
+  Ban Members, Kick Members, Timeout Members (Moderate Members), Manage Messages,
+  or Manage Channels;
+- is `@everyone` or managed by an integration; or
+- sits at or above the creating moderator's highest Discord role (the guild
+  owner has no ceiling; panels sent without a known actor, such as MCP, skip
+  only this rule).
+
+The check runs three times:
+
+1. **Before posting** — `discordEmbedService.send()` calls
+   `assertPanelRolesAllowed(channelId, roleIds, actorId)`, which throws
+   `ReactionRoleNotAllowedError` with a readable reason and posts nothing.
+2. **At panel creation** — `createPanel()` re-checks (without the actor rule)
+   and refuses to persist a panel offering a refused role.
+3. **At click time** — `messageReactionAdd` re-checks the role (panels created
+   before this policy, or whose role later gained permissions, still cannot
+   grant it) and refuses members whose linked FCM account has an active ban
+   (`checkPostingStanding`; a failed lookup also refuses). A refused click has
+   its reaction removed and no role is granted, so an FCM-banned member cannot
+   reclaim roles the ban stripped. Mutes and kick cooldowns do not block
+   reaction roles.
+
+---
+
 ## Configuration
 
 Reaction-role panels are configured through the embed builder at send time. See
@@ -126,7 +160,9 @@ set of roles that Discord will actually allow the bot to assign.
 2. Look up the panel by `message.id` (cache → DB fallback).
 3. Resolve partials (fetch if needed).
 4. Match `emojiKey(reaction)` against `mapping.matchKey`.
-5. Fetch the guild member and call `member.roles.add(roleId)`.
+5. Apply the click-time role policy and FCM ban check (`reactionClaimRefusal`);
+   on refusal remove the member's reaction and stop.
+6. Fetch the guild member and call `member.roles.add(roleId)`.
 
 ### Reaction removed (`messageReactionRemove`)
 

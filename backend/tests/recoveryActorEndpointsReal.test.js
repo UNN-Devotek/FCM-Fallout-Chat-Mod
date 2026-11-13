@@ -7,8 +7,9 @@ jest.mock('../dist/config/prisma', () => ({ __esModule: true, get default() { re
 jest.mock('../dist/config/redis', () => ({ getRedisClient: async () => mockRedis }));
 jest.mock('../dist/config/database', () => ({ query: async (sql, args) => ({ rows: await mockDatabase.$queryRawUnsafe(sql, ...args) }) }));
 jest.mock('../dist/runtime', () => ({ get runtime() { return mockRuntime; } }));
-jest.mock('../dist/websocket/handlers', () => ({ refreshClientIdentity() {}, resolveDisplayName: user => user.username }));
-jest.mock('../dist/services/discordService', () => ({ relayToDiscord: jest.fn(async () => {}), invalidateModLogCache() {} }));
+// DELETE /api/messages/:id now runs through moderationActionsService.deleteMessageById.
+jest.mock('../dist/websocket/handlers', () => ({ refreshClientIdentity() {}, resolveDisplayName: user => user.username, broadcastMessageDeletion() {}, markClientMuted() {}, notifyAndDisconnect() { return 0; } }));
+jest.mock('../dist/services/discordService', () => ({ relayToDiscord: jest.fn(async () => {}), invalidateModLogCache() {}, postModAlert: async () => {}, getDiscordClient: () => null }));
 jest.mock('../dist/services/voiceService', () => ({ invalidateVoiceCache() {} }));
 jest.mock('../dist/services/supporterSyncService', () => ({ refreshSupporterFromDiscord: async () => {} }));
 jest.mock('../dist/services/chatNameService', () => ({ setChatName: async () => {} }));
@@ -145,6 +146,8 @@ const actions = [
   ['automod_rule_enable', 'patch', () => `/api/moderation/automod-rules/${ruleId}/toggle`, { enabled: true }, ruleId],
 ];
 test.each(actions)('real authenticated %s audit has the intended target and original database time', async (action, method, url, body, target) => {
+  // Legacy unban now reverses an actual ban (NotBanned 409 otherwise); seed a flag-only legacy ban.
+  if (action === 'unban') await mockDatabase.user.update({ where: { id: targetId }, data: { isBanned: true, banReason: 'Synthetic legacy ban' } });
   await (await client())[method](url()).send(body).expect(200); await assertAudit(action, target);
 });
 test.each([

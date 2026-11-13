@@ -11,13 +11,14 @@ const prisma = {
 const postEmbed = jest.fn();
 const buildMappings = jest.fn();
 const createPanel = jest.fn();
+const assertPanelRolesAllowed = jest.fn(async () => undefined);
 
 jest.mock('../src/config/prisma', () => ({ __esModule: true, default: prisma }));
 jest.mock('../src/services/discordService', () => ({ postEmbed }));
 jest.mock('../src/services/reactionRoleService', () => ({
   __esModule: true,
   ReactionRolePanelError: class ReactionRolePanelError extends Error { constructor(cause) { super('Reaction-role panel setup failed'); this.causeClass = cause?.constructor?.name ?? 'UnknownError'; } },
-  default: { buildMappings, createPanel },
+  default: { buildMappings, createPanel, assertPanelRolesAllowed },
 }));
 
 const service = require('../src/services/discordEmbedService').default;
@@ -134,6 +135,17 @@ describe('discordEmbedService', () => {
     expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ actorId: 'actor-id', action: 'send_discord_embed' }),
     }));
+  });
+
+  it('refuses a panel role before posting the embed', async () => {
+    assertPanelRolesAllowed.mockRejectedValueOnce(new Error('The role "Mod" is a configured staff, access or supporter role and cannot be offered on a reaction panel.'));
+    await expect(service.send({
+      channelId: '42345678901234567', embed: { title: 'Roles' }, actorId: 'actor-id',
+      reactionRoles: [{ emoji: '🎮', roleId: '52345678901234567' }],
+    })).rejects.toThrow('configured staff');
+    expect(assertPanelRolesAllowed).toHaveBeenCalledWith('42345678901234567', ['52345678901234567'], 'actor-id');
+    expect(postEmbed).not.toHaveBeenCalled();
+    expect(createPanel).not.toHaveBeenCalled();
   });
 
   it('supports MCP-owned auditing and preserves partial-send semantics when panel creation fails', async () => {

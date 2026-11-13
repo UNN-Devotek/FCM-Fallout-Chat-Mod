@@ -183,9 +183,15 @@ until FCM has a per-channel slow-mode primitive; auth state reports `canSetSlowM
 
 The optional HUD widget exposes the actions only to a staff identity. It accepts an exact visible
 player name (quote multi-word names) or the short `[#XXXXXXXX]` reference beside visible messages,
-for example `/mod Alice mute 15 spam`. The widget resolves either input locally to the relay event's
-immutable message and account IDs; it never sends the display name as a moderation target. Duplicate
-visible names are rejected and require the reference. See the widget [build and verification guide](../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#in-game-acceptance-checklist).
+for example `/mod Alice mute 15m spam` or `/mod Alice ban 1d spam`. The widget resolves either input
+locally to the relay event's immutable message and account IDs (Server rows use the `a=` account
+carrier), so the same player in General and Server is one target. Different accounts with the same
+visible name are rejected and require the reference. Only `unban`/`unmute` may send a display name,
+because a banned or muted player usually has no visible row; the relay requires exactly one exact
+match. Durations, explicit permanence, the ZFE-safe `FCMMOD/1;` carrier, error codes and the
+`FCMDEL/1;` removal event are specified in the
+[protocol reference](protocol-spec.md#moderation-action). See the widget
+[build and verification guide](../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#staff-moderation-commands).
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
 `raids`. The backend maps them to the owned channel IDs, applies normal auth,

@@ -34,6 +34,8 @@ private typedef ChatRecord = {
     var arrivalOrder:Int;
     var serverReplay:Bool;
     @:optional var linkUrl:String;
+    /** FCM account UUID used for staff moderation (Server rows carry it in the FCMHUD/1 `a` field). */
+    @:optional var accountId:String;
 }
 
 private typedef FeedRowView = {
@@ -83,7 +85,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.152"; // local caret from the native xScal cursor snapshot
+    static inline var VERSION:String  = "2.10.153"; // HUD moderation durations, Server targets, remote deletes
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -502,6 +504,8 @@ class FCMChatWidget extends MovieClip {
     // with the durable HUD transaction/control until pollEvents publishes the completion.
     var _zfePendingSends:Map<Int, String> = new Map();
     var _zfePendingControls:Map<Int, String> = new Map();
+    // Queued ZFE moderation requests: requestId -> "action|deleted message id".
+    var _zfePendingModeration:Map<Int, String> = new Map();
     var _canRetryHudSend:Bool = false;
     var _canSendRoomDiagnostics:Bool = false;
     var _connectStartedAt:Float = 0;
@@ -511,6 +515,7 @@ class FCMChatWidget extends MovieClip {
         for (id in _outbox.clear()) removeOptimisticRecord(id);
         _zfePendingSends = new Map();
         _zfePendingControls = new Map();
+        _zfePendingModeration = new Map();
         _outboxIdentity = "";
         _records = [];
     }
@@ -3551,10 +3556,19 @@ class FCMChatWidget extends MovieClip {
         return { target: word.word, rest: word.rest, valid: word.word.length > 0, quoted: false };
     }
 
+    /** Account identity used for moderation and duplicate-name checks. */
+    function moderationIdentity(rec:ChatRecord):String {
+        if (rec.accountId != null && rec.accountId.length > 0) return rec.accountId;
+        return rec.senderUserId == null ? "" : rec.senderUserId.toLowerCase();
+    }
+
+    function isModerationRecord(rec:ChatRecord):Bool {
+        return rec.messageId != null && FcmCommand.moderationReference(rec.messageId).length > 0
+            && moderationIdentity(rec).length > 0;
+    }
+
     function isVisibleModerationRecord(rec:ChatRecord, activeChannel:String):Bool {
-        return FcmCommand.channelVisible(activeChannel, rec.channel)
-            && rec.messageId != null && rec.messageId.length >= 8
-            && rec.senderUserId != null && rec.senderUserId.length > 0;
+        return FcmCommand.channelVisible(activeChannel, rec.channel) && isModerationRecord(rec);
     }
 
     function findModerationTargetByReference(reference:String):Null<ChatRecord> {
@@ -3564,7 +3578,7 @@ class FCMChatWidget extends MovieClip {
         var activeChannel:String = CHAN_SLUGS[_chanIdx];
         for (rec in _records) {
             if (!isVisibleModerationRecord(rec, activeChannel)) continue;
-            if (rec.messageId.substr(0, 8).toLowerCase() == ref) return rec;
+            if (FcmCommand.moderationReference(rec.messageId) == ref) return rec;
         }
         return null;
     }
@@ -3582,7 +3596,8 @@ class FCMChatWidget extends MovieClip {
         for (rec in _records) {
             if (!isVisibleModerationRecord(rec, activeChannel)) continue;
             if (StringTools.trim(rec.user).toLowerCase() != normalizedName) continue;
-            if (candidate != null && candidate.senderUserId != rec.senderUserId) {
+            // The same player posting in Global and Server is one account, not two matches.
+            if (candidate != null && moderationIdentity(candidate) != moderationIdentity(rec)) {
                 return { target: null, ambiguous: true };
             }
             // Records are chronological; delete-by-name should act on this user's latest row.
@@ -3592,26 +3607,11 @@ class FCMChatWidget extends MovieClip {
     }
 
     function moderationHelp():String {
-        return "HUD MODERATION\n"
-            + "Use an exact visible name (quote names with spaces), or [#XXXXXXXX]:\n"
-            + "/mod Alice mute [minutes] [reason]\n"
-            + "/mod \"Alice Smith\" kick [reason]\n"
-            + "/mod #ref delete [reason]\n"
-            + "/mod #ref kick [reason]\n"
-            + "/mod #ref mute [minutes] [reason]\n"
-            + "/mod #ref unmute [reason]\n"
-            + "/mod #ref ban [minutes|permanent] [reason]\n"
-            + "/mod #ref unban [reason]\n"
-            + "Slow mode is not available.";
+        return FcmCommand.moderationHelp();
     }
 
     function moderationError(code:String, message:String):Void {
-        var text:String = "Moderation failed";
-        if (code == "permission_denied") text = "Moderation denied. Your linked staff role may have changed.";
-        else if (code == "user_banned" || code == "user_kicked") text = "Chat session ended - reconnecting...";
-        else if (message != null && message.length > 0) text += ": " + message;
-        else if (code != null && code.length > 0) text += ": " + code;
-        setLogText(FcmConfig.htmlEscape(text));
+        setLogText(FcmConfig.htmlEscape(FcmCommand.moderationErrorText(code, message)));
         if (code == "auth_token_invalid" || code == "auth_token_revoked" || code == "user_banned" || code == "user_kicked") {
             retireNameplateEvidence();
             _connected = false;
@@ -3631,35 +3631,76 @@ class FCMChatWidget extends MovieClip {
         }
     }
 
-    function submitModerationAction(action:String, target:ChatRecord, durationMinutes:Int, reason:String):Void {
+    function moderationSubmitted(action:String, deletedMessageId:String):Void {
+        if (action == "deleteMessage") removeLocalMessage(deletedMessageId);
+        zfeLog("info", "moderation", "submitted action=" + action);
+        setLogText("Moderation action submitted: " + action + ".");
+    }
+
+    /**
+     * Send one parsed staff action. `target` is a visible row; a null target is only used for
+     * by-name unban/unmute, which the relay resolves to exactly one account.
+     */
+    function submitModerationAction(command:{action:String, minutes:Int, permanent:Bool, reason:String, error:String},
+            target:Null<ChatRecord>, targetName:String):Void {
         if (_api == null || !_connected || !_canModerate) {
             setLogText("Moderation is unavailable until your linked staff role is verified.");
             return;
         }
-        reason = fcmClean(reason);
+        // Older ZFE builds run chat.v1 requests synchronously on the Scaleform thread; a stalled
+        // relay would freeze the game. Require the same asynchronous control capability as the
+        // automatic Server-room controls. xScal schedules chatInterface work off the frame.
+        if (_api.provider == FcmNativeApi.ZFE && !_api.supportsNonBlockingControl()) {
+            setLogText("Moderation needs a newer ZFE with asynchronous chat controls.");
+            zfeLog("warn", "moderation", "blocked synchronous provider request");
+            return;
+        }
+        var action:String = command.action;
+        var reason:String = fcmClean(command.reason);
         if (reason.length == 0) {
             setLogText("A moderation reason is required.");
             return;
         }
         if (reason.length > 500) reason = reason.substr(0, 500);
+        if (action == "deleteMessage" && target != null && StringTools.startsWith(target.messageId, "server:")) {
+            setLogText(FcmCommand.moderationErrorText("unsupported_target", ""));
+            return;
+        }
+        var targetUserId:String = target == null ? "" : moderationIdentity(target);
+        if (action != "deleteMessage" && target != null && !FcmCommand.isAccountId(targetUserId)) {
+            setLogText("That row has no FCM account to moderate. Use the player's name from a community channel.");
+            return;
+        }
 
-        var messageId:String = action == "deleteMessage" ? target.messageId : "";
-        var targetUserId:String = action == "deleteMessage" ? "" : target.senderUserId;
+        var deletedId:String = action == "deleteMessage" && target != null ? target.messageId : "";
+        // ZFE may drop newer JSON members, so account-level actions mirror the duration, explicit
+        // permanence and by-name target into the otherwise unused messageId member.
+        var messageId:String = action == "deleteMessage" ? deletedId
+            : FcmCommand.moderationEnvelope(command.minutes, command.permanent, target == null ? targetName : "");
         var payload:String = '{"action":"' + jsonEscape(action)
             + '","messageId":"' + jsonEscape(messageId)
-            + '","targetUserId":"' + jsonEscape(targetUserId)
-            + '","durationMinutes":' + durationMinutes
-            + ',"category":"Other","reason":"' + jsonEscape(reason) + '"}';
+            + '","targetUserId":"' + jsonEscape(action == "deleteMessage" ? "" : targetUserId)
+            + '",' + (command.permanent ? '"permanent":true,' : '')
+            + (command.minutes > 0 ? '"durationMinutes":' + command.minutes + ',' : '')
+            + (target == null && targetName.length > 0 ? '"targetName":"' + jsonEscape(targetName) + '",' : '')
+            + '"category":"Other","reason":"' + jsonEscape(reason) + '"}';
         try {
             var raw:String = Std.string(_api.call("chat.v1.moderationAction", payload));
+            var requestId:Int = FcmWire.queuedRequestId(raw);
+            if (requestId > 0) {
+                // Queue acceptance is not relay acceptance; the completion event decides.
+                _zfePendingModeration.set(requestId, action + "|" + deletedId);
+                zfeLog("info", "moderation", "queued action=" + action + " requestId=" + requestId);
+                setLogText("Moderation request sent: " + action + "...");
+                scheduleEchoPoll();
+                return;
+            }
             var success:Bool = raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0;
             if (!success) {
                 moderationError(extractJsonString(raw, "code"), extractJsonString(raw, "message"));
                 return;
             }
-            if (action == "deleteMessage") removeLocalMessage(target.messageId);
-            zfeLog("info", "moderation", "submitted action=" + action);
-            setLogText("Moderation action submitted: " + action + ".");
+            moderationSubmitted(action, deletedId);
         } catch (e:Dynamic) {
             zfeLog("warn", "moderation", "request threw: " + Std.string(e));
             setLogText("Moderation request failed (no relay).");
@@ -3683,55 +3724,33 @@ class FCMChatWidget extends MovieClip {
             return true;
         }
         var actionPart = nextWord(targetPart.rest);
-        if (actionPart.word.length == 0) {
+        var parsed = FcmCommand.parseModerationAction(actionPart.word, actionPart.rest);
+        if (parsed.error == "help") {
             setLogText(moderationHelp());
+            return true;
+        }
+        if (parsed.error.length > 0) {
+            setLogText(FcmConfig.htmlEscape(parsed.error));
             return true;
         }
         var resolution:ModerationTargetResolution = resolveModerationTarget(targetPart.target);
         var target = resolution.target;
+        var isReference:Bool = StringTools.startsWith(targetPart.target, "#");
         if (target == null) {
             if (resolution.ambiguous) {
                 setLogText("That name matches multiple visible players. Use [#XXXXXXXX].");
-            } else if (StringTools.startsWith(targetPart.target, "#")) {
+            } else if (isReference) {
                 setLogText("That moderation reference is not visible in this channel.");
+            } else if (parsed.action == "unbanUser" || parsed.action == "unmuteUser") {
+                // Banned or muted players usually have no visible row; the relay resolves an
+                // exact account name and requires a single match.
+                submitModerationAction(parsed, null, targetPart.target);
             } else {
                 setLogText("That player name is not visible in this channel.");
             }
             return true;
         }
-
-        var action:String = actionPart.word.toLowerCase();
-        var rest:String = actionPart.rest;
-        switch (action) {
-            case "delete":
-                submitModerationAction("deleteMessage", target, 0, rest);
-            case "kick":
-                submitModerationAction("kickUser", target, 0, rest);
-            case "unmute":
-                submitModerationAction("unmuteUser", target, 0, rest);
-            case "unban":
-                submitModerationAction("unbanUser", target, 0, rest);
-            case "mute":
-                var durationPart = nextWord(rest);
-                var minutes:Null<Int> = Std.parseInt(durationPart.word);
-                if (minutes == null || minutes <= 0 || minutes > 30 * 24 * 60) {
-                    setLogText("Mute duration must be 1 to 43200 minutes.");
-                } else {
-                    submitModerationAction("muteUser", target, minutes, durationPart.rest);
-                }
-            case "ban":
-                var durationPart = nextWord(rest);
-                var durationWord:String = durationPart.word.toLowerCase();
-                var minutes:Null<Int> = (durationWord == "perm" || durationWord == "permanent")
-                    ? 0 : Std.parseInt(durationWord);
-                if (minutes == null || minutes < 0 || minutes > 30 * 24 * 60) {
-                    setLogText("Ban duration must be minutes or permanent.");
-                } else {
-                    submitModerationAction("banUser", target, minutes, durationPart.rest);
-                }
-            default:
-                setLogText(moderationHelp());
-        }
+        submitModerationAction(parsed, target, "");
         return true;
     }
 
@@ -5344,6 +5363,14 @@ class FCMChatWidget extends MovieClip {
                 acceptOutboxReceipt(body);
                 continue; // Private delivery receipts never appear as public chat.
             }
+            if (rawChannel == "system" && senderUserId == "system"
+                    && StringTools.startsWith(body, FcmCommand.MOD_DELETE_EVENT_PREFIX)) {
+                updateCursorFromEvent(obj);
+                // Deletes from any surface (dashboard, Discord, another HUD) remove the row,
+                // matching the overlay's chat:delete handling. Unknown IDs are ignored.
+                removeLocalMessage(FcmCommand.deletedMessageId(body));
+                continue;
+            }
             if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMLAYOUT/1;")) {
                 updateCursorFromEvent(obj);
                 var applied:Bool = _api != null && _api.provider == FcmNativeApi.XSCAL
@@ -5475,12 +5502,18 @@ class FCMChatWidget extends MovieClip {
             // Trading/Events/Raids/Infests forever after connect.
             appendedCount++;
 
+            // Static rows already use the account UUID as senderUserId; Server rows use the
+            // relay identity and mirror the account in the FCMHUD/1 carrier.
+            var accountId:String = FcmConfig.hudTransportValue(hudTransport, "a").toLowerCase();
+            if (!FcmCommand.isAccountId(accountId))
+                accountId = FcmCommand.isAccountId(senderUserId) ? senderUserId.toLowerCase() : "";
             _records.push({
                 color: FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : "", channel: channel, user: displayName,
                 tag: tag, supporterStar: supporterStar, starColor: starColor, body: displayBody,
                 messageId: messageId, senderUserId: senderUserId, pending: false,
                 localSendId: "", pendingAt: 0, sendAccepted: false, linkUrl: transportLinkUrl,
                 createdAt: createdAt, arrivalOrder: _nextRecordOrder++, serverReplay: serverReplay,
+                accountId: accountId,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
             if (_bScrolling && FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], channel)) _newWhileScrolled++;
@@ -5519,6 +5552,16 @@ class FCMChatWidget extends MovieClip {
     function applyZfeAsyncCompletion(obj:String, accepted:Bool):Void {
         var requestId:Int = FcmWire.asyncRequestId(obj);
         if (requestId <= 0) return;
+
+        if (_zfePendingModeration.exists(requestId)) {
+            var pendingModeration:String = _zfePendingModeration.get(requestId);
+            _zfePendingModeration.remove(requestId);
+            var split:Int = pendingModeration.indexOf("|");
+            var moderationAction:String = split < 0 ? pendingModeration : pendingModeration.substr(0, split);
+            if (accepted) moderationSubmitted(moderationAction, split < 0 ? "" : pendingModeration.substr(split + 1));
+            else moderationError(FcmWire.asyncErrorCode(obj), "");
+            return;
+        }
 
         if (_zfePendingSends.exists(requestId)) {
             var localSendId:String = _zfePendingSends.get(requestId);
@@ -6427,9 +6470,8 @@ class FCMChatWidget extends MovieClip {
         var nameColor:Int = FcmConfig.parseHexColor(rec.color, _cfg.senderColor);
         var channelLabel:String = FcmConfig.chanLabel(rec.channel, _canModerate);
         var moderationText:String = "";
-        if (_canModerate && rec.messageId != null && rec.messageId.length >= 8
-                && rec.senderUserId != null && rec.senderUserId.length > 0)
-            moderationText = "[#" + rec.messageId.substr(0, 8).toUpperCase() + "] ";
+        if (_canModerate && isModerationRecord(rec))
+            moderationText = "[#" + FcmCommand.moderationReference(rec.messageId).toUpperCase() + "] ";
         // A single full-width native field lets continuation lines return beneath the channel.
         // Non-breaking spaces reserve an inline vector slot and stay with the first name word.
         var hasMarker:Bool = rec.supporterStar && rawUser.length > 0;

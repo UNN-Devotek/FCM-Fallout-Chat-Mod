@@ -52,13 +52,13 @@ See [auth.md](./auth.md) for full details.
 | GET | `/api/users/mention-search` | public (apiLimiter only) | Username autocomplete for @mentions |
 | GET | `/api/users/:id/profile` | public | Public-safe user profile (excludes ban reason, installToken, endpoint) |
 | GET | `/api/users/:id` | requireDiscordRole(owner/admin/mod) | Full user record |
-| GET | `/api/users/:id/aliases` | requireDiscordRole(owner/admin/mod) | Username alias history |
+| GET | `/api/users/:id/aliases` | requireStaffRole(owner/admin/mod) | Username alias history (dashboard session or overlay `X-Auth-Token`) |
 | GET | `/api/users/:id/messages` | requireDiscordRole(owner/admin/mod) | Messages by user |
-| POST | `/api/users/:id/mute` | requireDiscordRole(owner/admin/mod) | Mute user |
+| POST | `/api/users/:id/mute` | requireDiscordRole(owner/admin/mod) | Mute user (body `{ duration, reason }`, duration in minutes; via `moderationActionsService.muteUser`) |
 | DELETE | `/api/users/:id/mute` | requireDiscordRole(owner/admin/mod) | Unmute user |
-| POST | `/api/users/:id/kick` | requireDiscordRole(owner/admin/mod) | Kick user from chat |
-| POST | `/api/users/:id/ban` | requireDiscordRole(owner/admin) | Ban user |
-| DELETE | `/api/users/:id/ban` | requireDiscordRole(owner) | Unban user |
+| POST | `/api/users/:id/kick` | requireDiscordRole(owner/admin/mod) | Kick user (5-min cooldown + live disconnect; via `moderationActionsService.kickUser`) |
+| POST | `/api/users/:id/ban` | requireDiscordRole(owner/admin) | Permanent ban via `moderationActionsService.createBan` (reason stored as text evidence; 409 `ProtectedTarget` / `AlreadyBanned`) |
+| DELETE | `/api/users/:id/ban` | requireDiscordRole(owner) | Reverse the user's active ban rows (409 `NotBanned` when none) |
 | POST | `/api/users/:id/wipe` | requireDiscordRole(owner) | Wipe all user data |
 | DELETE | `/api/users/:id` | requireDiscordRole(owner) | Delete user record |
 
@@ -120,7 +120,7 @@ Uses `channelsLimiter` (500 req/15min) instead of `apiLimiter`.
 | GET | `/api/messages` | requireAuth | Message history (authenticated) |
 | POST | `/api/messages` | requireDiscordRole(owner/admin/mod) | Publish an admin message live and relay to Discord; no history row |
 | POST | `/api/messages/scrub` | requireDiscordRole(owner/admin) | Replace content of the supplied message UUIDs with `[REDACTED]` |
-| DELETE | `/api/messages/:id` | requireDiscordRole(owner/admin/mod) | Delete a message |
+| DELETE | `/api/messages/:id` | requireStaffRole(owner/admin/mod) | Soft-delete a channel message via `deleteMessageById` (audit row with reason, live `chat:delete`, mod alert). Optional reason: JSON body `{ reason }` or `?reason=` (max 500). 404 when missing or already deleted |
 
 Authenticated administrator WebSocket chat is a separate persisted path using
 `source: "web"`. Its ACK UUID and broadcast timestamp are retained through Bull
@@ -175,7 +175,7 @@ Admin party endpoints (see server.ts lines 1042–1050):
 | GET | `/api/admin/parties` | requireDiscordRole(owner/admin) | List all parties |
 | GET | `/api/admin/parties/:id` | requireDiscordRole(owner/admin) | Party details |
 | GET | `/api/admin/parties/:id/messages` | requireDiscordRole(owner/admin) | Party messages |
-| DELETE | `/api/admin/parties/:partyId/messages/:messageId` | requireDiscordRole(owner/admin) | Delete party message |
+| DELETE | `/api/admin/parties/:partyId/messages/:messageId` | requireStaffRole(owner/admin) | Delete party message (dashboard session or overlay `X-Auth-Token`) |
 
 Debug mirrors under `/admin/debug/parties/*` use `requireAdminKey` with the same handlers.
 
@@ -439,7 +439,9 @@ See [../moderation/](../moderation/) for full moderation documentation.
 ## Moderation (`/api/moderation`)
 
 Documented in [../moderation/](../moderation/). Covers:
-- Bans, kicks, mutes (`/api/moderation/kicks`, `/mutes`, `/bans`, `/evidence`, `/users/lookup`)
+- Bans, kicks, mutes (`/api/moderation/kicks`, `/mutes`, `/bans`, `/evidence`, `/users/lookup`).
+  `POST /kicks`, `POST /mutes` and `DELETE /mutes/:userId` use `requireStaffRole` (moderator+, dashboard
+  session or overlay `X-Auth-Token`); bans, evidence and lookup stay `requireDiscordRole` (web only).
 - AutoMod rules (`/api/moderation/automod-rules`, `/automod-violations`)
 - Settings (`GET`/`PATCH /api/moderation/settings`) — the key/value `moderation_settings` store.
   `PATCH` has three validation paths: `mod_log_channel_id` (Discord snowflake),

@@ -84,6 +84,34 @@ export function buildPlayerReportThreadName(
   return `${head}${tail}`;
 }
 
+export const REPORT_RATE_LIMIT = 3;
+export const REPORT_RATE_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Per-reporter sliding-window limiter for Discord `/report` submissions.
+ * In-process: Discord interactions are handled by the single gateway owner.
+ * `take` records an accepted submission only when it is allowed.
+ */
+export function createReportRateLimiter(limit = REPORT_RATE_LIMIT, windowMs = REPORT_RATE_WINDOW_MS) {
+  const recent = new Map<string, number[]>();
+  return {
+    take(key: string, now = Date.now()): { allowed: boolean; retryAfterMs: number } {
+      const kept = (recent.get(key) ?? []).filter((at) => now - at < windowMs);
+      if (kept.length >= limit) {
+        recent.set(key, kept);
+        return { allowed: false, retryAfterMs: windowMs - (now - kept[0]) };
+      }
+      kept.push(now);
+      recent.set(key, kept);
+      // Bound memory: drop reporters whose whole window has expired.
+      if (recent.size > 5_000) {
+        for (const [k, times] of recent) if (times.every((at) => now - at >= windowMs)) recent.delete(k);
+      }
+      return { allowed: true, retryAfterMs: 0 };
+    },
+  };
+}
+
 const THREAD_NAME_MAX = 100;
 
 module.exports = {
@@ -98,4 +126,7 @@ module.exports = {
   capImageUrls,
   remainingImageSlots,
   buildPlayerReportThreadName,
+  REPORT_RATE_LIMIT,
+  REPORT_RATE_WINDOW_MS,
+  createReportRateLimiter,
 };

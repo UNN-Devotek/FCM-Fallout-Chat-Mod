@@ -26,8 +26,8 @@ sockets, then re-checked on reconnect and in REST auth.
 | **Kick** | `POST /api/moderation/kicks` | `users.kickedUntil = now+5m` | 5-min cooldown (`KICK_COOLDOWN_MS`) | `notifyAndDisconnect` → `user:kicked` frame + force-close 4002 (`handlers.ts:1135`) | moderator+ |
 | **Mute** | `POST /api/moderation/mutes` | `isMuted`, `muteExpiresAt`, `muteReason/Category`, `mutedById` | 60s … **30d** cap (`MAX_MUTE_MS`; Discord slash input is capped at 28d) | `markClientMuted(true)` → `user:muted` frame, send blocked at `ingestMessage.ts:159` (no disconnect) | moderator+ |
 | **Unmute** | `DELETE /api/moderation/mutes/:id` | clears mute fields | — | `markClientMuted(false)` → `user:unmuted` | moderator+ |
-| **Ban** | `POST /api/moderation/bans` (multipart) | `bans` row + `users.isBanned/bannedUntil/banReason/banCategory`, evidence | temp (`bannedUntil`) or **permanent** (`null`) | `notifyAndDisconnect` → `user:banned` + force-close; **permanent** also revokes `devices` + Discord guild-ban | moderator+ |
-| **Reverse ban** | `POST /api/moderation/bans/:id/reverse` | `bans.reversedAt/By/Reason`, clears user flags | — | restores Discord roles (`savedDiscordRoles`) + lifts guild ban | moderator+ |
+| **Ban** | `POST /api/moderation/bans` (multipart) | `bans` row + `users.isBanned/bannedUntil/banReason/banCategory`, evidence | temp (`bannedUntil`) or **permanent** (`null`) | `notifyAndDisconnect` → `user:banned` + force-close; **permanent** also revokes `devices`, deny-lists provider IDs (`banned_identities`) + Discord guild-ban | moderator+ |
+| **Reverse ban** | `POST /api/moderation/bans/:id/reverse` | `bans.reversedAt/By/Reason`; clears user flags only if this ban was active and no other active ban remains | — | restores Discord roles (`savedDiscordRoles`) + lifts guild ban + lifts the deny-list (permanent) | moderator+ |
 | **Delete message** | `DELETE /api/messages/:id` | `messages.is_deleted = true` | — | broadcasts `chat:delete` | moderator+ |
 
 Key properties (all in `moderationActionsService.ts`):
@@ -37,7 +37,18 @@ Key properties (all in `moderationActionsService.ts`):
   send is rejected server-side. All three are **also** checked on `handleConnection`
   (`handlers.ts:1271–1299`) and in REST `requireAuth` (`auth.ts:25–87`) — belt-and-suspenders.
 - **Protected targets.** A user holding `moderator`/`admin`/`owner` cannot be kicked/muted/banned
-  (`ensureNotProtected` → `ProtectedTargetError` → 409).
+  (`ensureNotProtected` → `ProtectedTargetError` → 409). Staff is detected from the role cache, the
+  `admin_users` row, or a staff Discord role in the bot's in-memory member cache (no per-action
+  Discord API call). The check fails closed: a lookup error refuses the action
+  (`ProtectionCheckFailed`, 503). Error codes: [README](README.md#stable-error-codes).
+- **One active ban at a time.** Banning a user who already has an active ban is refused
+  (`AlreadyBanned`, 409) instead of adding a duplicate row and overwriting the saved Discord roles.
+  Reversing a ban only lifts the user's state when that ban was active and no other active ban
+  remains; reversing an already-reversed ban is `BanAlreadyReversed`.
+- **Legacy routes share the service.** `POST/DELETE /api/users/:id/{mute,kick,ban}` (dashboard Users
+  page, ChatOverlay) call the same service functions, so they get the same protection, records,
+  live eviction and Discord propagation. The legacy ban is permanent with the reason as text
+  evidence; the legacy unban reverses the user's active ban rows.
 - **Evidence required for bans** (≥1 text/image; images in MinIO, magic-byte validated, served
   `nosniff`/`inline`). Evidence is access-scoped: owners/admins see all; other staff see only bans
   they issued (denial = 404, not 403, to avoid an existence oracle).
@@ -45,10 +56,14 @@ Key properties (all in `moderationActionsService.ts`):
   Discord mod-log embed; it does not post a public General-channel system message. Dashboard and
   overlay responses remain private to the acting moderator, and Discord uses ephemeral interaction
   replies. `bans` is the source of truth for history (not the denormalized `users` flags).
-- **Discord propagation.** Mute → Discord timeout (≤28d cap); permanent ban → role-strip + guild
-  ban; Discord slash-ban applies that guild ban for temporary bans too, and slash-kick removes the
-  member from the guild. Reverse/expiry restores roles and lifts the guild ban. HUD/in-game
-  moderation calls the same service, so it receives the same propagation and audit behavior.
+- **Discord propagation.** Mute → Discord timeout (≤28d cap); every ban → role-strip + voice
+  disconnect; **permanent** ban → also a guild ban. Temporary bans (including the Discord slash-ban
+  with a duration) never guild-ban, because a guild ban removes the member and the stripped roles
+  could not be restored on expiry; the FCM account ban still blocks chat on every surface.
+  Slash-kick removes the member from the guild. Reverse/expiry restores roles and lifts any guild
+  ban. The 5-minute `sweepExpired` cron also restores roles for temp bans that the auth/link/WS
+  paths cleared lazily (within 7 days of expiry). HUD/in-game moderation calls the same service, so
+  it receives the same propagation and audit behavior.
 
 The **FCMHUD/1** in-game path uses `HudIdentityBlock` (keyed on
 `identityHash = HMAC(secret, fo76AccountName)`) checked at `HELLO` (ban → destroy socket) and `SEND`
@@ -67,10 +82,15 @@ With the [mandatory Discord/Nexus/Steam gate](../overlay/zfe/native-chat-relay/f
 - **Target = `users.id`** (the account), which links Discord, Nexus (`linked_identities`), and/or Steam and
   the device/install token. One ban flag on the account blocks **all** surfaces at once.
 - **Provider-ID deny-list (`banned_identities`, #297).** A **permanent** ban also deny-lists the
-  account's external **Discord, Nexus, and Steam IDs** (`provider` + `provider_uid`), checked at the
-  **auth/link gate** (device-code link, overlay Discord/Steam login, Nexus OAuth callback). This makes the
-  ban **durable** — it survives FCM-account deletion and blocks re-linking the **same** provider to a
-  fresh FCM account. The strongest evasion lever (§5).
+  account's external **Discord (`discord` = `users.discord_id_link`), Steam (`steam` = valid
+  `users.steam_id`), and Nexus/other linked IDs (`linked_identities.provider/provider_uid`)**, with
+  `reason = "ban:<banId> <category>"`. Checked at the **auth/link gate**: dashboard/`/link` Discord
+  sign-in (`/auth/discord/callback`), overlay Discord link (`/auth/discord/link/callback`), profile
+  Discord link, Steam callback, Nexus OAuth callback and MCP role resolution. The device-code
+  redemption requires one of those sessions. This makes the ban **durable** — it survives
+  FCM-account deletion and blocks re-linking the **same** provider to a fresh FCM account. The
+  strongest evasion lever (§5). Reversing the permanent ban (with no other unreversed permanent ban
+  left) removes those rows. A failed deny-list write is logged and does not undo the account ban.
 - **Historical `HudIdentityBlock` records** remain in the database for moderation
   history. Current relay moderation uses authenticated account IDs.
 - **No anonymous chat.** A bare chat.v1 `register` is *limited* and can't send until linked — so a
@@ -149,8 +169,8 @@ The lockdown is the main anti-evasion lever — but it's not absolute. Honest pi
 
 - **Strong:** a ban hits the account; permanent bans also **revoke the device** (`installToken`) and
   apply a **Discord guild ban**.
-- **Strongest — provider-ID deny-list (#297):** a permanent ban deny-lists the account's Discord +
-  Nexus IDs at the **auth/link gate**, so the **same** provider account can never authenticate to FCM
+- **Strongest — provider-ID deny-list (#297):** a permanent ban deny-lists the account's Discord,
+  Steam and Nexus IDs at the **auth/link gate**, so the **same** provider account can never authenticate to FCM
   again — even on a new FCM account, even after the original is deleted. To evade, the user needs a
   **brand-new** Nexus, Steam, or Discord account (the highest-cost path; Nexus carries mod-download
   history/reputation).

@@ -41,6 +41,7 @@ import { observeScrollIntent } from './observeScrollIntent';
 import { defaultTabTransition, emptyTabPreferences, fallbackTab, hideTab, moveTab, orderedTabs, replacementTab, tabKey, tabPreferenceScope } from './subtabPreferences';
 import { useSubtabPreferences } from './useSubtabPreferences';
 import { OverlayHeaderControls } from './OverlayHeaderControls';
+import { canStaffDelete, staffDeletePath, submitKick, submitMute, submitUnmute, type ModerationResult } from './staffModeration';
 
 /**
  * Web-based chat overlay — identical to the desktop SkiaSharp overlay.
@@ -1883,7 +1884,6 @@ interface ServerMember {
 interface ModModalState {
   action: 'delete' | 'mute' | 'kick' | 'ban';
   target: ChatMessage;
-  isServerMsg?: boolean;
 }
 
 interface SlashCommand {
@@ -7347,21 +7347,28 @@ export default function ChatOverlay() {
     (window as any).relayBridge?.returnToGame?.();
   }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage, activeMainId, pmView, privateConversations, sendPrivateMessageFrame, editingMessage, editPending, sendEditMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Staff unmute (message and member menus). The server clears any active mute;
+  // the toast reports the server's answer, including role refusals.
+  async function runUnmute(target: { userId: string; username: string }) {
+    const result = await submitUnmute(target);
+    showActionToast(result.ok ? 'ok' : 'err', result.ok ? result.message : result.error);
+  }
+
   // Moderation actions
   async function executeModAction(body: any) {
     if (!modModal) return;
-    const { action, target, isServerMsg } = modModal;
+    const { action, target } = modModal;
     setModLoading(true);
     setModError(null);
     try {
       if (action === 'delete') {
-        if (isServerMsg) {
-          await api.delete(`/api/presence/server-messages/${target.id}`);
-          setFeedMessages(prev => prev.filter(m => m.id !== target.id));
-        } else {
-          await api.delete(`/api/messages/${target.id}`);
-          setMessages(prev => prev.filter(m => m.id !== target.id));
-        }
+        // Channel messages, party messages (admin route) and unsupported kinds
+        // (PM / Server-room) resolve to different routes; see staffModeration.ts.
+        const path = staffDeletePath(target, typeof body?.reason === 'string' ? body.reason : '');
+        if (!path) throw new Error('Staff deletion is not available for this message.');
+        await api.delete(path);
+        setMessages(prev => prev.filter(m => m.id !== target.id));
+        showActionToast('ok', 'Message deleted');
       } else if (action === 'mute') {
         await api.post(`/api/users/${target.userId}/mute`, { duration: body.duration, reason: body.reason });
       } else if (action === 'kick') {
@@ -11010,6 +11017,7 @@ export default function ChatOverlay() {
           <MuteModal
             target={muteModalFor}
             onClose={() => setMuteModalFor(null)}
+            onDone={message => { setMuteModalFor(null); showActionToast('ok', message); }}
             primaryColor={primaryColor}
             chromeColor={theme.chromeColor}
             fontFamily={theme.fontFamily}
@@ -11022,6 +11030,7 @@ export default function ChatOverlay() {
           <KickModal
             target={kickModalFor}
             onClose={() => setKickModalFor(null)}
+            onDone={message => { setKickModalFor(null); showActionToast('ok', message); }}
             primaryColor={primaryColor}
             chromeColor={theme.chromeColor}
             fontFamily={theme.fontFamily}
@@ -11132,12 +11141,19 @@ export default function ChatOverlay() {
                     { label: `Mute ${ctxMenu.msg.username}…`, action: () => {
                       setMuteModalFor({ userId: ctxMenu.msg.userId!, username: ctxMenu.msg.username });
                     }},
+                    { label: `Unmute ${ctxMenu.msg.username}`, action: () => {
+                      void runUnmute({ userId: ctxMenu.msg.userId!, username: ctxMenu.msg.username });
+                    }},
                     { label: `Ban ${ctxMenu.msg.username}…`, action: () => {
                       openUrl(banFormUrl(ctxMenu.msg.userId!, ctxMenu.msg.username));
                     }},
-                    { label: 'Delete message', action: () => {
-                      setModModal({ action: 'delete', target: ctxMenu.msg });
-                    }},
+                    // Delete only where a staff delete route exists for this
+                    // message kind (party = admin+; PM / Server-room = none).
+                    ...(canStaffDelete(ctxMenu.msg, { isMod, isAdmin })
+                      ? [{ label: 'Delete message', action: () => {
+                          setModModal({ action: 'delete', target: ctxMenu.msg });
+                        }}]
+                      : []),
                   ]
                 : []),
               // Admin-only: view user profile with alias history.
@@ -11342,6 +11358,7 @@ export default function ChatOverlay() {
         // the existing chat-menu modals/flow. Distinct from the party "kick".
         if (isMod) {
           items.push({ label: `Mute ${target.username}…`, run: async () => { setMuteModalFor({ userId: target.userId, username: target.username }); } });
+          items.push({ label: `Unmute ${target.username}`, run: async () => { await runUnmute({ userId: target.userId, username: target.username }); } });
           items.push({ label: `Kick ${target.username} (5 min)…`, run: async () => { setKickModalFor({ userId: target.userId, username: target.username }); } });
           items.push({ label: `Ban ${target.username}…`, run: async () => { openUrl(banFormUrl(target.userId, target.username)); } });
         }
@@ -12114,7 +12131,7 @@ function ModerationModal({ action, target, onConfirm, onCancel, loading, error, 
           </div>
         )}
 
-        {(action === 'mute' || action === 'ban') && (
+        {(action === 'mute' || action === 'ban' || action === 'delete') && (
           <div style={{ marginBottom: '8px' }}>
             <label style={{ fontSize: '10px', color: primaryColor, display: 'block', marginBottom: '4px' }}>Reason</label>
             <input value={reason} onChange={e => setReason(e.target.value)}
@@ -12204,10 +12221,12 @@ function CategoryBadge({ cat, fontSize }: { cat: string; fontSize?: number }) {
 }
 
 function MuteModal({
-  target, onClose, primaryColor, chromeColor, fontFamily,
+  target, onClose, onDone, primaryColor, chromeColor, fontFamily,
 }: {
   target: { userId: string; username: string };
   onClose: () => void;
+  /** Called with a success message after the server confirms the mute. */
+  onDone: (message: string) => void;
   primaryColor: string;
   chromeColor: string;
   fontFamily: string;
@@ -12222,20 +12241,10 @@ function MuteModal({
     if (!reason.trim()) { setErr('Reason required.'); return; }
     setBusy(true);
     setErr(null);
-    try {
-      const res = await fetch('/api/moderation/mutes', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: target.userId, durationMinutes: minutes, category, reason }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.detail || `HTTP ${res.status}`);
-      }
-      onClose();
-    } catch (e: any) {
-      setErr(e.message);
-    } finally { setBusy(false); }
+    const result: ModerationResult = await submitMute(target, minutes, category, reason);
+    setBusy(false);
+    if (result.ok) onDone(result.message);
+    else setErr(result.error);
   }
 
   return (
@@ -12262,7 +12271,7 @@ function MuteModal({
           </select>
         </div>
         <div style={{ marginBottom: '12px' }}>
-          <div style={{ fontSize: '10px', letterSpacing: '0.08em', opacity: 0.7, marginBottom: '4px' }}>REASON (required, public in #general)</div>
+          <div style={{ fontSize: '10px', letterSpacing: '0.08em', opacity: 0.7, marginBottom: '4px' }}>REASON (required; shown to the user and logged for staff)</div>
           <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} style={{ width: '100%', background: 'transparent', color: primaryColor, border: `1px solid ${primaryColor}`, padding: '2px 4px', fontFamily, resize: 'vertical' }} maxLength={500} />
         </div>
         {minutes > 28 * 1440 && <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '8px' }}>Note: Discord timeout caps at 28d. Overlay mute continues for the full duration.</div>}
@@ -12282,10 +12291,12 @@ function MuteModal({
 // for 5 min with KICK_COOLDOWN:<seconds> in the close-reason.
 // ─────────────────────────────────────────────────────────────────────────────
 function KickModal({
-  target, onClose, primaryColor, chromeColor, fontFamily,
+  target, onClose, onDone, primaryColor, chromeColor, fontFamily,
 }: {
   target: { userId: string; username: string };
   onClose: () => void;
+  /** Called with a success message after the server confirms the kick. */
+  onDone: (message: string) => void;
   primaryColor: string;
   chromeColor: string;
   fontFamily: string;
@@ -12297,26 +12308,17 @@ function KickModal({
   async function submit() {
     if (!reason.trim()) { setErr('Reason required.'); return; }
     setBusy(true); setErr(null);
-    try {
-      const res = await fetch('/api/moderation/kicks', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: target.userId, reason }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.detail || `HTTP ${res.status}`);
-      }
-      onClose();
-    } catch (e: any) { setErr(e.message); }
-    finally { setBusy(false); }
+    const result: ModerationResult = await submitKick(target, reason);
+    setBusy(false);
+    if (result.ok) onDone(result.message);
+    else setErr(result.error);
   }
 
   return (
     <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onMouseDown={e => e.stopPropagation()} style={{ background: chromeColor, border: `1px solid ${primaryColor}`, fontFamily, color: primaryColor, padding: '16px', minWidth: '340px', maxWidth: '90vw' }}>
         <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '4px' }}>Kick {target.username}</div>
-        <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '12px' }}>5-minute reconnect cooldown · public in #general</div>
+        <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '12px' }}>Disconnects them with a 5-minute reconnect cooldown. They see the reason; staff mod log records it.</div>
         <div style={{ fontSize: '10px', letterSpacing: '0.08em', opacity: 0.7, marginBottom: '4px' }}>REASON (required)</div>
         <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={300} autoFocus
           style={{ width: '100%', background: 'transparent', color: primaryColor, border: `1px solid ${primaryColor}`, padding: '2px 4px', fontFamily, resize: 'vertical' }} />

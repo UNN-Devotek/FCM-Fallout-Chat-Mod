@@ -422,6 +422,38 @@ describe('ChatOverlay private messaging', () => {
     )).toBe(true);
   });
 
+  it('offers staff actions but no Delete on a PM, since no staff PM delete route exists', async () => {
+    renderOverlay({ id: 'user-me', username: 'You', role: 'admin' });
+    await screen.findByText('PM');
+
+    await act(async () => {
+      emitWs({
+        type: 'pm:list',
+        payload: {
+          conversations: [
+            {
+              conversationId: 'conv-1',
+              otherUserId: 'user-other',
+              otherDisplayName: 'Stealthmog',
+              lastMessagePreview: 'meet at whitespring?',
+              lastMessageSenderId: 'user-other',
+              lastMessageAt: '2026-06-25T15:53:00.000Z',
+              unreadCount: 2,
+            },
+          ],
+        },
+      });
+    });
+    fireEvent.click(screen.getByText('PM'));
+    fireEvent.click(await screen.findByText('Stealthmog'));
+
+    fireEvent.contextMenu(await screen.findByText(/Stealthmog:/));
+
+    expect(await screen.findByText('Unmute Stealthmog')).toBeTruthy();
+    expect(screen.getByText(/Kick Stealthmog/)).toBeTruthy();
+    expect(screen.queryByText('Delete message')).toBeNull();
+  });
+
   it('opens a searched user through the PM socket action', async () => {
     const targetUserId = '11111111-1111-4111-8111-111111111111';
     searchResultsForTest = [{ userId: targetUserId, displayName: 'NewFriend' }];

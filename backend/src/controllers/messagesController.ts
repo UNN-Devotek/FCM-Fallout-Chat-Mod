@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import { relayToDiscord } from '../services/discordService';
+import { deleteMessageById } from '../services/moderationActionsService';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -127,31 +128,30 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
 }
 
 /**
- * DELETE /api/messages/:id -- moderator+
+ * DELETE /api/messages/:id -- moderator+ (dashboard session or overlay token)
+ *
+ * Optional reason via JSON body `{ reason }` or `?reason=` (the dashboard API
+ * client sends no DELETE body). Goes through deleteMessageById so the delete
+ * is audited with its reason, broadcast, and posted to the mod-alert channel
+ * exactly like Discord/overlay command deletes.
  */
 async function deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
   return runRequiredBundle('moderation', 'messagesController:da98359c2286', async () => {
-  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid message ID format'));
+  const messageId = paramStr(req, 'id');
+  if (!UUID_RE.test(messageId)) return next(createError(400, 'Invalid message ID format'));
+  // Only accept a plain string (parameter tampering can yield arrays/objects).
+  const rawReason = req.body?.reason ?? req.query.reason;
+  const reason = typeof rawReason === 'string' ? rawReason.trim().slice(0, 500) : '';
   try {
     const actorId = await resolveInternalActorId(req.adminUser?.id);
-    // Raw query required — Message has a composite PK.
-    const result = await runRequiredMutation('moderation', 'bf5dd370c55bb78bfb7e591e', { stage: 'primary-write-unconfirmed' }, () => prisma.$executeRaw`
-      UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`, undefined, undefined, isRowCountNoChange);
-
-    if (result === 0) return next(createError(404, 'Message not found'));
-    await runRequiredMutation('audit', 'dfaab758ebec568e87cd224a', { stage: 'primary-write-unconfirmed' }, () => prisma.auditLog.create({
-      data: {
-        actorId,
-        action: 'delete_message',
-        targetId: paramStr(req, 'id'),
-        targetType: 'message',
-      },
-    }), undefined, undefined, undefined);
-    if ((global as any).broadcastMessageDeletion) {
-      (global as any).broadcastMessageDeletion(paramStr(req, 'id'));
-    }
+    // API-key callers resolve to null; the audit row then records no actor,
+    // which matches the previous behaviour of this endpoint.
+    await deleteMessageById(messageId, actorId as string, reason);
     res.json({ data: { deleted: true } });
   } catch (err) {
+    if (err instanceof Error && err.message === 'Message not found') {
+      return next(createError(404, 'Message not found'));
+    }
     next(err);
   }
 

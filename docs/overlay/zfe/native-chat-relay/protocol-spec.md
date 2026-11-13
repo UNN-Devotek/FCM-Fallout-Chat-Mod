@@ -522,6 +522,46 @@ Response:
 
 Supported actions: `deleteMessage`, `kickUser`, `muteUser`, `unmuteUser`, `banUser`, `unbanUser`, `setSlowMode`.
 
+**FCM relay amendments (HUD 2.10.153 / matching backend).** The documented frame carries only
+`action`, `messageId`, `targetUserId` and `reason`; ZFE builds the native request itself and may
+drop newer members. FCM therefore accepts the duration and target hints in two equivalent forms:
+
+| Purpose | Additive JSON member | ZFE-safe carrier in `messageId` (account-level actions only) |
+|---------|----------------------|------------------------------------------------------------|
+| Timed mute/ban | `durationMinutes` (1-43200) | `FCMMOD/1;d=<minutes>` |
+| Permanent ban | `permanent: true` | `FCMMOD/1;p=1` |
+| Unban/unmute by name | `targetName` | `FCMMOD/1;n=<URI-encoded name>` |
+
+The JSON member wins when both are present. A ban needs a positive duration or an explicit
+permanent flag: a missing, zero, negative, fractional or oversized duration is rejected with
+`invalid_duration` and never becomes permanent. A mute without a duration lasts 10 minutes and
+cannot be permanent. A by-name target is accepted only for `unbanUser`/`unmuteUser` with an empty
+`targetUserId`; the relay matches exact chat/account names case-insensitively and requires a
+single account. `deleteMessage` for a `server:` message is refused with `unsupported_target`
+because Server-room messages are ephemeral. Frames whose `action` arrives with ZFE's per-character
+`u0000` padding are repaired, corroborated by the decoded action.
+
+Moderation error codes: `permission_denied` (not staff), `protected_target`, `already_banned`,
+`not_banned`, `target_not_found`, `ambiguous_target`, `message_not_found`, `invalid_duration`,
+`unsupported_target`, `moderation_unavailable`, `invalid_request`.
+
+Server-room `chat.message` events mirror the sender's FCM account as `a=<uuid>` in the
+`FCMHUD/1;` `targetUserId` carrier (their `senderUserId` is the relay identity). Static-channel
+events already use the account UUID as `senderUserId`.
+
+**Removal event.** When any surface deletes a message (dashboard, Discord, MCP or the HUD), every
+relay instance sends capable native subscribers a private event with a fresh cursor:
+
+```json
+{ "kind": "chat.message", "channel": "system", "senderUserId": "system", "senderDisplayName": "FCM",
+  "targetUserId": "", "body": "FCMDEL/1;m=<URI-encoded messageId>" }
+```
+
+Only widgets that negotiated `clientVersion` 2.10.153 or newer receive it: older widgets treat
+an unknown system body as a link notice. Whether this system-channel carrier and a queued
+`moderationAction` completion behave on the native providers exactly as in the Ruffle harness
+still requires in-game capture.
+
 The **server is authoritative**. ZFE only **pre-checks** the permissions it received from auth
 Only linked Discord-backed `moderator`, `admin`, and `owner` accounts may submit these actions.
 The relay routes delete, kick, mute, unmute, ban, and unban through the shared moderation service, audit

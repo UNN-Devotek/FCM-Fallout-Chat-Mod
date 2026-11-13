@@ -36,7 +36,7 @@ class FCMHarness extends Sprite {
             MockXscal.sessionInputEnabled = true;
             MockXscal.sessionCaretEnabled = true;
         }
-        if (scenario == "input-caret" || scenario == "quoted-echo" || scenario == "cooldown" || scenario == "channel-send-tab" || scenario == "nameplates" || scenario == "native-nameplates") MockXscal.resetEvents();
+        if (scenario == "input-caret" || scenario == "quoted-echo" || scenario == "moderation" || scenario == "cooldown" || scenario == "channel-send-tab" || scenario == "nameplates" || scenario == "native-nameplates") MockXscal.resetEvents();
         if (scenario == "giveaway") { MockXscal.resetEvents(); MockXscal.giveawayMode = true; }
         if (scenario == "events") { MockXscal.resetEvents(); MockXscal.eventMode = true; }
         if (scenario == "xscal-session-input" || scenario == "xscal-period-native"
@@ -53,7 +53,7 @@ class FCMHarness extends Sprite {
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
-        if (scenario != "xscal-native-caret" && scenario != "input-caret" && scenario != "native-nameplates" && scenario != "nameplates" && scenario != "channel-send-tab" && scenario != "cooldown" && scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
+        if (scenario != "xscal-native-caret" && scenario != "input-caret" && scenario != "native-nameplates" && scenario != "nameplates" && scenario != "channel-send-tab" && scenario != "cooldown" && scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "moderation" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
             MockXscal.loadScenario("/hosted-dev-snapshot.json");
         BSUIDataManager = scenario == "bridge-fast-travel" ? MockBridgeGameData.manager() : MockGameData.manager();
         if (scenario == "nameplates" || scenario == "native-nameplates") {
@@ -97,6 +97,7 @@ class FCMHarness extends Sprite {
             if (scenario == "queue-loss") QueueLossScenario.start(widget, provider);
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
             if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
+            if (scenario == "moderation") ModerationScenario.start(widget, provider);
             if (scenario == "channel-send-tab") ChannelSendScenario.start(widget, provider);
             if (scenario == "nameplates") NameplateScenario.start(widget, this, provider);
             if (scenario == "native-nameplates") NativeNameplateScenario.start(widget, this, provider);
