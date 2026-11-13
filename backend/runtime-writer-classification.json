@@ -4378,7 +4378,7 @@
               "file": "backend/src/controllers/usersController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "0650f73fc998daaa9d20c2c1beb4c5cf29d681d8beca4146ad7e243491431044",
+            "fingerprint": "9775109ce6f3116c05fa4ea7f65c8102fc08c268b3780b7af554e2b4923da128",
             "calls": []
           }
         ]
@@ -15627,7 +15627,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -15703,7 +15703,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -15779,7 +15779,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -15855,7 +15855,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -15931,7 +15931,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16007,7 +16007,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16083,7 +16083,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16159,7 +16159,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16235,7 +16235,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16311,7 +16311,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16387,7 +16387,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16463,7 +16463,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16539,7 +16539,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16615,7 +16615,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16691,7 +16691,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16767,7 +16767,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16843,7 +16843,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16919,7 +16919,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -16995,7 +16995,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17011,10 +17011,10 @@
         "occurrence": 1
       },
       "family": "discord-sdk-mutation",
-      "operationFingerprint": "af441a05e9bd00ca5696618ffed466087e4a7af15ae9f5b591e1631345c3636e",
-      "ownerFingerprint": "4437ee5e1bad847ffcb30327a05a76de69ecce9abc55c6c7e556b7c0b4417603",
+      "operationFingerprint": "a0216782f60e506de38fbdb29ca7cddcc461604f2769956df7b2312f78fb6225",
+      "ownerFingerprint": "09dd06fb224ce1ac4c0e9be4d04d7912d99fd71605bf7004bde56d5da3a3519b",
       "boundaries": [],
-      "originalLine": 356,
+      "originalLine": 378,
       "sdkReference": "@discord:ChatInputCommandInteraction.reply",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17071,7 +17071,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17088,9 +17088,9 @@
       },
       "family": "discord-sdk-mutation",
       "operationFingerprint": "ac1cf1d79f39251c2822f14b03d54031e88b6ceaecae0f7cb21e2817250a3070",
-      "ownerFingerprint": "2431159f6acf93d27d8891d3ed657ffc7aa3dfaf1b92479a0fa11a8d26e5f5e0",
+      "ownerFingerprint": "aa73f904fa914a5c6a17f952eded684c616e9f5f8f33fbdd3365422925bf433e",
       "boundaries": [],
-      "originalLine": 376,
+      "originalLine": 414,
       "sdkReference": "@discord:AutocompleteInteraction.respond",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17147,7 +17147,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17163,10 +17163,10 @@
         "occurrence": 2
       },
       "family": "discord-sdk-mutation",
-      "operationFingerprint": "268125be6082ec94359c023a4ed795003a14913212ae6b902d700fe449ecb334",
-      "ownerFingerprint": "2431159f6acf93d27d8891d3ed657ffc7aa3dfaf1b92479a0fa11a8d26e5f5e0",
+      "operationFingerprint": "e10be412bf5c5368a6f353805a0fb66f83461fd19b37c90000dd181afd7d9627",
+      "ownerFingerprint": "aa73f904fa914a5c6a17f952eded684c616e9f5f8f33fbdd3365422925bf433e",
       "boundaries": [],
-      "originalLine": 400,
+      "originalLine": 424,
       "sdkReference": "@discord:AutocompleteInteraction.respond",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17223,7 +17223,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17240,9 +17240,9 @@
       },
       "family": "discord-sdk-mutation",
       "operationFingerprint": "ac1cf1d79f39251c2822f14b03d54031e88b6ceaecae0f7cb21e2817250a3070",
-      "ownerFingerprint": "2431159f6acf93d27d8891d3ed657ffc7aa3dfaf1b92479a0fa11a8d26e5f5e0",
+      "ownerFingerprint": "aa73f904fa914a5c6a17f952eded684c616e9f5f8f33fbdd3365422925bf433e",
       "boundaries": [],
-      "originalLine": 403,
+      "originalLine": 427,
       "sdkReference": "@discord:AutocompleteInteraction.respond",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17299,7 +17299,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17375,7 +17375,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17451,7 +17451,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17527,7 +17527,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17603,7 +17603,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17619,10 +17619,10 @@
         "occurrence": 1
       },
       "family": "discord-sdk-mutation",
-      "operationFingerprint": "ecc7b1f027bce4508b43c1a77389662d2f077f7debf73c0371d216876ad39c3f",
-      "ownerFingerprint": "011c12dc5914409631d3d232db838db236a1608d83fd620d3ae23f2ed6cc0537",
+      "operationFingerprint": "e10be412bf5c5368a6f353805a0fb66f83461fd19b37c90000dd181afd7d9627",
+      "ownerFingerprint": "f13782b67c22f082ae092ab7c0fa279d51112d2a608f3b97a0d559e3754a211a",
       "boundaries": [],
-      "originalLine": 447,
+      "originalLine": 466,
       "sdkReference": "@discord:AutocompleteInteraction.respond",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17679,7 +17679,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17696,9 +17696,9 @@
       },
       "family": "discord-sdk-mutation",
       "operationFingerprint": "ac1cf1d79f39251c2822f14b03d54031e88b6ceaecae0f7cb21e2817250a3070",
-      "ownerFingerprint": "011c12dc5914409631d3d232db838db236a1608d83fd620d3ae23f2ed6cc0537",
+      "ownerFingerprint": "f13782b67c22f082ae092ab7c0fa279d51112d2a608f3b97a0d559e3754a211a",
       "boundaries": [],
-      "originalLine": 450,
+      "originalLine": 469,
       "sdkReference": "@discord:AutocompleteInteraction.respond",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17755,7 +17755,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17772,9 +17772,9 @@
       },
       "family": "discord-sdk-mutation",
       "operationFingerprint": "10b5826d6d0de5f4c4cda0014debde0c31b4974caecbb4d4849b96ac56e930ca",
-      "ownerFingerprint": "5528f59edaf167f9c3b284ae6f28abb9ae39368558a4dbd52baee445fbb5c84e",
+      "ownerFingerprint": "5c07f46bae910db2b9d8cbbd93332a1bc8a14e2f20311f74bcd54d78b39778a8",
       "boundaries": [],
-      "originalLine": 462,
+      "originalLine": 481,
       "sdkReference": "@discord:ChatInputCommandInteraction.reply",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17831,7 +17831,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -17847,12 +17847,12 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "4d8c7fe7fb9dc00232d760d3783f665251e940283744858ebfbe172748a43d89",
-      "ownerFingerprint": "5528f59edaf167f9c3b284ae6f28abb9ae39368558a4dbd52baee445fbb5c84e",
+      "operationFingerprint": "3c211c6170755403c9864cdd6f52b8f74343a2019307a835d659dadf4a6b24db",
+      "ownerFingerprint": "5c07f46bae910db2b9d8cbbd93332a1bc8a14e2f20311f74bcd54d78b39778a8",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 467,
+      "originalLine": 486,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "handleReportCommand",
@@ -17879,9 +17879,9 @@
       },
       "family": "discord-sdk-mutation",
       "operationFingerprint": "4649a28c0f7c2937863514e353d07006b9782d6353a5afb4589dd4501889c4b0",
-      "ownerFingerprint": "5528f59edaf167f9c3b284ae6f28abb9ae39368558a4dbd52baee445fbb5c84e",
+      "ownerFingerprint": "5c07f46bae910db2b9d8cbbd93332a1bc8a14e2f20311f74bcd54d78b39778a8",
       "boundaries": [],
-      "originalLine": 474,
+      "originalLine": 493,
       "sdkReference": "@discord:ChatInputCommandInteraction.reply",
       "disposition": "delegated",
       "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
@@ -17938,539 +17938,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "852b65880f7e9f2bc61fb48b",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 1
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "6a3b56e4f848de67dec2e12971a00b1995efb99c88c6d5038989efa07ccf908e",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 486,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "dbbe29907b5ff0bb4ba93f5e",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 2
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "ba49cce28c9dbe9068995e113e5c8f7877b911cce63c427dbdc5eaffc8edd27b",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 491,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "2113113abcc66e14d6cb602c",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 3
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "f405b8918aaf0543362c847497214844afb684d867977210759b95bb807facf1",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 500,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "9b3f6cbe0fecad5aaac0dbf5",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 4
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "7c143d10812586766d318b334863bc6980b7028547c63b29d640152299276a03",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 512,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "0e22aba59c89d148f470d88e",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 5
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "411031c626751ab302d3eb0197492953bc3f048c27c28561679c82a439d72573",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 522,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "9ee816629c972506d711aa98",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 6
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "34fba8d342dda04da7836dedd77bdf8d78f44adbf32d5a47829b88b78ca4ebbd",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 531,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
-            "calls": []
-          }
-        ]
-      },
-      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
-    },
-    {
-      "writerId": "d36f30028539bbdffea2bf55",
-      "identity": {
-        "file": "backend/src/services/discordOverlayCommandService.ts",
-        "owner": "handleModeration",
-        "callee": "interaction.reply",
-        "occurrence": 7
-      },
-      "family": "discord-sdk-mutation",
-      "operationFingerprint": "fa2f3579ec48179c5d05e8647b804d6e828a657ba341c21ff9105bb5f22f39ac",
-      "ownerFingerprint": "4530d29f95d3daefb88354a515581cb86c732a11e5f3625bc1b9e8420a636d29",
-      "boundaries": [],
-      "originalLine": 540,
-      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
-      "disposition": "delegated",
-      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
-      "ownerProofs": [
-        {
-          "identity": {
-            "file": "backend/src/runtime/discordClient.ts",
-            "owner": "createRuntimeDiscordClient"
-          },
-          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-          "contract": "retained-required-disposition",
-          "requiredCalls": [
-            "runtime.required"
-          ],
-          "transactionClientBound": false
-        }
-      ],
-      "funnelProvenance": {
-        "kind": "discord-client-rest",
-        "chain": [
-          {
-            "identity": {
-              "file": "backend/src/runtime/discordClient.ts",
-              "owner": "createRuntimeDiscordClient"
-            },
-            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
-            "calls": [
-              "runtime.required",
-              "accountDiscordEmitter",
-              "accountSdkCallbackEmitter"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "start"
-            },
-            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
-            "calls": [
-              "createRuntimeDiscordClient",
-              "loginRuntimeDiscordClient"
-            ]
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordService.ts",
-              "owner": "getDiscordClient"
-            },
-            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
-            "calls": []
-          },
-          {
-            "identity": {
-              "file": "backend/src/services/discordOverlayCommandService.ts",
-              "owner": "<module>"
-            },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -18547,7 +18015,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -18623,7 +18091,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -18699,7 +18167,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -18774,7 +18242,7 @@
               "file": "backend/src/services/discordOverlayCommandService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
             "calls": []
           }
         ]
@@ -21647,7 +21115,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -21723,7 +21191,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -21799,7 +21267,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -21875,7 +21343,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -21951,7 +21419,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -22027,7 +21495,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -22103,7 +21571,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -22179,7 +21647,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -22255,7 +21723,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
             "calls": []
           }
         ]
@@ -35677,6 +35145,462 @@
       "disposition": "optional",
       "reason": "Bounded local path/metadata/credential read; no persistent write. Errors refuse control/startup. Secret bytes are never returned in status or diagnostics.",
       "verification": "Native Windows control/restart/CLI and explicit public-ACL rejection, plus Linux runtime regressions in required CI."
+    },
+    {
+      "writerId": "8a142bb0e46a0a26bfb8496f",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "requireTarget",
+        "callee": "interaction.reply",
+        "occurrence": 2
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "13c96761f8d113a69e3b48ff547012c4f4aa30be6cad0aaf1aa3aef5480d3f1b",
+      "ownerFingerprint": "09dd06fb224ce1ac4c0e9be4d04d7912d99fd71605bf7004bde56d5da3a3519b",
+      "boundaries": [],
+      "originalLine": 388,
+      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
+    },
+    {
+      "writerId": "cbe4194ef339d0f53e49f82b",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "respond",
+        "callee": "interaction.editReply",
+        "occurrence": 1
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "2f4dbb3619c0e649d9f82f6676410081a240c46c321ecd7353296f06b380be80",
+      "ownerFingerprint": "9b82ecd18598ee704bf2dd95a2ad5e9a256c90399f3167c4709f764d7b9062d6",
+      "boundaries": [],
+      "originalLine": 505,
+      "sdkReference": "@discord:ChatInputCommandInteraction.editReply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
+    },
+    {
+      "writerId": "f29aaa21b89ff4cc27c01326",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "respond",
+        "callee": "interaction.reply",
+        "occurrence": 1
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "df3c91b7d54480218a4d154efed30e314f8a900b4fe5cde715803a815871b636",
+      "ownerFingerprint": "9b82ecd18598ee704bf2dd95a2ad5e9a256c90399f3167c4709f764d7b9062d6",
+      "boundaries": [],
+      "originalLine": 506,
+      "sdkReference": "@discord:ChatInputCommandInteraction.reply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
+    },
+    {
+      "writerId": "1e2be9eea612cbdfc43e0521",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "handleModeration",
+        "callee": "interaction.deferReply",
+        "occurrence": 1
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "c6676c0b54b5ed6134e428e26660f6be778c0341cb48c7f045a964c808dbe352",
+      "ownerFingerprint": "1aa2aa3618d67b380acfc096f6219bf4a8ea9efbba9e35b8b22052e54124d235",
+      "boundaries": [],
+      "originalLine": 509,
+      "sdkReference": "@discord:ChatInputCommandInteraction.deferReply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
+    },
+    {
+      "writerId": "3081fb13cfa7356edea9d7dd",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "handleModeration",
+        "callee": "interaction.deferReply",
+        "occurrence": 2
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "c6676c0b54b5ed6134e428e26660f6be778c0341cb48c7f045a964c808dbe352",
+      "ownerFingerprint": "1aa2aa3618d67b380acfc096f6219bf4a8ea9efbba9e35b8b22052e54124d235",
+      "boundaries": [],
+      "originalLine": 515,
+      "sdkReference": "@discord:ChatInputCommandInteraction.deferReply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
+    },
+    {
+      "writerId": "77a6ff5ef87e61563270e71a",
+      "identity": {
+        "file": "backend/src/services/discordOverlayCommandService.ts",
+        "owner": "handleModeration",
+        "callee": "interaction.deferReply",
+        "occurrence": 3
+      },
+      "family": "discord-sdk-mutation",
+      "operationFingerprint": "c6676c0b54b5ed6134e428e26660f6be778c0341cb48c7f045a964c808dbe352",
+      "ownerFingerprint": "1aa2aa3618d67b380acfc096f6219bf4a8ea9efbba9e35b8b22052e54124d235",
+      "boundaries": [],
+      "originalLine": 523,
+      "sdkReference": "@discord:ChatInputCommandInteraction.deferReply",
+      "disposition": "delegated",
+      "reason": "This actual SDK call uses the single injected/retrieved instrumented Discord client. Its concrete REST request is admitted, awaited and journaled before release, including errors swallowed by the feature caller. The caller and client initializer/funnel are fingerprinted independently.",
+      "ownerProofs": [
+        {
+          "identity": {
+            "file": "backend/src/runtime/discordClient.ts",
+            "owner": "createRuntimeDiscordClient"
+          },
+          "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+          "contract": "retained-required-disposition",
+          "requiredCalls": [
+            "runtime.required"
+          ],
+          "transactionClientBound": false
+        }
+      ],
+      "funnelProvenance": {
+        "kind": "discord-client-rest",
+        "chain": [
+          {
+            "identity": {
+              "file": "backend/src/runtime/discordClient.ts",
+              "owner": "createRuntimeDiscordClient"
+            },
+            "fingerprint": "90df9065c28dcbd985f100d405866c8e9b356e260fe984960a9190e890a88be1",
+            "calls": [
+              "runtime.required",
+              "accountDiscordEmitter",
+              "accountSdkCallbackEmitter"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "start"
+            },
+            "fingerprint": "1d408dd5da20ccf1b39188e028cdee07c77ad6e47b5e62ab20c06db6734752d0",
+            "calls": [
+              "createRuntimeDiscordClient",
+              "loginRuntimeDiscordClient"
+            ]
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordService.ts",
+              "owner": "getDiscordClient"
+            },
+            "fingerprint": "9ab49dbe43b224f1e071ed2917b76c4a66b596f55f917a504f4ed0f376609018",
+            "calls": []
+          },
+          {
+            "identity": {
+              "file": "backend/src/services/discordOverlayCommandService.ts",
+              "owner": "<module>"
+            },
+            "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
+            "calls": []
+          }
+        ]
+      },
+      "verification": "Actual installed SDK callback/lifetime subprocess in tests/runtimeSdkCallbacks.test.js; held, confirmed, lost/retried response and no-hidden-callback cases. No exactly-once external-effect claim under SDK retries."
     }
   ],
   "sourceBindings": [
@@ -35821,7 +35745,7 @@
         "file": "backend/src/controllers/moderationActionsController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "7025cf4cede781ebeda7338cbd7264b5dabf3b2f8811b52dcea6d2964b4cd815",
+      "fingerprint": "276e0592fd163b35ebe06777e71a0ecb5e41e04a46bf06f97a64816e8d5435e2",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -35893,7 +35817,7 @@
         "file": "backend/src/controllers/usersController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "0650f73fc998daaa9d20c2c1beb4c5cf29d681d8beca4146ad7e243491431044",
+      "fingerprint": "9775109ce6f3116c05fa4ea7f65c8102fc08c268b3780b7af554e2b4923da128",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36317,7 +36241,7 @@
         "file": "backend/src/services/discordOverlayCommandService.ts",
         "owner": "<module>"
       },
-      "fingerprint": "71616e51a3a9adf825c22beb36c54a22b83f6d2a1730bffb218abe516d8f4d3c",
+      "fingerprint": "b59bbc63deba465e88f4540acfafbff8bc58995cbf1e0d27a5e04ad03df202aa",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36437,7 +36361,7 @@
         "file": "backend/src/services/moderationActionsService.ts",
         "owner": "<module>"
       },
-      "fingerprint": "aca316f4d849122e1f2b6cfe98e749135eca930e01961674a2a67955f9da3fd4",
+      "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
