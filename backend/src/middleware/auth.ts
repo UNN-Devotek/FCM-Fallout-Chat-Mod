@@ -6,6 +6,7 @@ import { createError } from './errorHandler';
 import logger from '../config/logger';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { getCachedRole, resolveRole } from '../services/roleVerificationService';
+import { getEffectiveRole } from '../services/userRoleService';
 import env from '../config/environment';
 
 // Extend Express Request to include our custom properties
@@ -241,6 +242,79 @@ function requireDiscordRole(...allowedRoles: string[]) {
 }
 
 /**
+ * Staff gate shared by the web dashboard and the Electron overlay.
+ *
+ * Web callers (a Discord OAuth session cookie or X-API-Key) go through
+ * requireDiscordRole unchanged. A caller with neither but with an
+ * X-Auth-Token (the overlay's main-process HTTP proxy never forwards cookies)
+ * is authenticated by requireAuth (expired or banned sessions are refused
+ * there) and then authorised by the same effective-role source the WebSocket
+ * moderation frames use (getEffectiveRole: Redis role cache, then the
+ * admin_users table) against the same hierarchical threshold.
+ *
+ * On success req.adminUser mirrors the web shape: `id` is the caller's Discord
+ * ID so downstream actor resolution (actorUserId / resolveInternalActorId)
+ * attributes bans, kicks, mutes and audit rows to the same user row.
+ *
+ * Only routes that must work from the overlay use this gate; every other
+ * dashboard route keeps requireDiscordRole and stays cookie/API-key only.
+ */
+function requireStaffRole(...allowedRoles: string[]) {
+  const webGate = requireDiscordRole(...allowedRoles);
+  // Threshold for token callers. Unconfigured role IDs (local dev) normalise to
+  // nothing; fall back to moderator so the token path never widens to
+  // supporter/developer personas the way the web dev-mode fallback does.
+  const tokenRoles = allowedRoles.map(normalizeAdminRole).filter((r): r is AdminRole => r !== null);
+  const requiredForToken: string[] = tokenRoles.length > 0 ? tokenRoles : ['moderator'];
+
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const hasWebAuth = !!(req.session as any)?.discordUser || !!req.headers['x-api-key'];
+    const token = req.headers['x-auth-token'];
+    if (hasWebAuth || typeof token !== 'string' || !token) {
+      return webGate(req, res, next);
+    }
+
+    // Run requireAuth to completion first so the role check below is awaited
+    // by this middleware (and by tests) rather than detached in a callback.
+    let authCalled = false;
+    let authErr: unknown;
+    try {
+      await requireAuth(req, res, (err?: unknown) => { authCalled = true; authErr = err; });
+    } catch (err) {
+      return next(err);
+    }
+    if (!authCalled) return next(createError(401, 'Authentication required'));
+    if (authErr) return next(authErr);
+
+    try {
+      const userId: string = req.user.id;
+      const linked = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { discordId: true, discordUsername: true, discordDisplayName: true },
+      });
+      if (!linked?.discordId) return next(createError(403, 'Insufficient Discord role'));
+      const role = await getEffectiveRole(userId);
+      if (!roleSatisfiesRequirement(role, requiredForToken)) {
+        return next(createError(403, 'Insufficient Discord role'));
+      }
+      req.adminUser = {
+        id: linked.discordId,
+        username: linked.discordUsername ?? req.user.username,
+        displayName: linked.discordDisplayName ?? null,
+        role,
+        roles: [],
+        userId,
+        via: 'overlay-token',
+      };
+      next();
+    } catch (err) {
+      logger.warn({ err }, 'Staff token role check failed');
+      next(createError(403, 'Insufficient Discord role'));
+    }
+  };
+}
+
+/**
  * Device-signature middleware. Verifies the request is signed by an enrolled
  * install key (ECDSA P-256 / SHA-256 over method+path+bodyhash+ts+nonce).
  * Attaches req.device = { installToken } on success. Pairs with the
@@ -354,5 +428,5 @@ export function requireDashboardAuth(req: Request, res: Response, next: NextFunc
   res.status(401).json({ title: 'Unauthorized', detail: 'Sign in with Discord first.' });
 }
 
-export { requireAuth, requireDiscordRole, requireSignedDevice, requireAnyAuthedClient };
-module.exports = { requireAuth, requireDiscordRole, requirePublicDiscordAuth, requireSignedDevice, requireAnyAuthedClient, requireDashboardAuth };
+export { requireAuth, requireDiscordRole, requireStaffRole, requireSignedDevice, requireAnyAuthedClient };
+module.exports = { requireAuth, requireDiscordRole, requireStaffRole, requirePublicDiscordAuth, requireSignedDevice, requireAnyAuthedClient, requireDashboardAuth };

@@ -19,14 +19,16 @@ jest.mock('../src/config/prisma', () => ({
   __esModule: true,
   default: {
     user: { update: jest.fn(), findUnique: jest.fn() },
-    ban: { create: jest.fn() },
+    ban: { create: jest.fn(), findFirst: jest.fn() },
+    linkedIdentity: { findMany: jest.fn() },
+    bannedIdentity: { upsert: jest.fn() },
     auditLog: { create: jest.fn() },
     device: { updateMany: jest.fn() },
   },
 }));
 jest.mock('../src/websocket/handlers', () => ({ broadcast: jest.fn(), notifyAndDisconnect: jest.fn(() => 0), markClientMuted: jest.fn(), broadcastMessageDeletion: jest.fn(), disconnectByUserId: jest.fn() }));
 jest.mock('../src/services/discordService', () => ({ getDiscordClient: jest.fn(() => ({ guilds: { fetch: jest.fn().mockResolvedValue(guild) } })), postModAlert: jest.fn().mockResolvedValue(undefined) }));
-jest.mock('../src/services/userRoleService', () => ({ isProtectedTarget: jest.fn().mockResolvedValue(false) }));
+jest.mock('../src/services/userRoleService', () => ({ resolveTargetProtection: jest.fn().mockResolvedValue({ found: true, role: null }) }));
 jest.mock('../src/services/relay/tokenService', () => ({ revokeTokensForLinkedUser: jest.fn() }));
 jest.mock('../src/services/relay/relayHandler', () => ({ evictRelayUser: jest.fn().mockResolvedValue(0) }));
 
@@ -39,6 +41,11 @@ describe('Discord slash moderation propagation', () => {
     prisma.user.update.mockResolvedValue({ discordId: 'target-discord' });
     prisma.user.findUnique.mockResolvedValue({ discordId: 'target-discord', username: 'Target' });
     prisma.ban.create.mockResolvedValue({ id: 'ban-1' });
+    prisma.ban.findFirst.mockResolvedValue(null);
+    prisma.linkedIdentity.findMany.mockResolvedValue([]);
+    prisma.bannedIdentity.upsert.mockResolvedValue({});
+    member.roles.cache = new Map([['role-a', { id: 'role-a', managed: false, position: 5 }]]);
+    member.roles.remove.mockResolvedValue(undefined);
     prisma.auditLog.create.mockResolvedValue({});
     member.kick.mockResolvedValue(undefined);
     member.timeout.mockResolvedValue(undefined);
@@ -61,9 +68,20 @@ describe('Discord slash moderation propagation', () => {
     expect(result.discordPropagated).toBe(true);
   });
 
-  test('the slash-ban option applies a guild ban even for an expiring FCM ban', async () => {
+  test('a temporary slash-ban strips roles but never guild-bans, so expiry can restore them', async () => {
     const until = new Date(Date.now() + 60_000);
     const result = await createBan('target', 'actor', 'Spam', 'spam', until, [{ type: 'text', textContent: 'evidence' }], { banDiscord: true });
+
+    expect(guild.bans.create).not.toHaveBeenCalled();
+    expect(member.roles.remove).toHaveBeenCalledWith(['role-a'], expect.any(String));
+    expect(result.discordLockdown.guildBanApplied).toBeNull();
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ savedDiscordRoles: ['role-a'] }),
+    }));
+  });
+
+  test('a permanent ban still applies the guild ban', async () => {
+    const result = await createBan('target', 'actor', 'Spam', 'spam', null, [{ type: 'text', textContent: 'evidence' }]);
 
     expect(guild.bans.create).toHaveBeenCalledWith('target-discord', expect.objectContaining({ reason: 'Spam: spam', deleteMessageSeconds: 0 }));
     expect(result.discordLockdown.guildBanApplied).toBe(true);

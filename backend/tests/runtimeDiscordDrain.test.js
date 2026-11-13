@@ -20,7 +20,7 @@ jest.mock('../src/config/prisma', () => ({ __esModule: true, default: {
 } }));
 jest.mock('../src/services/autoModEngine', () => ({ engineEvaluate: jest.fn(async () => ({ block: false })) }));
 jest.mock('../src/queues/messagePersist', () => ({ add: jest.fn() }));
-jest.mock('../src/services/onlinePresenceService', () => ({ getGlobalOnlineCount: jest.fn(async () => 1), noteDiscordMessageActivity: jest.fn() }));
+jest.mock('../src/services/onlinePresenceService', () => ({ getGlobalOnlineCount: jest.fn(async () => 1), noteDiscordMessageActivity: jest.fn(), registerLocalPresenceSource: jest.fn() }));
 jest.mock('../src/services/voiceService', () => ({ __esModule: true, default: { register: jest.fn() } }));
 jest.mock('../src/services/reactionRoleService', () => ({ __esModule: true, default: { register: jest.fn() } }));
 jest.mock('../src/services/ticketService', () => ({ __esModule: true, default: { register: jest.fn() } }));

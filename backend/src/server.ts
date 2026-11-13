@@ -115,7 +115,7 @@ import {
   listPublicParties,
   listPublicPartyMessages,
 } from './controllers/partiesController';
-import { requireDiscordRole } from './middleware/auth';
+import { requireDiscordRole, requireStaffRole } from './middleware/auth';
 import { backfillMissingRelaySeq, seedRelaySeq } from './services/relay/relaySeq';
 import { applyPostPushPatches } from './scripts/applyPostPushPatches';
 import { attachChatUpgradeRouter, closeRelayWss } from './websocket/upgradeRouter';
@@ -520,6 +520,14 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       return;
     }
 
+    // Provider deny-list (permanent bans): a banned Discord identity cannot
+    // sign in or re-link, even after its FCM account was deleted.
+    if (await isBannedIdentity('discord', String(discordUser.id))) {
+      await discardRuntimeResponse(memberRes);
+      res.redirect(`${frontendBase}/link?error=account_banned`); // LinkPage renders this error
+      return;
+    }
+
     const member = await memberRes.json() as any;
     const qualifyingRoles = [env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID].filter(Boolean);
     const userRoles: string[] = member.roles || [];
@@ -807,6 +815,16 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         'DEV Login — Fallout Chat Mod',
         'DEV Access Granted',
         '<p>Your hosted DEV persona session is ready.</p><p class="dim">You can close this window and return to the overlay.</p>',
+      ));
+      return;
+    }
+
+    // Provider deny-list (permanent bans): refuse to link a banned Discord identity.
+    if (await isBannedIdentity('discord', String(discordUser.id))) {
+      res.status(403).send(PIP_BOY_HTML(
+        'Not Permitted — Fallout Chat Mod',
+        'Account Not Permitted',
+        '<p>This Discord account is not permitted to use FCM Chat.</p>',
       ));
       return;
     }
@@ -2023,7 +2041,8 @@ const requirePartiesEnabled: express.RequestHandler = (_req, _res, next) =>
 app.get('/api/admin/parties', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminListParties);
 app.get('/api/admin/parties/:id', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminGetParty);
 app.get('/api/admin/parties/:id/messages', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminListPartyMessages);
-app.delete('/api/admin/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminDeletePartyMessage);
+// Also reachable from the overlay (X-Auth-Token) for its party-message Delete action.
+app.delete('/api/admin/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireStaffRole('owner', 'admin'), adminDeletePartyMessage);
 
 // Giveaway admin — force-cancel any active giveaway (owner|admin|mod only)
 app.delete('/api/admin/giveaways/:shortId', requireDiscordRole('owner', 'admin', 'moderator'), adminCancelGiveaway);

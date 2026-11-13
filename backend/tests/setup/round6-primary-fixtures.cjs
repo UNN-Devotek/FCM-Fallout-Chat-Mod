@@ -17,8 +17,9 @@ Module._load=function(name,parent,main){
   if(resolved===path.join(source,'config/environment'))return {__esModule:true,default:{NODE_ENV:'test'}};
   if(resolved===path.join(source,'config/storage'))return {ensureBucket:async()=>{throw new Error('Unexpected fixture storage');},uploadAvatar:async()=>{throw new Error('Unexpected fixture storage');}};
   if(name.endsWith('/config/database'))return {query:async()=>{throw new Error('Unexpected fixture read');}};
+  if(name.endsWith('/services/moderationActionsService'))return {};
   if(name.endsWith('/services/discordService'))return {relayToDiscord:async()=>{}};
-  if(/\/controllers\/usersController\.[jt]s$/.test(parent.filename)&&['../websocket/handlers','../services/autoModService','../services/chatNameService','../services/supporterSyncService','../utils/mergeUser'].includes(name))return {};
+  if(/\/controllers\/usersController\.[jt]s$/.test(parent.filename)&&['../websocket/handlers','../services/autoModService','../services/chatNameService','../services/supporterSyncService','../utils/mergeUser','../services/moderationActionsService','./moderationActionsController'].includes(name))return {};
   if(!name.startsWith('.')&&!path.isAbsolute(name))return original.call(this,requireSdk.resolve(name),parent,main);
  }
  return original.call(this,name,parent,main);

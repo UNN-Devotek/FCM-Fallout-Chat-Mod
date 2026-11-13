@@ -40,6 +40,11 @@ import { createHash } from 'node:crypto';
 export const MIN_COSMETICS_VERSION = '2.10.0';
 /** First widget build that understands the native-known targetUserId carrier. */
 export const MIN_HUD_COSMETICS_TRANSPORT_VERSION = '2.10.16';
+/**
+ * First widget build that understands private `FCMDEL/1;` moderation events. Older widgets
+ * treat any unknown system body as a link-required notice, so this event is version-gated.
+ */
+export const MIN_HUD_MODERATION_EVENTS_VERSION = '2.10.153';
 
 export interface ParsedVersion {
   major: number;
@@ -90,6 +95,11 @@ export function supportsCosmetics(clientVersion: unknown): boolean {
 /** True only for widgets that decode the FCMHUD/1 carrier in targetUserId. */
 export function supportsHudCosmeticsTransport(clientVersion: unknown): boolean {
   return versionAtLeast(clientVersion, MIN_HUD_COSMETICS_TRANSPORT_VERSION);
+}
+
+/** True only for widgets that remove rows on a private `FCMDEL/1;` system event. */
+export function supportsHudModerationEvents(clientVersion: unknown): boolean {
+  return versionAtLeast(clientVersion, MIN_HUD_MODERATION_EVENTS_VERSION);
 }
 
 // ── Per-connection registry ───────────────────────────────────────────────────
@@ -153,6 +163,17 @@ export function tokenSupportsCosmetics(token: unknown): boolean {
   return supportsCosmetics(entry.version);
 }
 
+/** The widget version this token negotiated locally, or null when unknown/expired. */
+export function tokenClientVersion(token: unknown): string | null {
+  if (typeof token !== 'string' || !token) return null;
+  const entry = tokenVersions.get(tokenKey(token));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) tokenVersions.delete(tokenKey(token));
+    return null;
+  }
+  return entry.version;
+}
+
 /** True only when a token negotiated a widget that understands the native carrier. */
 export function tokenSupportsHudCosmeticsTransport(token: unknown): boolean {
   if (typeof token !== 'string' || !token) return false;
@@ -167,6 +188,9 @@ export function tokenSupportsHudCosmeticsTransport(token: unknown): boolean {
 export default {
   MIN_COSMETICS_VERSION,
   MIN_HUD_COSMETICS_TRANSPORT_VERSION,
+  MIN_HUD_MODERATION_EVENTS_VERSION,
+  supportsHudModerationEvents,
+  tokenClientVersion,
   parseClientVersion,
   compareVersions,
   versionAtLeast,
@@ -182,6 +206,9 @@ export default {
 module.exports = {
   MIN_COSMETICS_VERSION,
   MIN_HUD_COSMETICS_TRANSPORT_VERSION,
+  MIN_HUD_MODERATION_EVENTS_VERSION,
+  supportsHudModerationEvents,
+  tokenClientVersion,
   parseClientVersion,
   compareVersions,
   versionAtLeast,

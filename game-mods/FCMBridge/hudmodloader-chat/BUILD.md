@@ -1,5 +1,16 @@
 # FCMChatWidget build, install, and verification
 
+## HUD moderation candidate 2.10.153 — 2026-11-13
+
+**Widget version:** 2.10.153. Local test candidate; native acceptance pending.
+
+Staff moderation fixes: real `/mod` duration parsing (bans require a duration or
+`perm`), explicit permanent flag and `FCMMOD/1` envelope for ZFE, Server-tab
+targets by account ID, `FCMDEL/1` remote deletes, mapped relay error codes, and
+unban/unmute by exact name. Requires the matching backend. Pure Haxe, full Ruffle
+and source/archive checks pass; the ZFE/xScal transport of the new envelopes
+still needs an in-game capture.
+
 ## Native caret test candidate 2.10.152 — 2026-10-28
 
 **Widget version:** 2.10.152. Local test candidate; native acceptance pending.
@@ -1533,23 +1544,47 @@ verified separately. ZFE uses vendor-scoped settings storage.
 
 A linked Discord moderator/admin/owner sees message references and the F11 moderation help.
 Use an exact visible name (quote multi-word names), or a short visible `[#XXXXXXXX]` reference.
-Duplicate names require a reference. The widget resolves immutable target IDs locally; the relay
-repeats permission, protected-target, duration, and reason checks.
+Persisted rows use the message UUID prefix; Server rows use `S` plus the last seven digits of
+their relay sequence (`[#S0004242]`), because every Server message ID shares the `server:r:`
+prefix. The widget resolves immutable account IDs locally; the relay repeats permission,
+protected-target, duration, and reason checks.
 
 ```text
-/mod Alice mute <minutes> <reason>
+/mod Alice mute [duration] <reason>        (default 10 minutes)
+/mod Alice ban <duration|perm> <reason>
 /mod "Alice Smith" kick <reason>
 /mod #XXXXXXXX delete <reason>
-/mod #XXXXXXXX kick <reason>
-/mod #XXXXXXXX mute <minutes> <reason>
-/mod #XXXXXXXX unmute <reason>
-/mod #XXXXXXXX ban <minutes|permanent> <reason>
-/mod #XXXXXXXX unban <reason>
+/mod Alice unmute <reason>
+/mod Alice unban <reason>
 ```
 
-Every action requires a nonempty reason. Mute/temporary ban accept 1–43,200 minutes; permanent
-ban must be explicit. Slow mode is not implemented. `/relink` uses a supported provider reset
-operation and must not claim success on a rejected reset. Credentials remain extender-owned.
+Durations are plain minutes or `m`, `h`, `d`, `w` units (`30`, `30m`, `2h`, `1d`, `1w`), from
+1 minute to 30 days. A duration-like token that is zero, negative, fractional, too large or uses
+another unit is refused locally; a word starts the reason. A ban needs a duration or `perm`/
+`permanent`, so a forgotten or invalid duration never becomes a permanent ban. Every action
+requires a nonempty reason. Pure Haxe tests in `TestFcmCommand.hx` cover the parser.
+
+Server rows carry the sender's FCM account in the `FCMHUD/1` `a=` field, so a player who posted
+in both General and Server is one target rather than "matches multiple players", and kick/mute/
+ban work from the Server tab. Server messages are temporary and cannot be deleted; the widget
+explains this instead of sending a request. `unban` and `unmute` fall back to a relay-side exact
+account-name lookup (single match required) when no visible row matches, because a banned or
+muted player usually has none.
+
+Account-level actions mirror the duration, explicit permanence or by-name target into the
+otherwise unused `messageId` member as `FCMMOD/1;d=<minutes>`, `FCMMOD/1;p=1` or
+`FCMMOD/1;n=<name>`, alongside the JSON `durationMinutes`/`permanent`/`targetName` members,
+because ZFE may drop request members it does not know. On ZFE, moderation requires the
+`zfe-chat-async-control-v1` runtime capability; a queued provider response is resolved from its
+`chat.send.accepted`/`chat.send.failed` completion. A provider without `moderationAction` reports
+"not supported by this chat provider". Relay error codes map to specific text (staff targets,
+already banned, not banned, unknown or ambiguous name, invalid duration); unknown codes show the
+relay message. Deletes made anywhere arrive as a private `FCMDEL/1;m=<id>` system event and remove
+the row; the relay sends it only to widgets reporting 2.10.153 or newer. See the
+[protocol reference](../../../docs/overlay/zfe/native-chat-relay/protocol-spec.md#moderation-action).
+Slow mode is not implemented. In-game `/report` is not part of this change. `/relink` uses a
+supported provider reset operation and must not claim success on a rejected reset. Credentials
+remain extender-owned.
 
 ## In-game acceptance checklist
 

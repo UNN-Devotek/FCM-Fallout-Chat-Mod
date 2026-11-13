@@ -216,6 +216,29 @@ test('Discord inbound messages carry relaySeq into live broadcast and history pe
   }));
 });
 
+test.each([
+  ['temporarily banned', { isBanned: true, bannedUntil: new Date(Date.now() + 3_600_000) }, /banned from Fallout Chat Mod chat until/],
+  ['kick-locked', { kickedUntil: new Date(Date.now() + 120_000) }, /kicked from Fallout Chat Mod chat/],
+  ['muted', { isMuted: true, muteExpiresAt: new Date(Date.now() + 600_000) }, /You are muted/],
+])('a %s FCM account cannot chat through a bridged Discord channel', async (_label, standing, dm) => {
+  const handler = mockHandlers.get('messageCreate');
+  mockPrisma.user.findMany.mockResolvedValueOnce([{
+    id: 'user-uuid', isBanned: false, bannedUntil: null, kickedUntil: null, isMuted: false, muteExpiresAt: null, ...standing,
+  }]);
+  const message = {
+    id: 'standing-message', channelId: 'discord-channel-id', content: 'still here',
+    author: { id: 'banned-discord-id', bot: false, username: 'banned', send: jest.fn().mockResolvedValue(undefined) },
+    webhookId: null, attachments: new Map(), embeds: [], guild: null,
+    delete: jest.fn().mockResolvedValue(undefined), channel: { messages: { fetch: jest.fn() } },
+  };
+  await handler(message);
+  expect(mockPrisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { discordId: 'banned-discord-id' } }));
+  expect(message.delete).toHaveBeenCalledTimes(1);
+  expect(message.author.send).toHaveBeenCalledWith(expect.stringMatching(dm));
+  expect(mockBroadcast).not.toHaveBeenCalled();
+  expect(mockQueueAdd).not.toHaveBeenCalled();
+});
+
 test('Discord inbound messages never render an Overlay auto-handle for a linked account', async () => {
   const handler = mockHandlers.get('messageCreate');
   mockPrisma.user.findFirst.mockResolvedValue({
@@ -258,7 +281,8 @@ test('Discord inbound messages never render an Overlay auto-handle for a linked 
 test('Discord inbound mentions fall back from placeholder usernames to the Discord display name', async () => {
   const handler = mockHandlers.get('messageCreate');
   const mentionedDiscordId = '185069913252167681';
-  mockPrisma.user.findMany.mockResolvedValueOnce([
+  // First lookup is the author's FCM standing; the second resolves the mention.
+  mockPrisma.user.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
     { discordId: mentionedDiscordId, username: `discord:${mentionedDiscordId}` },
   ]);
 
@@ -305,7 +329,8 @@ test('Discord inbound mentions fall back from placeholder usernames to the Disco
 test('Discord inbound mentions prefer a linked Fallout 76 username', async () => {
   const handler = mockHandlers.get('messageCreate');
   const mentionedDiscordId = '285069913252167681';
-  mockPrisma.user.findMany.mockResolvedValueOnce([
+  // First lookup is the author's FCM standing; the second resolves the mention.
+  mockPrisma.user.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
     { discordId: mentionedDiscordId, username: 'VaultDweller76' },
   ]);
 

@@ -18,6 +18,7 @@ export interface RelayHudCosmetics {
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const ACCOUNT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const HUD_COSMETICS_TRANSPORT_PREFIX = 'FCMHUD/1;';
 
 /** Project server-resolved cosmetics into the additive chat.v1 HUD fields. */
@@ -129,8 +130,14 @@ export function relayHudEventForClient<T extends Record<string, unknown>>(
   const historyRoom = (event as T & { [SERVER_HISTORY_ROOM]?: string })[SERVER_HISTORY_ROOM];
   const historySuffix = event.channel === 'server' && typeof historyRoom === 'string'
     && /^r:[0-9a-f-]{36}$/.test(historyRoom) ? `;h=${encodeURIComponent(historyRoom)}` : '';
+  // Server-room senderUserId is the relay TEXT identity. Mirror the sender's FCM account id
+  // (already present as linkedUserId on the raw JSON event) so staff moderation and name
+  // de-duplication can use the same account identity as static-channel rows.
+  const linkedUserId = (event as T & { linkedUserId?: unknown }).linkedUserId;
+  const accountSuffix = event.channel === 'server' && typeof linkedUserId === 'string'
+    && ACCOUNT_ID.test(linkedUserId) ? `;a=${linkedUserId.toLowerCase()}` : '';
   return transport
-    ? ({ ...event, targetUserId: transport + historySuffix } as T)
+    ? ({ ...event, targetUserId: transport + historySuffix + accountSuffix } as T)
     : event;
 }
 

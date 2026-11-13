@@ -226,6 +226,8 @@ export async function send(input: SendEmbedInput): Promise<SendEmbedResult> {
   const normalized = preview(input.embed).embed;
   const validatedRoles = validateReactionRoles(input.reactionRoles);
   if (validatedRoles.error) throw new Error(validatedRoles.error);
+  // Refuse staff/gated/moderation roles before posting so no orphan embed is left.
+  await reactionRoleService.assertPanelRolesAllowed(input.channelId, validatedRoles.mappings.map((m) => m.roleId), input.actorId ?? null);
   const message = await postEmbed(input.channelId, normalized);
   if (validatedRoles.mappings.length > 0 && message.guildId) {
     const mappings = reactionRoleService.buildMappings(message.client, message.guildId, validatedRoles.mappings);

@@ -34,12 +34,24 @@ card data. Other command results are ephemeral to avoid flooding the relay
 channel. `/fcm` accepts only slash-prefixed input, for example
 `/fcm command:"/g hello"` or `/fcm command:"/help"`.
 
+Channel shortcuts (`/g`, `/t`, `/e`, `/r`, `/i`) and event announcements sent
+from Discord pass the same gates as overlay `chat:send`, in the same order
+(`discordCommandPublication.ts` with `chatPostingGate.ts`): the linked FCM
+account must not be banned, inside a kick cooldown, or muted (expired temporary
+bans and mutes count as lifted); then the shared chat slowmode applies; then the
+automod engine evaluates the typed command text (a spam verdict shadow-mutes the
+account as in overlay chat). Any refusal is a private reply and nothing is
+published. A failed standing lookup also refuses the relay.
+
 `/giveaway command:` is also available directly in Discord; for example use
 `/giveaway command:list` or `/giveaway command:"join <id>"`. A started raffle
 publishes one bot embed in the Discord channel mapped to the FCM channel where
 the command was sent. A channel without a relay mapping has no Discord card. Its
 Join, Leave, and Stop buttons require a linked FCM account and call the same
-giveaway service as overlay commands. Stop remains creator/moderator only.
+giveaway service as overlay commands. Stop remains creator/moderator only; the
+moderator check (buttons and the `/giveaway stop <id>` text command alike) is
+`isStaffAccount` in `commandService.ts`: an owner/admin/moderator dashboard role
+(role cache or `admin_users`) or a configured staff Discord role.
 Entry count edits the original embed; completion or cancellation removes its
 buttons and posts a separate result embed. Interaction confirmations are
 private to the person clicking the button. Discord notifications do not ping
@@ -52,7 +64,15 @@ choosing a result then produces the same public rich card used by the overlay,
 including its stored thumbnail when available. Discord's autocomplete picker is
 text-only, so it cannot render images or an overlay inside the picker itself.
 `/report bug description:` files a bug report, while `/report player user: description:`
-searches linked FCM, Discord, and Steam identities before filing a player report.
+searches FCM players before filing a player report. Any guild member can use
+`/report`, so its search is deliberately narrow: it needs at least two
+characters (an empty or one-character query returns nothing, never a list of
+recent users) and, for non-staff, matches and shows only each player's public
+chat display name. Discord IDs, SteamIDs and linked Steam/Discord/FO76
+identities are never searched or shown to non-staff; staff keep the richer
+moderation label. Each reporter may file three `/report` submissions per ten
+minutes; further attempts get a private wait notice. The command acknowledges
+the interaction before any lookup.
 
 `/help` is an ephemeral copy of the complete overlay command reference, including
 all built-in and enabled dynamic commands that apply in Discord. Party-only shortcuts
@@ -97,29 +117,47 @@ needs **Read Message History** and **Manage Messages** there. Leave the setting
 blank to disable the sticky help card.
 
 `/moderate` is a separate command group: `kick`, `mute`, `unmute`, `ban`,
-`unban`, and `delete-message`. Discord's Moderate Members permission is only an
-initial UI gate. Each invocation also requires a linked FCM account whose
-effective FCM role is `moderator`, `admin`, or `owner`; otherwise it is rejected
-ephemerally. Actions call the same `moderationActionsService` methods used by the
+`unban`, and `delete-message`. Discord's Manage Messages permission is only an
+initial UI gate that decides who sees the command (the moderator role holds it). Every subcommand first acknowledges the interaction with a
+deferred private reply, then performs its lookups, so Discord never shows a
+timed-out interaction. Each invocation also requires a linked FCM account that
+is staff by `isStaffAccount` (dashboard role `moderator`, `admin`, or `owner`,
+or a configured staff Discord role for moderators without an `admin_users`
+row); otherwise it is rejected privately. Actions call the same `moderationActionsService` methods used by the
 dashboard, retaining target protection, session eviction, Discord propagation,
 audit logging, public FCM announcement, and ban-evidence requirements. `/moderate
-ban` therefore requires an evidence summary and `/moderate unban` requires the
-FCM ban ID. The Discord slash variants also enforce the equivalent Discord
-action: `kick` removes the linked member from the guild, `mute` applies a native
-Discord timeout, and `ban` creates a guild ban even when the FCM ban has an
-expiry (the FCM unban/expiry flow removes that guild ban again). If Discord
-rejects an action because of bot permissions or role hierarchy, the response is
-explicitly marked as FCM-only rather than claiming success.
+ban` therefore requires an evidence summary. The Discord slash variants also
+enforce the equivalent Discord action: `kick` removes the linked member from the
+guild, `mute` applies a native Discord timeout, and a permanent `ban` creates a
+guild ban. Temporary bans strip the member's Discord roles instead (restored on
+expiry or unban) and never guild-ban. If Discord rejects an action because of
+bot permissions or role hierarchy, the response is explicitly marked as FCM-only
+rather than claiming success; a target without a linked Discord account gets a
+reply saying the FCM action applied and no Discord action was possible.
 
-The `user` box for `/moderate kick`, `/moderate mute`, `/moderate unmute`, and
-`/moderate ban` is an FCM-backed autocomplete. Moderators can search by FCM chat
+`/moderate unban` takes either the banned player in its `user` search box (the
+same autocomplete as `ban`; every active ban for that player is reversed through
+`unbanUser`) or an FCM `ban-id`, which must be a UUID. `/moderate
+delete-message message-id:` accepts a Discord message link (Copy Message Link),
+a Discord message ID, or an FCM message UUID; Discord references are resolved
+through `discord_message_links`, so only messages bridged between Discord and
+FCM can be deleted that way. Malformed or unlinked input gets a private
+explanation instead of a failed action.
+
+Failures map the service error codes from `moderationErrors.ts` to specific
+private replies: protected staff target, staff check unavailable, already
+banned, no active ban, ban ID not found, ban already reversed, target or message
+not found, invalid input, and missing Discord permission (API code 50013). Any
+other failure keeps the generic reply; the underlying error is logged.
+
+The `user` box for `/moderate kick`, `/moderate mute`, `/moderate unmute`,
+`/moderate ban`, and `/moderate unban` is an FCM-backed autocomplete. Moderators can search by FCM chat
 name, FO76 account/character name, Discord display name or ID, Steam name, or
 SteamID, then choose the account from the resulting list. Labels lead with the
 name the player shows in chat, never a `pending-*` placeholder. If Enter is
 pressed before Discord delivers the choice, the typed text is accepted only when
 it exactly matches one player; otherwise the moderator is asked to pick from the
-list. Confirmations are deferred ephemeral replies, so slow Discord propagation
-cannot expire the 3-second interaction window. FCM
+list. FCM
 does not broadcast a public General-channel moderation message. Every moderation
 action instead writes its audit record and posts a staff-only embed through the
 configured `mod_log_channel_id` (the Vault Security channel by default).
@@ -155,7 +193,7 @@ stop working after a redeploy.
 | Read Message History | Bot-commands sticky help card |
 | Send Messages | Chat bridge outbound, embed builder |
 | Embed Links | Embed builder |
-| Manage Messages | Chat bridge — deleting over-length or media-only messages |
+| Manage Messages | Chat bridge — deleting over-length, media-only, slowmode-limited, or FCM-banned/kicked/muted authors' messages |
 | Moderate Members | `/moderate mute` Discord timeout |
 | Kick Members | `/moderate kick` guild removal |
 | Ban Members | `/moderate ban` guild ban |
@@ -165,6 +203,18 @@ stop working after a redeploy.
 | Connect | Temp voice — bot joins the lobby briefly |
 | Manage Nicknames | Nickname sync (FO76 character name) |
 | Manage Events | Scheduled-event mirror validation/repair where required by the Discord API |
+
+The bot role must sit above every role it strips, times out, or assigns. Discord
+only lets a role grant permissions it holds itself, so if the bot lacks Ban,
+Kick, or Moderate Members it can neither perform those actions nor grant them
+to the moderator role; the server owner must add them in Server Settings.
+
+## Moderator role permissions
+
+The configured `MODERATOR_ROLE_ID` role should hold Manage Messages (required
+to see `/moderate`), Moderate Members, Kick Members, Ban Members, Manage
+Threads, Manage Nicknames, View Audit Log, Mute Members and Move Members. It
+must not hold Administrator, Manage Server, Manage Roles, or Manage Channels.
 
 ---
 
@@ -185,7 +235,15 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
 3. The relay mapping is looked up; if no explicit mapping exists for the Discord
    channel, the message falls back to the `DISCORD_CHANNEL_ID` env var mapped
    to the General channel.
-4. Messages longer than 255 characters are **deleted** from Discord and the
+4. Human authors must be in good FCM standing. Every FCM account linked to the
+   author's Discord ID is checked (`checkPostingStanding` in
+   `chatPostingGate.ts`): an unexpired ban, a kick cooldown, or an unexpired
+   mute **deletes** the Discord post and DMs the author the reason, so a player
+   banned or muted only in FCM (no guild ban, no Discord timeout) cannot keep
+   chatting through a bridged channel. If the lookup itself fails the message
+   is not relayed and is left in Discord. The shared chat slowmode runs just
+   before this check with the same delete-and-DM handling.
+5. Messages longer than 255 characters are **deleted** from Discord and the
    author is notified by DM. The DM **echoes the original text back** so the
    author can copy-paste and trim instead of retyping it. The echo is wrapped in
    a fenced code block so mentions inside it cannot ping a second time, and the
@@ -195,12 +253,12 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
    a burst reads as spam). Built by `buildOverLengthDm` in
    `backend/src/utils/overLengthDm.ts`, unit-tested in
    `backend/src/services/__tests__/overLengthDm.test.ts`.
-5. Images are never relayed to main channels. GIFs are allowed only if the
+6. Images are never relayed to main channels. GIFs are allowed only if the
    destination channel has `allowGifs = true`. The five recognized FCM cards are
    the narrow exception: their public HTTPS image URL is preserved as card metadata
    (wiki maps remain the large image; other card art remains a thumbnail) rather
    than being relayed as free-form media.
-6. User (`<@id>`), role (`<@&id>`), and channel (`<#id>`) mentions are
+7. User (`<@id>`), role (`<@&id>`), and channel (`<#id>`) mentions are
    normalized to readable `@name` / `@role` / `#channel` text. Their Discord
    snowflakes are retained in `metadata.entities`; channel entities also carry a
    canonical Discord URL.
@@ -212,9 +270,9 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
    Identity is therefore paired by ID rather than inferred from a display name.
    Sharing a known `discord.com/events/...` URL resolves to the existing
    `scheduled_event` metadata and renders the standard event card in FCM.
-7. The automod engine is run on the content. Blocked messages are silently
+8. The automod engine is run on the content. Blocked messages are silently
    dropped (author is notified by DM).
-8. The message is decorated with the author's current supporter cosmetics using
+9. The message is decorated with the author's current supporter cosmetics using
    the shared `attachCosmetics()` resolver, then broadcast via WebSocket to
    connected overlay clients and queued for DB persistence (`messages` table,
    `source = 'discord'`). This applies to every mapped Discord channel; history

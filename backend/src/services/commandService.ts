@@ -8,6 +8,7 @@ import { getGlobalOnlineCount } from './onlinePresenceService';
 import { getServerPlayersForUser } from './playerListService';
 import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
+import { getEffectiveRole, isPrivilegedRole, resolveTargetProtection } from './userRoleService';
 import { getMinervaInventory, getMinervaStatus } from './minervaService';
 import { bestMatch, getEntry } from './wikiCatalogService';
 import { validateSearchQuery } from '../lib/wikiValidation';
@@ -406,6 +407,20 @@ export function parseGiveawayStart(rest: string): { itemName: string; durationMi
   return { itemName, durationMin: trailingNum ?? DEFAULT };
 }
 
+/**
+ * Staff check for chat/Discord commands: the dashboard role (role cache or
+ * admin_users) or a staff Discord role (covers moderators who never signed in
+ * to the dashboard and so have no admin_users row). Fails safe to false.
+ */
+export async function isStaffAccount(userId: string): Promise<boolean> {
+  if (isPrivilegedRole(await getEffectiveRole(userId))) return true;
+  try {
+    return (await resolveTargetProtection(userId)).role !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function handleGiveawayCommand(
   args: string,
   userId: string,
@@ -535,7 +550,9 @@ async function handleGiveawayCommand(
       return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway stop <id>', targetChannelId: replyChannelId };
     }
     try {
-      await giveawayService.cancelGiveaway(shortId, userId, false);
+      // Staff may stop any giveaway; the service still lets creators stop their own.
+      const isMod = await isStaffAccount(userId);
+      await giveawayService.cancelGiveaway(shortId, userId, isMod);
       return {
         handled: true,
         actionType: 'private',

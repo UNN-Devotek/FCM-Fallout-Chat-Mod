@@ -15,6 +15,8 @@ import {
   rememberTokenClientVersion,
   supportsCosmetics,
   supportsHudCosmeticsTransport,
+  supportsHudModerationEvents,
+  tokenClientVersion,
   tokenSupportsCosmetics,
   tokenSupportsHudCosmeticsTransport,
 } from './clientCapability';
@@ -105,8 +107,30 @@ export async function tokenSupportsHudCosmeticsTransportDurable(
   }
 }
 
+/** Resolve whether a token's widget understands private `FCMDEL/1;` moderation events. */
+export async function tokenSupportsHudModerationEventsDurable(
+  token: unknown,
+  redisFactory: RedisFactory = getRedisClient,
+): Promise<boolean> {
+  if (typeof token !== 'string' || !token) return false;
+  if (supportsHudModerationEvents(tokenClientVersion(token))) return true;
+
+  try {
+    const redis = await redisFactory();
+    const raw = await redis.get(tokenCapabilityKey(token));
+    if (typeof raw !== 'string' || !raw.trim()) return false;
+
+    rememberTokenClientVersion(token, raw);
+    return supportsHudModerationEvents(raw);
+  } catch (err) {
+    logger.warn({ err }, '[relay] durable HUD moderation-event capability read failed');
+    return false;
+  }
+}
+
 export default {
   tokenCapabilityKey,
+  tokenSupportsHudModerationEventsDurable,
   rememberTokenClientVersionDurable,
   tokenSupportsCosmeticsDurable,
   tokenSupportsHudCosmeticsTransportDurable,

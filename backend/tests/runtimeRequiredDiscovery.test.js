@@ -25,11 +25,11 @@ test.each(['source', 'compiled'].flatMap(variant => cases.map(spec => ({ variant
     expect(result.final.failures.some(value => value.evidence.stage)).toBe(true);
     for (const secret of ['synthetic-token', 'synthetic-secret', 'raw-query', 'synthetic chat']) expect(result.journal).not.toContain(secret);
   } else { expect(result.journal).toBe(''); expect(result.final.ingressClosed).toBe(true); expect(result.final.accountingEpoch).toBe(result.final.inspectionEpoch); }
-  if (label === 'ban:redis-discovery' || label === 'ban:row-discovery') { expect(result.state.primary).toBe(true); expect(result.state.sessions).toBe(1); expect(result.state.audits).toBe(0); expect(result.forwarded).toHaveLength(1); expect(result.response).toBeUndefined(); }
-  if (label === 'unmute:redis-discovery') { expect(result.state.primary).toBe(true); expect(result.state.immunity).toBe(false); expect(result.state.audits).toBe(0); expect(result.forwarded).toHaveLength(1); }
+  if (label === 'wipe:redis-discovery' || label === 'wipe:row-discovery') { expect(result.state.primary).toBe(true); expect(result.state.sessions).toBe(1); expect(result.state.audits).toBe(0); expect(result.forwarded).toHaveLength(1); expect(result.response).toBeUndefined(); }
+  if (label === 'unmute:redis-discovery') { expect(result.state.primary).toBe(true); expect(result.state.immunity).toBe(false); expect(result.state.audits).toBe(1); expect(result.forwarded).toHaveLength(1); }
   if (label === 'register:redis-discovery') { expect(result.state.primary).toBe(true); expect(result.state.sessionCreated).toBeUndefined(); expect(result.forwarded).toHaveLength(1); expect(result.response).toBeUndefined(); }
   if (label === 'party:count') { expect(result.state.member).toBe(false); expect(result.state.partyDeleted).toBe(false); expect(result.state.audits).toBe(1); }
   if (label.startsWith('party:owner-')) { expect(result.state.member).toBe(false); expect(result.state.owner).toBe('old'); }
   if (/^(discord|steam):(redis|no-token)-discovery$/.test(label)) { expect(result.state.identity).toBe(false); expect(result.state.cache).toBe(1); expect(result.response.data).toEqual({ success: true, loggedOut: true }); expect(result.logs).toContain('warn'); }
-  if (label === 'ban:held') { expect(result.checkpoint.phase).toBe('failed'); expect(result.checkpoint.active.length).toBeGreaterThan(0); expect(result.checkpoint.operatorRequested).toBe(false); expect(result.checkpoint.restartFence.cleared).toBe(false); expect(result.state.audits).toBe(1); }
+  if (label === 'wipe:held') { expect(result.checkpoint.phase).toBe('failed'); expect(result.checkpoint.active.length).toBeGreaterThan(0); expect(result.checkpoint.operatorRequested).toBe(false); expect(result.checkpoint.restartFence.cleared).toBe(false); expect(result.state.audits).toBe(1); }
 });

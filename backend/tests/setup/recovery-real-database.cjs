@@ -25,7 +25,11 @@ async function openRecoveryDatabase() {
     const identity = (await observer.query('SELECT current_database() AS name')).rows[0].name;
     if ('/' + identity !== url.pathname) throw new Error('Recovery fixture database identity mismatch');
     await observer.query(`CREATE SCHEMA "${schema}"`); schemaCreated = true;
-    const tables = ['users', 'channels', 'messages', 'audit_logs', 'sessions', 'reports', 'automod_rules', 'word_filter', 'moderation_settings', 'admin_users'];
+    // Legacy /api/users/:id/{ban,kick,mute} run through moderationActionsService,
+    // which also writes bans/evidence, device and relay-token revocations and the
+    // provider deny-list; keep those private to the fixture schema too.
+    const tables = ['users', 'channels', 'messages', 'audit_logs', 'sessions', 'reports', 'automod_rules', 'word_filter', 'moderation_settings', 'admin_users',
+      'bans', 'ban_evidence', 'devices', 'linked_identities', 'banned_identities', 'hud_pairing_tokens'];
     for (const table of tables) await observer.query(`CREATE TABLE "${schema}"."${table}" (LIKE public."${table}" INCLUDING ALL)`);
     // LIKE copies serial nextval dependencies; replace all three before any insert.
     for (const table of ['admin_users', 'moderation_settings', 'word_filter']) {

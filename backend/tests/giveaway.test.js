@@ -321,6 +321,26 @@ describe('giveawayService', () => {
     ).resolves.toBeUndefined();
   });
 
+  test.each([
+    ['moderator', 'moderator', null, true],
+    ['Discord-role staff without an admin_users row', 'user', 'moderator', true],
+    ['regular player', 'user', null, false],
+  ])('/giveaway stop text command uses the real staff check for a %s', async (_label, effectiveRole, discordRole, cancels) => {
+    jest.doMock('../src/services/userRoleService', () => ({
+      getEffectiveRole: jest.fn(async () => effectiveRole),
+      isPrivilegedRole: (role) => ['owner', 'admin', 'moderator'].includes(role),
+      resolveTargetProtection: jest.fn(async () => ({ found: true, role: discordRole })),
+    }));
+    prisma.giveaway.findUnique.mockResolvedValue(makeGiveaway({ createdByUserId: 'user-1' }));
+    prisma.giveaway.update.mockResolvedValue({});
+    const { tryHandleCommand } = require('../src/services/commandService');
+
+    const result = await tryHandleCommand('/giveaway stop ABC123', 'staff-or-player', 'Someone', 'channel-1', 'General');
+
+    expect(prisma.giveaway.update).toHaveBeenCalledTimes(cancels ? 1 : 0);
+    expect(result.botMessage).toMatch(cancels ? /cancelled/ : /Only the creator or a moderator/);
+  });
+
   // ── (i) drawWinner with entries ─────────────────────────────────────────────
 
   test('drawWinner picks a winner, sets status=completed, broadcasts winner', async () => {

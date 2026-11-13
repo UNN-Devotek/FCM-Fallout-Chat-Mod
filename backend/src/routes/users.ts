@@ -1,6 +1,6 @@
 import express from 'express';
 import { requireLinkAuth } from './link';
-import { requireAuth, requireDiscordRole } from '../middleware/auth';
+import { requireAuth, requireDiscordRole, requireStaffRole } from '../middleware/auth';
 import { validate, schemas } from '../middleware/validation';
 import { authLimiter, cosmeticsWriteLimiter, registerLimiter, registerIpFloodLimiter } from '../middleware/rateLimiter';
 import env from '../config/environment';
@@ -37,7 +37,8 @@ router.get('/:id/profile', getUserProfile);
 // Keep a modest anti-probing rate limit but no calendar cooldown.
 router.patch('/:id/chat-name', requireLinkAuth, cosmeticsWriteLimiter, updateChatName);
 router.get('/:id', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUser);
-router.get('/:id/aliases', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserAliases);
+// Overlay View Profile reads this with its X-Auth-Token; same staff threshold.
+router.get('/:id/aliases', requireStaffRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserAliases);
 router.get('/:id/messages', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserMessages);
 router.post('/:id/mute', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), validate(schemas.muteUser), muteUser);
 router.delete('/:id/mute', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), unmuteUser);

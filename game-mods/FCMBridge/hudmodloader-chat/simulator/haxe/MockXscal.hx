@@ -13,6 +13,11 @@ class MockXscal {
     public static var roomDiagnosticCount(default, null):Int = 0;
     public static var asyncCompletionDeliveries(default, null):Int = 0;
     public static var authReady:Bool = true;
+    // Staff moderation fixture: off = provider without moderationAction support.
+    public static var moderationSupported:Bool = false;
+    public static var moderationReply:Dynamic = null;
+    public static var moderationCount(default, null):Int = 0;
+    public static var lastModerationPayload(default, null):String = "";
     public static var authAdvertisesLayout:Bool = true;
     public static var layoutSendCount(default, null):Int = 0;
     public static var lastLayoutBody(default, null):String = "";
@@ -181,6 +186,13 @@ class MockXscal {
                 return response({success:true, cursor:cursor, events:hosted});
             }
             return response({success:true, cursor:cursor, events:[]});
+        });
+        Reflect.setField(chat, "moderationAction", function(args:Dynamic):String {
+            if (!moderationSupported) return response({success:false, error:{code:"unsupported_command"}});
+            moderationCount++;
+            lastModerationPayload = haxe.Json.stringify(args);
+            if (moderationReply != null) return response(moderationReply);
+            return response({success:true, status:"submitted", action:Reflect.field(args, "action")});
         });
         Reflect.setField(chat, "sendMessage", function(args:Dynamic):String {
             callCount++;

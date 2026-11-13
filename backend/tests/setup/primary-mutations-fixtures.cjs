@@ -2,6 +2,8 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Modu
 const project=path.resolve(__dirname,'../../..');
 const sourceBase=path.resolve(process.argv[2]||path.join(project,'backend/src'));
 const br=Module.createRequire(path.join(project,'backend/package.json'));const esbuild=br('esbuild');
+// Initialize SDK modules outside admitted work; these fixtures exercise application effects.
+br('discord.js');br('@aws-sdk/client-s3');
 Module._extensions['.ts']=(module,filename)=>module._compile(esbuild.transformSync(fs.readFileSync(filename,'utf8'),{loader:'ts',format:'cjs',target:'node22',supported:{'dynamic-import':false},sourcefile:filename}).code,filename);
 const {RuntimeCoordinator}=require(path.join(project,'backend/src/runtime/coordinator.ts'));
 const original=Module._load;const logger={info(){},warn(){},error(){},debug(){}};
@@ -27,7 +29,7 @@ Module._load=function(request,parent,main){
 const safeDiscord={getDiscordClient:()=>null,postModAlert:async()=>{}};
 const safeWs={broadcastMessageDeletion(){},markClientMuted(){},notifyAndDisconnect:()=>0,refreshClientIdentity(){},refreshClientCosmetics(){}};
 async function scenario(label,fn,options={}){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fcm-spec-round5-'));runtime=new RuntimeCoordinator(dir);
- overrides={'../websocket/handlers':safeWs,'../../websocket/handlers':safeWs,'../../websocket/handlers.js':safeWs,'./discordService':safeDiscord,'../discordService':safeDiscord,'./userRoleService':{isProtectedTarget:async()=>false},'./relay/relayHandler':{evictRelayUser:async()=>0},'./relay/tokenService':{revokeTokensForLinkedUser:async()=>{}},'../../config/redis':{getRedisClient:async()=>({get:async()=>null,del:async()=>1,set:async()=>{}})}};
+ overrides={'../websocket/handlers':safeWs,'../../websocket/handlers':safeWs,'../../websocket/handlers.js':safeWs,'./discordService':safeDiscord,'../discordService':safeDiscord,'./userRoleService':{resolveTargetProtection:async()=>({found:true,role:null})},'./relay/relayHandler':{evictRelayUser:async()=>0},'./relay/tokenService':{revokeTokensForLinkedUser:async()=>{}},'../../config/redis':{getRedisClient:async()=>({get:async()=>null,del:async()=>1,set:async()=>{}})}};
  try{const facts={};const record=runtime.recordFailure.bind(runtime);runtime.recordFailure=(label,error,evidence)=>{(facts.activeAtDisposition ||= []).push({label,active:runtime.snapshot().active.map(value=>value.label)});record(label,error,evidence);};const returned=await (options.bare?fn(facts):runtime.run('fixture:'+label,()=>fn(facts)));const drain=await runtime.drain({timeoutMs:250});return{label,facts,returned,phase:drain.phase,active:drain.active,failures:drain.failures,requiredFailureRetained:drain.phase==='failed'&&drain.active.length===0&&drain.failures.length>0};}
  finally{runtime.disposeForTests();fs.rmSync(dir,{recursive:true,force:true});}
 }
@@ -46,15 +48,15 @@ const unknown=()=>new Error('fixture required mutation response unknown');
  }
  results.push(await scenario('moderation-message-audit',async facts=>{
   prisma={$executeRaw:async()=>{facts.primarySoftDeleteCommitted=true;return 1;},auditLog:{create:async()=>{facts.auditAttempted=true;throw unknown();}}};
-  await actual('services/moderationActionsService.ts').deleteMessageById('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002','fixture');
-  facts.actionReturnedSuccess=true;return{acknowledged:true};
+  try { await actual('services/moderationActionsService.ts').deleteMessageById('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002','fixture'); } catch(error) { if(!facts.auditAttempted) throw error; facts.auditRejected=true; }
+  facts.actionReturnedSuccess=!facts.auditRejected;return{acknowledged:!facts.auditRejected};
  }));
  results.push(await scenario('accepted-audit-known-fk-refusal',async facts=>{
   prisma={$executeRaw:async()=>{facts.primarySoftDeleteCommitted=true;return 1;},auditLog:{create:async()=>{facts.auditAttempted=true;throw{code:'P2003'};}}};
-  await actual('services/moderationActionsService.ts').deleteMessageById('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002','fixture');return{acknowledged:true};
+  try { await actual('services/moderationActionsService.ts').deleteMessageById('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002','fixture'); } catch(error) { if(!facts.auditAttempted) throw error; facts.auditRejected=true; }return{acknowledged:!facts.auditRejected};
  }));
  for(const mode of ['device','relay'])results.push(await scenario('permanent-ban-'+mode+'-revocation',async facts=>{
-  prisma={ban:{create:async()=>{facts.banCommitted=true;return{id:'fixture-ban'};}},user:{findUnique:async({select})=>select.installToken?{installToken:'synthetic-install-token'}:select.username?{username:'SyntheticFixture'}:{discordId:null},update:async()=>{facts.userBanCommitted=true;return{};}},device:{updateMany:async()=>{facts.deviceRevokeAttempted=true;if(mode==='device')throw unknown();return{count:1};}},auditLog:{create:async()=>({})}};
+  prisma={ban:{findFirst:async()=>null,create:async()=>{facts.banCommitted=true;return{id:'fixture-ban'};}},user:{findUnique:async({select})=>select.installToken?{installToken:'synthetic-install-token'}:select.username?{username:'SyntheticFixture'}:{discordId:null},update:async()=>{facts.userBanCommitted=true;return{};}},device:{updateMany:async()=>{facts.deviceRevokeAttempted=true;if(mode==='device')throw unknown();return{count:1};}},auditLog:{create:async()=>({})}};
   overrides['./relay/tokenService']={revokeTokensForLinkedUser:async()=>{facts.relayRevokeAttempted=true;if(mode==='relay')throw unknown();}};
   return actual('services/moderationActionsService.ts').createBan('fixture-target','fixture-actor','Other','fixture',null,[{type:'text',textContent:'synthetic evidence'}]);
  }));
@@ -90,6 +92,7 @@ const unknown=()=>new Error('fixture required mutation response unknown');
    if(name.endsWith('/runtime'))return{get runtime(){return runtime;}};
    if(unused[name]!==undefined)return unused[name];
    if(overrides[name]!==undefined)return overrides[name];
+   if(name==='./moderationActionsController')return {};
    if(name.startsWith('../services/')||name.startsWith('./services/'))return {};
    if(name.startsWith('.'))return require(path.resolve(path.dirname(filename),name));
    return br(name);
@@ -127,7 +130,7 @@ const unknown=()=>new Error('fixture required mutation response unknown');
   prisma={adminUser:{upsert:async()=>{facts.adminWriteAttempted=true;if(mode==='admin-upsert')throw unknown();return{};}},user:{upsert:async()=>{facts.accountCommitted=true;return{};},updateMany:async()=>{facts.accountCommitted=true;return{count:1};}}};
   const redis={getDel:async()=>JSON.stringify({intent,sessionId:'fixture-session'})};
   const fetcher=async url=>({ok:true,json:async()=>url.includes('/oauth2/token')?{access_token:'synthetic-access'}:url.includes('/members')||url.includes('/member')?{roles:['fixture-admin']}:{id:'100000000000000001',username:'SyntheticFixture',global_name:'Synthetic Fixture',avatar:null}});
-  const handler=inline('server.ts',"app.get('/auth/discord/callback', authLimiter, ",{getRedisClient:async()=>redis,parseBoundOAuthState:actual('utils/oauthState.ts').parseBoundOAuthState,env,logger,fetch:fetcher,prisma,roleVerificationService:{resolveRole:()=> 'admin',cacheRole:async()=>{}},captureAvatar:async()=>null,uuidv4:br('uuid').v4});
+  const handler=inline('server.ts',"app.get('/auth/discord/callback', authLimiter, ",{isBannedIdentity:async()=>false,getRedisClient:async()=>redis,parseBoundOAuthState:actual('utils/oauthState.ts').parseBoundOAuthState,env,logger,fetch:fetcher,prisma,roleVerificationService:{resolveRole:()=> 'admin',cacheRole:async()=>{}},captureAvatar:async()=>null,uuidv4:br('uuid').v4});
   const req={query:{code:'synthetic-code',state:'synthetic-state'},sessionID:'fixture-session',session:{save:cb=>{facts.sessionSaveAttempted=true;cb(mode.includes('save')?unknown():null);}}};
   await handler(req,response(facts));return{redirect:facts.redirect};
  }));
@@ -176,7 +179,7 @@ const unknown=()=>new Error('fixture required mutation response unknown');
  }));
 
  results.push(await scenario('ban-flag-after-confirmed-ban-row',async facts=>{
-  prisma={ban:{create:async()=>{facts.banRowConfirmed=true;return{id:'fixture-ban'};}},user:{findUnique:async()=>({discordId:null}),update:async()=>{facts.flagWriteAttempted=true;throw unknown();}},auditLog:{create:async()=>({})}};
+  prisma={ban:{findFirst:async()=>null,create:async()=>{facts.banRowConfirmed=true;return{id:'fixture-ban'};}},user:{findUnique:async()=>({discordId:null}),update:async()=>{facts.flagWriteAttempted=true;throw unknown();}},auditLog:{create:async()=>({})}};
   try { await actual('services/moderationActionsService.ts').createBan('fixture-target','fixture-actor','Other','synthetic-reason',new Date(Date.now()+1000),[{type:'text',textContent:'synthetic evidence'}]); }
   catch(error){facts.problemResponse500=true;}
   return {status:500};
