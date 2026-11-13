@@ -73,7 +73,8 @@ export function moderationErrorText(status: number, body: unknown): string {
   return detail ?? (code ? `${code} (HTTP ${status})` : `HTTP ${status}`);
 }
 
-export type ModerationResult = { ok: true; message: string } | { ok: false; error: string };
+// Both members declare both keys so the union narrows under the overlay tsconfig (no strictNullChecks) too.
+export type ModerationResult = { ok: true; message: string; error?: undefined } | { ok: false; error: string; message?: undefined };
 
 async function send(path: string, method: string, body: unknown, success: string): Promise<ModerationResult> {
   try {

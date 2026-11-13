@@ -1,5 +1,16 @@
 # FCMChatWidget build, install, and verification
 
+## HUD moderation candidate 2.10.153 — 2026-11-13
+
+**Widget version:** 2.10.153. Local test candidate; native acceptance pending.
+
+Staff moderation fixes: real `/mod` duration parsing (bans require a duration or
+`perm`), explicit permanent flag and `FCMMOD/1` envelope for ZFE, Server-tab
+targets by account ID, `FCMDEL/1` remote deletes, mapped relay error codes, and
+unban/unmute by exact name. Requires the matching backend. Pure Haxe, full Ruffle
+and source/archive checks pass; the ZFE/xScal transport of the new envelopes
+still needs an in-game capture.
+
 ## Native caret test candidate 2.10.152 — 2026-10-28
 
 **Widget version:** 2.10.152. Local test candidate; native acceptance pending.
