@@ -202,7 +202,15 @@ try {
         window.__ovTest.collapse();
         await new Promise(resolve => {
           const sample = () => {
-            samples.push({ time: performance.now() - start, height: window.innerHeight, opacity: Number(getComputedStyle(document.body).opacity), clip: getComputedStyle(document.body).clipPath });
+            samples.push({
+              time: performance.now() - start, height: window.innerHeight,
+              opacity: Number(getComputedStyle(document.body).opacity),
+              clip: getComputedStyle(document.body).clipPath,
+              hidePending: document.body.getAnimations().some(animation =>
+                animation instanceof CSSTransition &&
+                animation.transitionProperty === (mode === 'full' ? 'opacity' : 'clip-path') &&
+                animation.playState !== 'finished'),
+            });
             if (performance.now() - start < 1000) requestAnimationFrame(sample);
             else resolve();
           };
@@ -212,6 +220,8 @@ try {
       }, mode);
       animationSamples.push({ mode, cycle, samples });
       await writeFile(`${artifacts}/animation-samples.json`, JSON.stringify(animationSamples, null, 2));
+      assert.ok(samples.filter(sample => sample.height < samples[0].height).every(sample => !sample.hidePending),
+        'native resizing must wait for the visible hide transition to finish');
       if (mode === 'full') {
         assert.ok(samples.some(sample => sample.opacity > 0 && sample.opacity < 1), 'full hide must paint intermediate opacity, not blink');
       } else {
@@ -247,6 +257,46 @@ try {
     }
   }
   await writeFile(`${artifacts}/animation-samples.json`, JSON.stringify(animationSamples, null, 2));
+  // Hold the real CSS transition past the former deadline without depending on
+  // machine load or extending the original frame-sampling assertions above.
+  for (const mode of ['subtabs', 'full']) {
+    const height = await page.evaluate(async mode => {
+      window.__ovTest.setAutoHideMode(mode);
+      const height = window.innerHeight;
+      window.__ovTest.collapse();
+      const property = mode === 'full' ? 'opacity' : 'clip-path';
+      const transition = document.body.getAnimations().find(animation =>
+        animation instanceof CSSTransition && animation.transitionProperty === property);
+      if (!transition) throw new Error(`Missing ${property} hide transition`);
+      transition.pause();
+      window.__pausedHideTransition = transition;
+      await new Promise(requestAnimationFrame);
+      return height;
+    }, mode);
+    await page.waitForTimeout(320); // Deliberately exceeds the former 240ms deadline.
+    assert.equal(await page.evaluate(() => window.innerHeight), height,
+      'a pending visible transition must hold native geometry');
+    await page.evaluate(async () => {
+      const transition = window.__pausedHideTransition;
+      transition.play();
+      await transition.finished;
+      delete window.__pausedHideTransition;
+    });
+    await expect.poll(() => page.evaluate(() => window.innerHeight)).toBeLessThan(height);
+    await expect(composer()).toBeHidden();
+    await page.evaluate(() => window.__ovTest.expand());
+    await expect(composer()).toBeVisible();
+    // Full mode reveals content before its fade-in completes. Let this
+    // independent fixture settle before starting the next hide/wake scenario.
+    await expect.poll(() => page.evaluate(() => ({
+      opacity: Number(getComputedStyle(document.body).opacity),
+      pending: document.body.getAnimations().some(animation =>
+        animation instanceof CSSTransition &&
+        ['opacity', 'clip-path'].includes(animation.transitionProperty) &&
+        animation.playState !== 'finished'),
+    }))).toEqual({ opacity: 1, pending: false });
+  }
+  console.log('PASS native geometry waits for paused hide transitions to finish');
   // A wake during the fade must cancel its delayed hide completion.
   await page.evaluate(async () => {
     window.__ovTest.setAutoHideMode('full'); window.__ovTest.collapse();
