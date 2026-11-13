@@ -17,6 +17,7 @@ import env from '../config/environment';
 import { broadcastMessageDeletion, markClientMuted, notifyAndDisconnect } from '../websocket/handlers';
 import { getDiscordClient, postModAlert } from './discordService';
 import { isProtectedTarget } from './userRoleService';
+import { DISPLAY_NAME_SELECT, resolveUserDisplayName } from '../utils/userDisplayName';
 import { revokeTokensForLinkedUser } from './relay/tokenService';
 import type { GuildMember } from 'discord.js';
 
@@ -259,10 +260,8 @@ async function clearDiscordTimeout(discordId: string | null): Promise<void> {
 }
 
 async function displayNameOf(userId: string): Promise<string> {
-  const u = await prisma.user.findUnique({ where: { id: userId }, select: { username: true, discordDisplayName: true, discordUsername: true } });
-  if (!u) return 'unknown';
-  if (u.username && u.username !== 'Wanderer' && !u.username.startsWith('pending-')) return u.username;
-  return u.discordDisplayName || u.discordUsername || u.username || 'unknown';
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: DISPLAY_NAME_SELECT });
+  return resolveUserDisplayName(u);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

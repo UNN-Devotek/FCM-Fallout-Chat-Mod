@@ -113,8 +113,13 @@ explicitly marked as FCM-only rather than claiming success.
 
 The `user` box for `/moderate kick`, `/moderate mute`, `/moderate unmute`, and
 `/moderate ban` is an FCM-backed autocomplete. Moderators can search by FCM chat
-name, Discord display name or ID, Steam name, or SteamID, then choose the linked
-account from the resulting list. Interaction confirmations are ephemeral; FCM
+name, FO76 account/character name, Discord display name or ID, Steam name, or
+SteamID, then choose the account from the resulting list. Labels lead with the
+name the player shows in chat, never a `pending-*` placeholder. If Enter is
+pressed before Discord delivers the choice, the typed text is accepted only when
+it exactly matches one player; otherwise the moderator is asked to pick from the
+list. Confirmations are deferred ephemeral replies, so slow Discord propagation
+cannot expire the 3-second interaction window. FCM
 does not broadcast a public General-channel moderation message. Every moderation
 action instead writes its audit record and posts a staff-only embed through the
 configured `mod_log_channel_id` (the Vault Security channel by default).

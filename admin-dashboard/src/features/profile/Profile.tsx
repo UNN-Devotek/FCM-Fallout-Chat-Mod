@@ -6,6 +6,7 @@ import ChatNamePanel from './ChatNamePanel';
 import { useParams, useOutletContext, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { fo76NameOf, userDisplayName } from '../../utils/userDisplayName';
 import type { AuthUser } from '../../contexts/AuthContext';
 
 interface ProfileData {
@@ -17,6 +18,9 @@ interface ProfileData {
   discordUsername: string | null;
   discordDisplayName: string | null;
   discordAvatar: string | null;
+  steamDisplayName?: string | null;
+  fo76AccountName?: string | null;
+  fo76CharacterName?: string | null;
   isBanned: boolean;
   isMuted: boolean;
   muteExpiresAt: string | null;
@@ -185,9 +189,8 @@ export default function Profile() {
   }
 
   const avatarUrl = formatAvatarUrl(profile);
-  const displayName = profile.chatName || ((profile.username && profile.username !== 'Wanderer' && !profile.username.startsWith('pending-'))
-    ? profile.username
-    : (profile.discordDisplayName || profile.discordUsername || profile.username));
+  const displayName = userDisplayName(profile);
+  const fo76Name = fo76NameOf(profile);
 
   const roleColor = ROLE_COLORS[profile.role] ?? ROLE_COLORS.user;
   const statusTxt = profile.isBanned
@@ -249,11 +252,15 @@ export default function Profile() {
             <div>
               <div style={kvLabel}>FO76 name</div>
               <div style={kvValue}>
-                {profile.username && profile.username !== 'Wanderer' && !profile.username.startsWith('pending-')
-                  ? profile.username
-                  : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>not detected</span>}
+                {fo76Name ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>not detected</span>}
               </div>
             </div>
+            {profile.steamDisplayName && (
+              <div>
+                <div style={kvLabel}>Steam name</div>
+                <div style={kvValue}>{profile.steamDisplayName}</div>
+              </div>
+            )}
             <div>
               <div style={kvLabel}>Joined</div>
               <div style={kvValue}>{new Date(profile.createdAt).toLocaleDateString()}</div>
