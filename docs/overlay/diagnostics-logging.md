@@ -69,7 +69,7 @@ can no longer grow the file without bound, and the prior session is preserved.
 | `[ozone]` | KDE-Wayland launch | The XWayland relaunch decision/exec, or the unsafe-skip (transient AppImage mount) |
 | `[singleton]` | Second launch | The single-instance lock handing off / exiting |
 | `[linux]` (KWin) | First launch | KWin keep-above rule install / skip / failure |
-| `[relay]` | Connection events | Relay WebSocket connect/disconnect/error |
+| `[relay]` | Connection events | Relay WebSocket connect/disconnect/error; `session token rejected by relay — re-registering` when an expired session is renewed (socket `4001` or API `401`) |
 | `[foreground]` | KDE-Wayland; win32 poller lifecycle | KDE-Wayland: active-window tool resolution + the xdotool crash circuit-breaker. **Windows (issue #136):** foreground-poller lifecycle — `poller started` / `first line` / `exit … restarting in Ns` / `silent > Ns — releasing global hotkeys (fail-safe)` / `recovered`. A poller that exits immediately with no output logs a `blocked` hint (Constrained Language Mode / AppLocker). If `main.log` shows binds firing but **no** `[foreground]`/`[hotkeys]` transitions, the poller died silently — the self-heal + watchdog now prevent that. |
 
 ## Recoverability without a tray
