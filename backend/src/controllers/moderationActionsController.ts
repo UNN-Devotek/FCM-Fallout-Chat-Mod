@@ -8,6 +8,7 @@ import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '.
 import { Request, Response, NextFunction } from 'express';
 import { pipeline } from 'node:stream/promises';
 import prisma from '../config/prisma';
+import { DISPLAY_NAME_SELECT } from '../utils/userDisplayName';
 import { createError } from '../middleware/errorHandler';
 import {
   kickUser, muteUser, unmuteUser, createBan, reverseBan, ProtectedTargetError,
@@ -201,9 +202,9 @@ export async function listBansHandler(_req: Request, res: Response, next: NextFu
       orderBy: { createdAt: 'desc' },
       take: 200,
       include: {
-        user:       { select: { id: true, username: true, discordId: true, discordDisplayName: true, discordUsername: true, discordAvatar: true, isBanned: true } },
-        bannedBy:   { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
-        reversedBy: { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
+        user:       { select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true } },
+        bannedBy:   { select: { id: true, ...DISPLAY_NAME_SELECT } },
+        reversedBy: { select: { id: true, ...DISPLAY_NAME_SELECT } },
         evidence:   { select: { id: true, type: true, mime: true, sizeBytes: true } },
       },
     });
@@ -218,9 +219,9 @@ export async function getBanHandler(req: Request, res: Response, next: NextFunct
     const row = await prisma.ban.findUnique({
       where: { id: req.params.id },
       include: {
-        user:       { select: { id: true, username: true, discordId: true, discordDisplayName: true, discordUsername: true, discordAvatar: true, isBanned: true } },
-        bannedBy:   { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
-        reversedBy: { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
+        user:       { select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true } },
+        bannedBy:   { select: { id: true, ...DISPLAY_NAME_SELECT } },
+        reversedBy: { select: { id: true, ...DISPLAY_NAME_SELECT } },
         evidence:   true,
       },
     });
@@ -300,7 +301,7 @@ export async function listEvidenceHandler(req: Request, res: Response, next: Nex
       where,
       orderBy: { createdAt: 'desc' },
       take: 200,
-      include: { ban: { select: { id: true, userId: true, reasonCategory: true, reasonText: true, createdAt: true, reversedAt: true, user: { select: { username: true, discordDisplayName: true, discordUsername: true } } } } },
+      include: { ban: { select: { id: true, userId: true, reasonCategory: true, reasonText: true, createdAt: true, reversedAt: true, user: { select: DISPLAY_NAME_SELECT } } } },
     });
     res.json({ data: rows });
   } catch (err) { next(err); }
@@ -315,13 +316,10 @@ export async function lookupUserHandler(req: Request, res: Response, next: NextF
     const rows = await prisma.user.findMany({
       where: isUuid
         ? { id: q }
-        : { OR: [
-            { username: { contains: q, mode: 'insensitive' } },
-            { discordUsername: { contains: q, mode: 'insensitive' } },
-            { discordDisplayName: { contains: q, mode: 'insensitive' } },
-          ] },
+        : { OR: (['username', 'chatName', 'steamDisplayName', 'fo76CharacterName', 'fo76AccountName', 'discordUsername', 'discordDisplayName'] as const)
+            .map((field) => ({ [field]: { contains: q, mode: 'insensitive' as const } })) },
       take: 20,
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, isBanned: true, isMuted: true },
+      select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true, isMuted: true },
     });
     res.json({ data: rows });
   } catch (err) { next(err); }

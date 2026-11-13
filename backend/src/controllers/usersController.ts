@@ -714,6 +714,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
       select: {
         id: true, username: true, chatName: true, createdAt: true,
         discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true,
+        fo76AccountName: true, fo76CharacterName: true,
         isBanned: true, isMuted: true, muteExpiresAt: true,
       },
     });

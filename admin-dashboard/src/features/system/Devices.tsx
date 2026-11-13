@@ -1,6 +1,7 @@
 import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { userDisplayName } from '../../utils/userDisplayName';
 
 interface DeviceRow {
   id: string;
@@ -12,9 +13,7 @@ interface DeviceRow {
 }
 
 function userLabel(u: DeviceRow['user']): string {
-  if (!u) return '(no linked account)';
-  if (u.username && u.username !== 'Wanderer' && !u.username.startsWith('pending-') && !u.username.startsWith('admin-discord-')) return u.username;
-  return u.discordUsername || u.username || '(unnamed)';
+  return u ? userDisplayName(u, '(unnamed)') : '(no linked account)';
 }
 
 export default function Devices() {

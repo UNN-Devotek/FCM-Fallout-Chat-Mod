@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { userDisplayName, type DisplayNameFields } from '../../utils/userDisplayName';
 
 interface EvidenceRow {
   id: string; banId: string;
@@ -18,10 +19,7 @@ interface EvidenceRow {
   };
 }
 
-function name(u: { username: string; discordDisplayName: string | null; discordUsername: string | null }): string {
-  if (u.username && u.username !== 'Wanderer' && !u.username.startsWith('pending-') && !u.username.startsWith('admin-discord-')) return u.username;
-  return u.discordDisplayName || u.discordUsername || u.username || '—';
-}
+const name = (u: DisplayNameFields): string => userDisplayName(u);
 
 export default function Evidence() {
   const { data, isLoading, error } = useQuery({

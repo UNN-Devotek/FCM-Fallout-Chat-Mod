@@ -1,20 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { api } from '../../services/api';
+import { fo76NameOf, userDisplayName, type DisplayNameFields } from '../../utils/userDisplayName';
 
 const CATEGORIES = ['Harassment', 'HateSpeech', 'Spam', 'Cheating', 'NSFW', 'Threats', 'Doxxing', 'Other'] as const;
 type Category = typeof CATEGORIES[number];
 
-interface UserLookupResult {
+interface UserLookupResult extends DisplayNameFields {
   id: string; username: string;
   discordId: string | null; discordUsername: string | null; discordDisplayName: string | null; discordAvatar: string | null;
   isBanned: boolean; isMuted: boolean;
 }
 
-function name(u: { username: string; discordDisplayName: string | null; discordUsername: string | null } | null): string {
-  if (!u) return '—';
-  if (u.username && u.username !== 'Wanderer' && !u.username.startsWith('pending-') && !u.username.startsWith('admin-discord-')) return u.username;
-  return u.discordDisplayName || u.discordUsername || u.username || '—';
+const name = (u: UserLookupResult | null): string => userDisplayName(u);
+
+/** Other names the moderator may know the player by (FO76 / Steam / Discord). */
+function identityHint(u: UserLookupResult): string {
+  const shown = name(u);
+  const fo76 = fo76NameOf(u);
+  return [fo76 && `FO76 ${fo76}`, u.steamDisplayName && `Steam ${u.steamDisplayName}`, u.discordUsername && `@${u.discordUsername}`]
+    .filter((v): v is string => !!v && !v.endsWith(` ${shown}`) && v !== `@${shown}`)
+    .join(' · ');
 }
 
 // discordAvatar is the raw Discord avatar HASH (not a URL) — build the CDN URL
@@ -125,20 +131,20 @@ export default function BanForm() {
               {avatarUrl(userPreview, 32) && <img src={avatarUrl(userPreview, 32)!} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />}
               <div style={{ flex: 1 }}>
                 <div style={{ color: 'var(--phosphor-color)' }}>{name(userPreview)}</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{userPreview.id}</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{[identityHint(userPreview), userPreview.id].filter(Boolean).join(' · ')}</div>
               </div>
               {userPreview.isBanned && <span style={{ fontSize: '10px', color: 'var(--error)', border: '1px solid var(--error)', padding: '1px 5px' }}>ALREADY BANNED</span>}
               <button type="button" onClick={() => { setUserPreview(null); setUserId(''); setSearchQuery(''); }} style={{ padding: '2px 8px', fontSize: '11px' }}>CHANGE</button>
             </div>
           ) : (
             <div style={{ position: 'relative' }}>
-              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search username, FO76 name, or Discord name..." style={{ width: '100%' }} />
+              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search chat, FO76, Steam, or Discord name..." style={{ width: '100%' }} />
               {searchResults.length > 0 && (
                 <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: 'var(--bg-panel)', border: '1px solid var(--border-color)', maxHeight: '240px', overflowY: 'auto' }}>
                   {searchResults.map(r => (
                     <div key={r.id} onClick={() => pickUser(r)} style={{ padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)' }}>
                       {avatarUrl(r, 32) && <img src={avatarUrl(r, 32)!} alt="" style={{ width: '20px', height: '20px', borderRadius: '50%' }} />}
-                      <span style={{ flex: 1, fontSize: '13px' }}>{name(r)}</span>
+                      <span style={{ flex: 1, fontSize: '13px' }}>{name(r)}{identityHint(r) && <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}> · {identityHint(r)}</span>}</span>
                       {r.isBanned && <span style={{ fontSize: '10px', color: 'var(--error)' }}>BANNED</span>}
                       {r.isMuted && <span style={{ fontSize: '10px', color: 'var(--warning)' }}>MUTED</span>}
                     </div>

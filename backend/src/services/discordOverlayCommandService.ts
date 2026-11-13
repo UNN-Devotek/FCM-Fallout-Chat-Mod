@@ -32,6 +32,7 @@ import { searchCampItems } from './campService';
 import { finalizeMessage } from './ingestMessage';
 import { publishDiscordCommandRelay } from './discordCommandPublication';
 import { getUserByDiscordId, getUserById } from './userLookup';
+import { resolveUserDisplayName } from '../utils/userDisplayName';
 import { getEffectiveRole, isPrivilegedRole } from './userRoleService';
 import {
   REASON_CATEGORIES,
@@ -349,23 +350,60 @@ async function requireModerator(interaction: ChatInputCommandInteraction) {
   return actor;
 }
 
+const MODERATION_TARGET_SELECT = {
+  id: true, chatName: true, username: true, discordDisplayName: true, discordUsername: true, discordId: true,
+  steamId: true, steamDisplayName: true, fo76AccountName: true, fo76CharacterName: true,
+} as const;
+
+/** Searchable identity columns shared by the target autocomplete and typed-name fallback. */
+function moderationTargetSearch(query: string, mode: 'contains' | 'equals') {
+  const text = (field: string) => ({ [field]: { [mode]: query, mode: 'insensitive' as const } });
+  return [
+    { discordId: { [mode]: query } }, text('steamId'), text('steamDisplayName'), text('fo76AccountName'),
+    text('fo76CharacterName'), text('chatName'), text('username'), text('discordUsername'), text('discordDisplayName'),
+  ];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function requireTarget(interaction: ChatInputCommandInteraction) {
-  const userId = interaction.options.getString('user', true);
-  const target = await getUserById(userId);
+  const raw = interaction.options.getString('user', true).trim();
+  let target = UUID_RE.test(raw) ? await getUserById(raw) : null;
+  if (!target && raw && !UUID_RE.test(raw)) {
+    // Enter pressed before Discord delivered the autocomplete choice: the option
+    // carries the typed text, not an FCM id. Accept it only when it names one player.
+    const matches = await prisma.user.findMany({ where: { OR: moderationTargetSearch(raw, 'equals') }, select: { id: true }, take: 2 });
+    if (matches.length === 1) target = await getUserById(matches[0].id);
+    else {
+      await interaction.reply({
+        content: matches.length > 1
+          ? `More than one FCM player matches "${raw.slice(0, 60)}". Pick the player from the search list.`
+          : `No FCM player is named "${raw.slice(0, 60)}". Type part of their chat, Steam, FO76, or Discord name and pick them from the search list.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return null;
+    }
+  }
   if (!target) {
-    await interaction.reply({ content: 'That Discord member has no linked Fallout Chat Mod account.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'That player was not found. Pick the player from the search list.', flags: MessageFlags.Ephemeral });
     return null;
   }
   return target;
 }
 
-function moderationTargetLabel(user: { chatName: string | null; username: string; discordDisplayName: string | null; discordUsername: string | null; discordId: string | null; steamId: string | null; steamDisplayName: string | null }): string {
-  const chatIdentity = user.chatName || user.username;
+type ModerationTargetLabelFields = Parameters<typeof resolveUserDisplayName>[0] & {
+  discordId?: string | null; steamId?: string | null;
+};
+
+/** Autocomplete label: the name shown in chat, then the identities a moderator may recognise. */
+export function moderationTargetLabel(user: ModerationTargetLabelFields): string {
+  const shown = resolveUserDisplayName(user);
   const identities = [
     user.discordDisplayName || user.discordUsername || user.discordId,
     user.steamDisplayName || user.steamId,
-  ].filter(Boolean).join(' · ');
-  return `${chatIdentity}${identities ? ` — ${identities}` : ''}`.slice(0, 100);
+    user.fo76CharacterName || user.fo76AccountName ? `FO76 ${user.fo76CharacterName || user.fo76AccountName}` : null,
+  ].filter((value): value is string => !!value && value !== shown);
+  return `${shown}${identities.length ? ` — ${identities.join(' · ')}` : ''}`.slice(0, 100);
 }
 
 async function handleModerationAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -378,24 +416,10 @@ async function handleModerationAutocomplete(interaction: AutocompleteInteraction
     }
     const query = interaction.options.getFocused().trim();
     const users = await prisma.user.findMany({
-      where: {
-        ...(query ? {
-          OR: [
-            { discordId: { contains: query } },
-            { steamId: { contains: query, mode: 'insensitive' } },
-            { steamDisplayName: { contains: query, mode: 'insensitive' } },
-            { fo76AccountName: { contains: query, mode: 'insensitive' } },
-            { fo76CharacterName: { contains: query, mode: 'insensitive' } },
-            { chatName: { contains: query, mode: 'insensitive' } },
-            { username: { contains: query, mode: 'insensitive' } },
-            { discordUsername: { contains: query, mode: 'insensitive' } },
-            { discordDisplayName: { contains: query, mode: 'insensitive' } },
-          ],
-        } : {}),
-      },
+      where: query ? { OR: moderationTargetSearch(query, 'contains') } : {},
       orderBy: { updatedAt: 'desc' },
       take: 25,
-      select: { id: true, chatName: true, username: true, discordDisplayName: true, discordUsername: true, discordId: true, steamId: true, steamDisplayName: true },
+      select: MODERATION_TARGET_SELECT,
     });
     await interaction.respond(users.map((user) => ({ name: moderationTargetLabel(user), value: user.id })));
   } catch (err) {
@@ -435,14 +459,9 @@ async function handleReportAutocomplete(interaction: AutocompleteInteraction): P
   try {
     const query = interaction.options.getFocused().trim();
     const users = await prisma.user.findMany({
-      where: query ? { OR: [
-        { discordId: { contains: query } }, { steamId: { contains: query, mode: 'insensitive' } },
-        { steamDisplayName: { contains: query, mode: 'insensitive' } }, { chatName: { contains: query, mode: 'insensitive' } },
-        { username: { contains: query, mode: 'insensitive' } }, { discordUsername: { contains: query, mode: 'insensitive' } },
-        { discordDisplayName: { contains: query, mode: 'insensitive' } },
-      ] } : {},
+      where: query ? { OR: moderationTargetSearch(query, 'contains') } : {},
       orderBy: { updatedAt: 'desc' }, take: 25,
-      select: { id: true, chatName: true, username: true, discordDisplayName: true, discordUsername: true, discordId: true, steamId: true, steamDisplayName: true },
+      select: MODERATION_TARGET_SELECT,
     });
     await interaction.respond(users.map((user) => ({ name: moderationTargetLabel(user), value: user.id })));
   } catch (err) {
@@ -462,14 +481,14 @@ async function handleReportCommand(interaction: ChatInputCommandInteraction): Pr
     await interaction.reply({ content: 'Choose a valid FCM player from the search results.', flags: MessageFlags.Ephemeral });
     return;
   }
-  const involvedPlayers = target ? (target.chatName ?? target.discordDisplayName ?? target.discordUsername ?? target.username) : null;
+  const involvedPlayers = target ? resolveUserDisplayName(target) : null;
   const content = target ? `${involvedPlayers}: ${description}` : description;
   const report = await runRequiredMutation('domain', '87b8a5ee8b1ffe62f2f2b09d', { stage: 'primary-write-unconfirmed', userId: reporter.id }, () => prisma.playerReport.create({ data: { userId: reporter.id, content, reportType: type, involvedPlayers } }), isPrismaAtomicRefusal, undefined, undefined);
   try {
     // Lazy import avoids the discordService -> command service initialization cycle.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { postModAlert } = require('./discordService') as { postModAlert: (data: unknown) => Promise<unknown> };
-    void postModAlert({ title: `${type === 'bug' ? 'Bug' : 'Player'} Report Submitted`, color: '#FF8C00', fields: [{ name: 'Reporter', value: reporter.chatName ?? reporter.username, inline: true }, { name: 'Content', value: content.slice(0, 1500) }], footerText: `Report ID: ${report.id}`, timestamp: true });
+    void postModAlert({ title: `${type === 'bug' ? 'Bug' : 'Player'} Report Submitted`, color: '#FF8C00', fields: [{ name: 'Reporter', value: resolveUserDisplayName(reporter), inline: true }, { name: 'Content', value: content.slice(0, 1500) }], footerText: `Report ID: ${report.id}`, timestamp: true });
   } catch { /* bot alert is best-effort; the report is persisted first */ }
   await interaction.reply({ content: type === 'bug' ? 'Bug report submitted. Thank you.' : 'Player report submitted to the moderation team.', flags: MessageFlags.Ephemeral });
 
@@ -480,46 +499,49 @@ async function handleModeration(interaction: ChatInputCommandInteraction): Promi
   const actor = await requireModerator(interaction);
   if (!actor) return;
   const subcommand = interaction.options.getSubcommand(true);
+  // Moderation writes, Discord propagation and the mod-log embed can exceed
+  // Discord's 3-second reply window; acknowledge first so the result is shown.
+  const respond = (content: string) => (interaction.deferred || interaction.replied
+    ? interaction.editReply({ content })
+    : interaction.reply({ content, flags: MessageFlags.Ephemeral }));
   try {
     if (subcommand === 'unban') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await reverseBan(interaction.options.getString('ban-id', true), actor.id, interaction.options.getString('reason') ?? 'Reversed from Discord');
-      await interaction.reply({ content: 'Ban reversed.', flags: MessageFlags.Ephemeral });
+      await respond('Ban reversed.');
       return;
     }
     if (subcommand === 'delete-message') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await deleteMessageById(interaction.options.getString('message-id', true), actor.id, interaction.options.getString('reason') ?? 'Removed from Discord moderation command');
-      await interaction.reply({ content: 'Message deleted.', flags: MessageFlags.Ephemeral });
+      await respond('Message deleted.');
       return;
     }
 
     const target = await requireTarget(interaction);
     if (!target) return;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason') ?? 'No reason provided';
+    const targetName = resolveUserDisplayName(target);
     if (subcommand === 'kick') {
       const result = await kickUser(target.id, actor.id, reason, { kickDiscord: true });
-      await interaction.reply({
-        content: result.discordKicked
-          ? `Kicked ${target.chatName ?? target.username} from FCM and Discord.`
-          : `Kicked ${target.chatName ?? target.username} from FCM. Discord kick was not applied: ${result.discordWarning ?? 'no linked Discord account'}.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await respond(result.discordKicked
+          ? `Kicked ${targetName} from FCM and Discord.`
+          : `Kicked ${targetName} from FCM. Discord kick was not applied: ${result.discordWarning ?? 'no linked Discord account'}.`);
       return;
     }
     if (subcommand === 'mute') {
       const minutes = interaction.options.getInteger('minutes', true);
       const category = interaction.options.getString('category') ?? 'Other';
       const result = await muteUser(target.id, actor.id, minutes * 60_000, category, reason);
-      await interaction.reply({
-        content: result.discordPropagated
-          ? `Muted ${target.chatName ?? target.username} in FCM and Discord until ${result.until.toISOString()}.`
-          : `Muted ${target.chatName ?? target.username} in FCM until ${result.until.toISOString()}, but the Discord timeout was not applied. Check bot permissions and role hierarchy.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await respond(result.discordPropagated
+          ? `Muted ${targetName} in FCM and Discord until ${result.until.toISOString()}.`
+          : `Muted ${targetName} in FCM until ${result.until.toISOString()}, but the Discord timeout was not applied. Check bot permissions and role hierarchy.`);
       return;
     }
     if (subcommand === 'unmute') {
       await unmuteUser(target.id, actor.id, reason);
-      await interaction.reply({ content: `Unmuted ${target.chatName ?? target.username}.`, flags: MessageFlags.Ephemeral });
+      await respond(`Unmuted ${targetName}.`);
       return;
     }
     if (subcommand === 'ban') {
@@ -528,16 +550,13 @@ async function handleModeration(interaction: ChatInputCommandInteraction): Promi
       const category = interaction.options.getString('category') ?? 'Other';
       const evidence = interaction.options.getString('evidence', true);
       const result = await createBan(target.id, actor.id, category, reason, until, [{ type: 'text', textContent: evidence }], { banDiscord: true });
-      await interaction.reply({
-        content: result.discordLockdown.guildBanApplied
-          ? `Banned ${target.chatName ?? target.username} from FCM and Discord${until ? ` until ${until.toISOString()}` : ' permanently'}.`
-          : `Banned ${target.chatName ?? target.username} from FCM, but Discord ban was not applied: ${result.discordLockdown.warnings.join(' ') || 'check Ban Members permission and role hierarchy'}.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await respond(result.discordLockdown.guildBanApplied
+          ? `Banned ${targetName} from FCM and Discord${until ? ` until ${until.toISOString()}` : ' permanently'}.`
+          : `Banned ${targetName} from FCM, but Discord ban was not applied: ${result.discordLockdown.warnings.join(' ') || 'check Ban Members permission and role hierarchy'}.`);
     }
   } catch (err) {
     logger.warn({ err, command: subcommand, actorId: actor.id }, '[discord-overlay-commands] moderation action failed');
-    await interaction.reply({ content: 'Moderation action failed. Check the target, permissions, and audit log.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    await respond('Moderation action failed. Check the target, permissions, and audit log.').catch(() => {});
   }
 }
 

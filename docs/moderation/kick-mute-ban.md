@@ -124,6 +124,16 @@ link, not force a re-link. (Mute is never a revocation — the user stays authed
   multi-word names) or use a visible message reference. It resolves that convenience input locally
   to immutable record IDs; duplicate visible names are rejected rather than selecting a player. The
   authoritative surface stays the dashboard.
+- **Desktop overlay context menu.** Kick and Mute use the moderator WebSocket frames (`mod:kick`,
+  `mod:mute`). **Ban** opens the website ban form (evidence upload) through `banFormUrl()`, which
+  prefixes the relay HTTP base. The packaged overlay renders from a local file, so a bare
+  `/moderation/bans/new` link would resolve to `file://` and open nothing.
+- **Target names.** Accounts linked through Steam/HUD without Discord keep a synthetic
+  `pending-*` username. Moderation embeds, Discord `/moderate` labels and replies, the ban form,
+  ban lists and profiles resolve the chat-visible name instead: chat name, real FO76 username,
+  Steam name, Discord name, then stored FO76 account/character name
+  (`backend/src/utils/userDisplayName.ts`, mirrored in `admin-dashboard/src/utils/userDisplayName.ts`).
+  The ban-form lookup (`GET /api/moderation/users/lookup`) searches all of those fields.
 - **In-game `banUser` carries text evidence.** An in-game ban (from a staff-Discord-linked identity)
   applies immediately through the same ban service and stores the bounded reason as a text evidence
   item. The dashboard remains the authoritative place to add richer evidence or reverse the ban.
