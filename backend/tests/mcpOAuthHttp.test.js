@@ -100,6 +100,7 @@ describe('MCP OAuth HTTP routes', () => {
     global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'discord-token' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ id: '123456789012345678' }) });
     const callback = await agent.get('/oauth/discord/callback').query({ code: 'discord-code', state: oauthState });
     expect(callback.status).toBe(200); expect(callback.text).toContain('Authorize Claude');
+    expect(callback.headers['content-security-policy']).toContain("form-action 'self' https://claude.ai;");
     expect(callback.text).toContain('type="hidden" name="decision" value="approve"');
     expect(callback.text).toContain('type="submit" value="Authorize"');
     expect((await agent.get('/oauth/discord/callback').query({ code: 'discord-code', state: oauthState })).status).toBe(403);
@@ -168,6 +169,26 @@ describe('MCP OAuth HTTP routes', () => {
     const response = await request(app()).get('/oauth/authorize').query({ client_id: 'registered', redirect_uri: 'http://127.0.0.1:40301/callback/CkPYkR2KjUtX', resource: env.MCP_RESOURCE_URL, response_type: 'code', code_challenge_method: 'S256', code_challenge: 'a'.repeat(43) });
     expect(response.status).toBe(302); expect(response.headers.location).toContain('discord.com/api/oauth2/authorize');
     clients.redirectUris = ['https://claude.ai/api/mcp/auth_callback'];
+  });
+
+  test('consent page CSP permits the post-approval redirect to the exact loopback callback origin', async () => {
+    clients.redirectUris = ['http://127.0.0.1/callback/CkPYkR2KjUtX'];
+    try {
+      const agent = request.agent(app());
+      const redirectUri = 'http://127.0.0.1:40301/callback/CkPYkR2KjUtX';
+      const response = await agent.get('/oauth/authorize').query({ client_id: 'registered', redirect_uri: redirectUri, resource: env.MCP_RESOURCE_URL, response_type: 'code', code_challenge_method: 'S256', code_challenge: 'a'.repeat(43), scope: 'fcm:read' });
+      const oauthState = new URL(response.headers.location).searchParams.get('state');
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'discord-token' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ id: '123456789012345678' }) });
+      const callback = await agent.get('/oauth/discord/callback').query({ code: 'discord-code', state: oauthState });
+      expect(callback.status).toBe(200);
+      const policy = callback.headers['content-security-policy'];
+      expect(policy).toContain("form-action 'self' http://127.0.0.1:40301;");
+      expect(policy).not.toContain('/callback');
+      const consentToken = callback.text.match(/name="consent_token" value="([^"]+)"/)[1];
+      const consent = await agent.post('/oauth/authorize/consent').type('form').send({ consent_token: consentToken, decision: 'approve' });
+      expect(consent.status).toBe(302); expect(new URL(consent.headers.location).origin).toBe('http://127.0.0.1:40301');
+      expect(consent.headers['content-security-policy']).toContain("form-action 'self';");
+    } finally { clients.redirectUris = ['https://claude.ai/api/mcp/auth_callback']; }
   });
 
   test('callback fails closed on browser-session mismatch and redirects a validated role denial', async () => {

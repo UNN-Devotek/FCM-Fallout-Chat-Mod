@@ -46,7 +46,7 @@ Token, revocation, and consent endpoints accept only `application/x-www-form-url
 
 Consent decisions are bound once and expire with the five-minute consent window. Repeated submissions of the same decision are idempotent: concurrent or duplicate approvals return the same HMAC-derived, one-time authorization code while the database stores only its hash. A conflicting approve/deny replay is rejected. This prevents duplicate browser form submissions from replacing a successful localhost callback with an error response.
 
-The consent page uses explicit native submit inputs for approve and deny, with the decision carried as a hidden field. Remote MCP OAuth endpoints use a dedicated, failover-backed per-IP allowance of 120 requests per 15 minutes because one authorization-code flow spans four requests and refresh rotation must not consume the general website-login bucket.
+The consent page uses explicit native submit inputs for approve and deny, with the decision carried as a hidden field. Its Content-Security-Policy `form-action` allows `'self'` plus only the origin of the client's exactly-registered callback (or its scheme for a private-use URI scheme). Chromium applies `form-action` to the redirect that follows the consent POST, so a `'self'`-only policy let Approve succeed on the server while the browser silently blocked the hop to the CLI's loopback callback (Codex/Claude Code login never completed). Every other OAuth response keeps `form-action 'self'`. Remote MCP OAuth endpoints use a dedicated, failover-backed per-IP allowance of 120 requests per 15 minutes because one authorization-code flow spans four requests and refresh rotation must not consume the general website-login bucket.
 
 ## Audit and operational monitoring
 
