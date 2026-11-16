@@ -1862,7 +1862,7 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "8c5c91cf5af0ea9d4b02345dcb5320c3be2011ff9355b350266898258f850359",
-      "ownerFingerprint": "b8597df153dd93a2a85e934022d680eeed1fc765e3c0aa548b0c84a52288af96",
+      "ownerFingerprint": "3d60ea18f00588779574b3a5cbceb008c57464446a61f31de8317aa08fa4eabe",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -1893,7 +1893,7 @@
       },
       "family": "http-effect-candidate",
       "operationFingerprint": "f754dc4b1b46687273a5fe237913b8ba615c74a8393c6ba285f18600276fc7b7",
-      "ownerFingerprint": "b8597df153dd93a2a85e934022d680eeed1fc765e3c0aa548b0c84a52288af96",
+      "ownerFingerprint": "3d60ea18f00588779574b3a5cbceb008c57464446a61f31de8317aa08fa4eabe",
       "boundaries": [],
       "originalLine": 117,
       "disposition": "optional",
@@ -1912,7 +1912,7 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "6b3d5ce9cb21fa2cb921b032555455cee6b76fd2dd223233965e1703fd9b46c3",
-      "ownerFingerprint": "b8597df153dd93a2a85e934022d680eeed1fc765e3c0aa548b0c84a52288af96",
+      "ownerFingerprint": "3d60ea18f00588779574b3a5cbceb008c57464446a61f31de8317aa08fa4eabe",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -1943,7 +1943,7 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "ac0768353531ce846daea3aa603dcc3644b1356e529e28f199455a4779eb6463",
-      "ownerFingerprint": "bf2d4ec3679067b2218e51621f8377eae395e1910f8a7c3602d0ae7592894948",
+      "ownerFingerprint": "e8e97d29f15e4fee44d6d067efe071736abdf1829ec5343286b162cf461e570e",
       "boundaries": [],
       "originalLine": 148,
       "sdkReference": "@redis:getRedisClient().get",
@@ -1961,7 +1961,7 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "6b1e7839659a635be6bc09187b6995c3d7b284ba55cbaa10f2518e10b5411dbc",
-      "ownerFingerprint": "bf2d4ec3679067b2218e51621f8377eae395e1910f8a7c3602d0ae7592894948",
+      "ownerFingerprint": "e8e97d29f15e4fee44d6d067efe071736abdf1829ec5343286b162cf461e570e",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -1992,7 +1992,7 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "624acaf9fd242e4728cfca100addefbc0279a3655c004a6d81518d488f05a94c",
-      "ownerFingerprint": "bf2d4ec3679067b2218e51621f8377eae395e1910f8a7c3602d0ae7592894948",
+      "ownerFingerprint": "e8e97d29f15e4fee44d6d067efe071736abdf1829ec5343286b162cf461e570e",
       "boundaries": [],
       "originalLine": 156,
       "sdkReference": "@redis:getRedisClient().get",
@@ -9256,7 +9256,7 @@
               "owner": "<module>"
             },
             "calls": [],
-            "fingerprint": "7656d1ddbf46f5086013b826c397f15d67a2086a2ee1950744e058db2e157a74"
+            "fingerprint": "25cb14336c7481ea2cbe1aa61a6ae30f1b61f637adfd1cedfc757126d5a11a66"
           },
           {
             "identity": {
@@ -9378,7 +9378,7 @@
               "owner": "<module>"
             },
             "calls": [],
-            "fingerprint": "7656d1ddbf46f5086013b826c397f15d67a2086a2ee1950744e058db2e157a74"
+            "fingerprint": "25cb14336c7481ea2cbe1aa61a6ae30f1b61f637adfd1cedfc757126d5a11a66"
           },
           {
             "identity": {
@@ -35721,7 +35721,7 @@
         "file": "backend/src/controllers/mcpOAuthController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "7656d1ddbf46f5086013b826c397f15d67a2086a2ee1950744e058db2e157a74",
+      "fingerprint": "25cb14336c7481ea2cbe1aa61a6ae30f1b61f637adfd1cedfc757126d5a11a66",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {

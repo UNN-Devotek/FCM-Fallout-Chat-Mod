@@ -11,7 +11,17 @@ import logger from '../config/logger';
 import { classifyMcpRoleDenial, noteMcpSecurityEvent, recordMcpMetric } from '../services/mcpAuditService';
 
 const STATE_TTL = 300;
-const headers = (res: Response) => res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" });
+const csp = (formAction: string) => `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`;
+const headers = (res: Response) => res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': csp("'self'") });
+// Chromium applies the consent page's form-action to the 302 that follows a
+// form POST. With only 'self', Approve/Deny reach the server but the browser
+// blocks the hop to the client's callback (e.g. Codex/Claude Code loopback
+// listeners), so the CLI never receives the code. Allow exactly the trusted,
+// exactly-registered callback origin (or scheme for private-use URI schemes).
+const callbackFormSource = (redirectUri: string): string => {
+  const target = new URL(redirectUri);
+  return target.protocol === 'http:' || target.protocol === 'https:' ? target.origin : target.protocol;
+};
 const issuer = () => env.MCP_ISSUER_URL.replace(/\/$/, '');
 const oauthError = (res: Response, status: number, error: string, description: string) => { recordMcpMetric('oauth', { outcome: 'failure' }); return res.status(status).json({ error, error_description: description }); };
 const scalar = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
@@ -128,6 +138,7 @@ export async function discordCallback(req: Request, res: Response) {
     const name = escapeHtml(metadata.client_name || pending.clientId);
     const scopeFields = pending.scopes.map(scope => `<li>${escapeHtml(scope)}</li>`).join('');
     recordMcpMetric('oauth', { outcome: 'success' });
+    res.set('Content-Security-Policy', csp(`'self' ${callbackFormSource(pending.redirectUri)}`));
     res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Authorize FCM MCP</title></head><body><main><h1>Authorize ${name}</h1><p>Signed in as an authorized ${role.role}.</p><ul>${scopeFields}</ul><form method="post" action="/oauth/authorize/consent"><input type="hidden" name="consent_token" value="${consent}"><input type="hidden" name="decision" value="approve"><input type="submit" value="Authorize"></form><form method="post" action="/oauth/authorize/consent"><input type="hidden" name="consent_token" value="${consent}"><input type="hidden" name="decision" value="deny"><input type="submit" value="Deny"></form></main></body></html>`);
   } catch (error) {
     const message = 'Authorization is temporarily unavailable'; logger.error({ ...logContext(req, error), route: 'oauth/discord/callback' }, 'Discord OAuth callback failed');
