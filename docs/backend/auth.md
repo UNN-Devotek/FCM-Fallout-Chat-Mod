@@ -130,6 +130,30 @@ Route arguments may be configured Discord role IDs or literal labels (`owner`, `
 The effective hierarchy is `owner > admin > moderator`, so a higher role satisfies a lower gate but a
 lower cached or persisted role never satisfies an owner/admin-only route.
 
+### `requireStaffRole(...allowedRoles)` (dashboard or overlay staff)
+
+The overlay's renderer `fetch` is proxied by the Electron main process, which attaches only
+`X-Auth-Token` and never forwards cookies, so `requireDiscordRole` alone rejects overlay staff with
+401. `requireStaffRole` is applied only to the endpoints the overlay's staff menus call:
+`POST /api/moderation/kicks`, `POST /api/moderation/mutes`, `DELETE /api/moderation/mutes/:userId`,
+`DELETE /api/messages/:id`, `GET /api/users/:id/aliases` and
+`DELETE /api/admin/parties/:partyId/messages/:messageId`. Every other admin route stays web-only.
+
+1. A request with a Discord dashboard session or `X-API-Key` goes through `requireDiscordRole`
+   unchanged (same ban lockdown, cache/DB/session role order and dev-mode behaviour).
+2. Otherwise, with `X-Auth-Token`, `requireAuth` validates the session (401 for an unknown/expired
+   token, structured 403 for a banned account, expired temp bans auto-lift).
+3. The token user must have a linked Discord ID; their role comes from `getEffectiveRole`
+   (`role:verified:<discordId>` cache, then `admin_users`), the same source as the WebSocket staff
+   frames, and must satisfy the same `owner > admin > moderator` gate. A plain user gets 403.
+   When the configured role IDs are empty (local dev), token callers need at least `moderator`;
+   the web dev-mode persona fallback does not apply to tokens.
+4. `req.adminUser` is set to `{ id: <discordId>, username, role, userId, via: 'overlay-token' }`, so
+   controller actor resolution (`actorUserId`, `resolveInternalActorId`) attributes kicks, mutes,
+   deletes and audit rows to the staff member's own user row.
+
+The token is a custom header, not an ambient credential, so these routes gain no CSRF exposure.
+
 ### Public Discord Auth (Reports / Applications)
 
 For the `/report` and `/apply` website forms, the same OAuth2 callback runs but stores a lighter `req.session.publicUser = { discordId, username, discordDisplayName, avatar, intent }` instead. Guild membership is still verified; no role enforcement.

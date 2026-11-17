@@ -506,6 +506,175 @@ class FcmCommand {
         }
     }
 
+    // =========================================================================
+    // Staff /mod commands (pure; the widget owns targets and transport)
+    // =========================================================================
+
+    public static inline var MOD_MAX_MINUTES:Int = 43200; // 30 days
+    public static inline var MOD_DEFAULT_MUTE_MINUTES:Int = 10;
+    /** ZFE-safe carrier in the unused messageId member of account-level actions. */
+    public static inline var MOD_ENVELOPE_PREFIX:String = "FCMMOD/1;";
+    /** Private relay system body announcing a removed message. */
+    public static inline var MOD_DELETE_EVENT_PREFIX:String = "FCMDEL/1;";
+
+    /**
+     * Classify one duration token. `none` is not a duration (it starts the reason);
+     * `invalid` looks like a duration (leading digit or sign) but is zero, negative,
+     * fractional, out of range or has an unknown unit. Units: none/m minutes, h, d, w.
+     */
+    public static function moderationDuration(raw:String):{kind:String, minutes:Int} {
+        var word:String = raw == null ? "" : StringTools.trim(raw).toLowerCase();
+        if (word == "perm" || word == "permanent") return {kind:"permanent", minutes:0};
+        if (word.length == 0) return {kind:"none", minutes:0};
+        var first:Int = word.charCodeAt(0);
+        var digit:Int = (first == "-".code || first == "+".code) && word.length > 1 ? word.charCodeAt(1) : first;
+        if (digit < "0".code || digit > "9".code) return {kind:"none", minutes:0};
+        var re = ~/^([0-9]{1,6})([mhdw]?)$/;
+        if (!re.match(word)) return {kind:"invalid", minutes:0};
+        var amount:Null<Int> = Std.parseInt(re.matched(1));
+        var unit:Int = switch (re.matched(2)) { case "h": 60; case "d": 1440; case "w": 10080; default: 1; };
+        if (amount == null || amount <= 0 || amount > MOD_MAX_MINUTES) return {kind:"invalid", minutes:0};
+        var minutes:Int = amount * unit;
+        if (minutes > MOD_MAX_MINUTES) return {kind:"invalid", minutes:0};
+        return {kind:"minutes", minutes:minutes};
+    }
+
+    /**
+     * Parse `<action> [duration] <reason>` after the target. A mute without a duration uses
+     * the 10-minute default; a ban needs a duration or an explicit `perm`, so a forgotten
+     * duration can never become a permanent ban. A non-duration token starts the reason.
+     */
+    public static function parseModerationAction(actionWord:String, rest:String):
+            {action:String, minutes:Int, permanent:Bool, reason:String, error:String} {
+        var verb:String = actionWord == null ? "" : StringTools.trim(actionWord).toLowerCase();
+        var tail:String = rest == null ? "" : StringTools.trim(rest);
+        var action:String = switch (verb) {
+            case "delete": "deleteMessage";
+            case "kick": "kickUser";
+            case "mute": "muteUser";
+            case "unmute": "unmuteUser";
+            case "ban": "banUser";
+            case "unban": "unbanUser";
+            default: "";
+        };
+        var result = {action:action, minutes:0, permanent:false, reason:tail, error:""};
+        if (action.length == 0) { result.error = "help"; return result; }
+        if (action == "muteUser" || action == "banUser") {
+            var split:Int = 0;
+            while (split < tail.length && !StringTools.isSpace(tail, split)) split++;
+            var duration = moderationDuration(tail.substr(0, split));
+            var afterDuration:String = StringTools.trim(tail.substr(split));
+            if (action == "muteUser") {
+                switch (duration.kind) {
+                    case "minutes": result.minutes = duration.minutes; result.reason = afterDuration;
+                    case "none": result.minutes = MOD_DEFAULT_MUTE_MINUTES;
+                    case "permanent": result.error = "Mutes cannot be permanent. Use ban perm instead.";
+                    default: result.error = "Mute duration must be 1 minute to 30 days, e.g. 30, 30m, 2h, 1d.";
+                }
+            } else {
+                switch (duration.kind) {
+                    case "minutes": result.minutes = duration.minutes; result.reason = afterDuration;
+                    case "permanent": result.permanent = true; result.reason = afterDuration;
+                    case "none": result.error = "Ban needs a duration (30m, 2h, 1d, 1w) or perm before the reason.";
+                    default: result.error = "Ban duration must be 1 minute to 30 days (30m, 2h, 1d, 1w) or perm.";
+                }
+            }
+            if (result.error.length > 0) return result;
+        }
+        if (StringTools.trim(result.reason).length == 0) result.error = "A moderation reason is required.";
+        return result;
+    }
+
+    public static function moderationHelp():String {
+        return "HUD MODERATION\n"
+            + "Use an exact visible name (quote names with spaces), or [#XXXXXXXX]:\n"
+            + "/mod Alice mute [duration] <reason>  (default 10m)\n"
+            + "/mod Alice ban <duration|perm> <reason>\n"
+            + "/mod \"Alice Smith\" kick <reason>\n"
+            + "/mod #ref delete <reason>\n"
+            + "/mod Alice unmute <reason> | /mod Alice unban <reason>\n"
+            + "Durations: 30 or 30m, 2h, 1d, 1w (max 30d). perm = permanent ban.\n"
+            + "Unban/unmute also accept an exact account name with no visible message.\n"
+            + "Server messages cannot be deleted. Slow mode is not available.";
+    }
+
+    /**
+     * Short visible reference for a message ID. Persisted rows use the UUID prefix; Server
+     * rows (`server:r:<room>:<seq>`) share a long common prefix, so they use `s` plus the
+     * last seven sequence characters (never hex, so never confused with a UUID prefix).
+     */
+    public static function moderationReference(messageId:String):String {
+        if (messageId == null || messageId.length == 0) return "";
+        var id:String = messageId.toLowerCase();
+        if (StringTools.startsWith(id, "server:")) {
+            var tail:String = id.substr(id.lastIndexOf(":") + 1);
+            var clean:String = "";
+            for (i in 0...tail.length) {
+                var c:Int = tail.charCodeAt(i);
+                if ((c >= "0".code && c <= "9".code) || (c >= "a".code && c <= "z".code)) clean += tail.charAt(i);
+            }
+            if (clean.length == 0) return "";
+            while (clean.length < 7) clean = "0" + clean;
+            return "s" + clean.substr(clean.length - 7);
+        }
+        return id.length >= 8 ? id.substr(0, 8) : "";
+    }
+
+    /** True for an FCM account UUID (the only target ID the relay accepts). */
+    public static function isAccountId(value:String):Bool {
+        return value != null && ~/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.match(value);
+    }
+
+    /** `FCMMOD/1;` messageId carrier for durations, explicit permanence and by-name targets. */
+    public static function moderationEnvelope(minutes:Int, permanent:Bool, targetName:String):String {
+        var fields:Array<String> = [];
+        if (permanent) fields.push("p=1");
+        else if (minutes > 0) fields.push("d=" + minutes);
+        if (targetName != null && StringTools.trim(targetName).length > 0)
+            fields.push("n=" + StringTools.urlEncode(StringTools.trim(targetName)));
+        return fields.length == 0 ? "" : MOD_ENVELOPE_PREFIX + fields.join(";");
+    }
+
+    /** Message ID removed by a private `FCMDEL/1;m=<id>` relay event, or "" for other bodies. */
+    public static function deletedMessageId(body:String):String {
+        if (body == null || !StringTools.startsWith(body, MOD_DELETE_EVENT_PREFIX)) return "";
+        for (field in body.substr(MOD_DELETE_EVENT_PREFIX.length).split(";")) {
+            if (!StringTools.startsWith(field, "m=")) continue;
+            try {
+                var id:String = StringTools.urlDecode(field.substr(2));
+                return id.length > 0 && id.length <= 128 ? id : "";
+            } catch (_:Dynamic) {
+                return "";
+            }
+        }
+        return "";
+    }
+
+    /** Player-facing text for a relay or provider moderation failure; unknown codes stay generic. */
+    public static function moderationErrorText(code:String, message:String):String {
+        switch (code == null ? "" : code) {
+            case "permission_denied": return "Moderation denied. Your linked staff role may have changed.";
+            case "protected_target": return "Staff members cannot be moderated from the HUD. Use Discord.";
+            case "already_banned": return "That player is already banned. Unban first to change the ban.";
+            case "not_banned": return "That player has no active ban.";
+            case "target_not_found": return "No FCM player has that exact name.";
+            case "ambiguous_target": return "More than one FCM player has that name. Use [#XXXXXXXX] from a visible message.";
+            case "message_not_found": return "That message was not found or was already deleted.";
+            case "unsupported_target": return "Server messages are temporary and cannot be deleted. Kick, mute or ban the sender instead.";
+            case "invalid_duration":
+                return "Invalid duration" + (message != null && message.length > 0 ? ": " + message : ".");
+            case "moderation_unavailable": return "Moderation is temporarily unavailable. Try again shortly.";
+            case "unsupported_command", "unsupported", "not_supported":
+                return "Moderation is not supported by this chat provider.";
+            case "rate_limited": return "Too many moderation requests. Try again shortly.";
+            case "user_banned", "user_kicked": return "Chat session ended - reconnecting...";
+            default:
+        }
+        if (message != null && message.length > 0) return "Moderation failed: " + message;
+        if (code != null && code.length > 0) return "Moderation failed: " + code;
+        return "Moderation failed.";
+    }
+
     /** Stable key for the per-press navigation latch in the widget. */
     public static function actionKey(raw:String):String {
         return normalizeAction(raw);

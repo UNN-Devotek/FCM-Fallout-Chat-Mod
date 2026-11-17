@@ -936,7 +936,9 @@ if widget_src:
           "FCMChatWidget renders moderation controls only from relay permissions")
     check('function resolveModerationTarget' in widget_src
           and 'StringTools.trim(rec.user).toLowerCase()' in widget_src
-          and 'rec.messageId.substr(0, 8)' in widget_src
+          and 'FcmCommand.moderationReference(rec.messageId)' in widget_src
+          and 'function moderationIdentity' in widget_src
+          and 'rec.accountId' in widget_src
           and 'rec.senderUserId' in widget_src,
           "FCMChatWidget resolves visible names locally to immutable relay record IDs")
     check('tsHtml' not in widget_src

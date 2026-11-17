@@ -4,7 +4,21 @@ import { useOutletContext, Link } from 'react-router';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
 
-const ADMIN_ROLES = ['owner', 'admin'];
+/**
+ * Which per-user actions the signed-in staff role may use. Mirrors the
+ * backend route gates in backend/src/routes/users.ts so buttons are never
+ * shown for an action the server would refuse with 403:
+ *   mute / kick   moderator+
+ *   ban           admin+
+ *   unban / wipe / delete   owner only
+ */
+export function userActionPermissions(role: string | null | undefined): {
+  canBan: boolean; canUnban: boolean; canWipe: boolean; canDelete: boolean;
+} {
+  const r = (role || '').toLowerCase();
+  const isOwner = r === 'owner';
+  return { canBan: isOwner || r === 'admin', canUnban: isOwner, canWipe: isOwner, canDelete: isOwner };
+}
 
 interface User {
   id: string;
@@ -30,7 +44,7 @@ const MUTE_DURATIONS = [
 
 export default function Users() {
   const outletCtx = useOutletContext<{ user?: AuthUser }>() || {};
-  const isAdmin = ADMIN_ROLES.includes(outletCtx.user?.role || '');
+  const perms = userActionPermissions(outletCtx.user?.role);
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -229,7 +243,7 @@ export default function Users() {
                     >
                       KICK
                     </button>
-                    {isAdmin && (user.isBanned ? (
+                    {user.isBanned ? (perms.canUnban && (
                       <button
                         data-testid="unban-btn"
                         disabled={actionLoading}
@@ -239,7 +253,7 @@ export default function Users() {
                       >
                         UNBAN
                       </button>
-                    ) : (
+                    )) : (perms.canBan && (
                       <button
                         data-testid="ban-btn"
                         className="danger"
@@ -251,7 +265,7 @@ export default function Users() {
                         BAN
                       </button>
                     ))}
-                    {isAdmin && (
+                    {perms.canWipe && (
                       <button
                         data-testid="wipe-btn"
                         className="danger"
@@ -263,7 +277,7 @@ export default function Users() {
                         WIPE
                       </button>
                     )}
-                    {isAdmin && (
+                    {perms.canDelete && (
                       <button
                         data-testid="delete-btn"
                         className="danger"
@@ -312,7 +326,10 @@ export default function Users() {
       {banModal && (
         <div style={modalBackdrop} onClick={() => setBanModal(null)}>
           <div style={modalBox} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginBottom: '16px' }}>Ban {banModal.username}</h3>
+            <h3 style={{ marginBottom: '16px' }}>Permanently ban {banModal.username}</h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              The reason is stored as ban evidence. Use the Bans page for temporary bans or image evidence.
+            </p>
             <label>Reason (required)</label>
             <input value={banReason} onChange={(e) => setBanReason(e.target.value)} style={inputStyle} placeholder="Enter ban reason..." />
             {modalError && <div className="error-message" style={{ marginTop: '8px' }}>{modalError}</div>}

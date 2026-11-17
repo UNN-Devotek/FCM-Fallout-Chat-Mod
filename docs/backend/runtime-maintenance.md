@@ -125,6 +125,10 @@ effects. Finishing a response, disconnecting a client, returning `void`, or shif
 an array does not prove completion. Unknown callback completion or an unresolved promise causes
 a bounded failed drain rather than guessed success.
 
+The legacy Users-page unmute route retains one required bundle across the canonical
+moderation service and the spam-immunity write. If Redis discovery fails after the mute
+is cleared, shutdown retains that incomplete outcome and its restart fence.
+
 Required-effect disposition is recorded inside the retained lease, before it releases. The
 explicit audit funnel covers moderation/configuration changes, AutoMod evidence, chat names,
 cosmetics, device/admin changes, Discord embeds and native reports. Audit failures can preserve

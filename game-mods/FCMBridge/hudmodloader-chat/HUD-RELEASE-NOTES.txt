@@ -1,5 +1,21 @@
-FCM HUD 2.10.151 DEV test candidate
+FCM HUD 2.10.153 DEV test candidate
 ==============
+
+Staff moderation
+----------------
+For linked moderators and admins. /mod durations now accept 30, 30m, 2h, 1d or
+1w (up to 30 days). A ban needs a duration or the word perm; a ban without
+one, or with 0, is refused instead of becoming permanent. Mute without a
+duration lasts 10 minutes. Server-tab players can be muted, kicked and banned
+by name or [#S0000000] reference, and a player who posted in both General and
+Server is no longer reported as two matches. Server messages cannot be
+deleted. Unban and unmute accept an exact account name when the player has no
+visible message. Errors now say what happened, for example that staff cannot
+be moderated from the HUD. Messages deleted from the dashboard, Discord or
+another HUD disappear from this HUD too. Requires the matching backend update;
+native game acceptance remains pending. Staff on older HUD versions must update
+to issue permanent bans: the server now refuses a ban without an explicit
+duration or perm, and older versions send neither.
 
 Dev integration and stationary names
 -----------------------------------

@@ -78,6 +78,7 @@ const schemas = {
   muteUser: Joi.object({
     duration: Joi.number().integer().min(1).max(43200).required(), // minutes, max 30 days
     reason: Joi.string().min(1).max(500).required(),
+    category: Joi.string().max(40).optional(), // validated against REASON_CATEGORIES in the controller
   }),
 
   banUser: Joi.object({

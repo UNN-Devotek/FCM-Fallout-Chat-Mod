@@ -3,7 +3,8 @@ import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '.
  * REST controller for moderator actions (kick, mute, unmute, ban, unban,
  * evidence proxy). All routes gated upstream by requireDiscordRole(OWNER,
  * ADMIN, MODERATOR). Protected-target checks are enforced inside the
- * moderationActionsService (throws ProtectedTargetError → 409 here).
+ * moderationActionsService, which throws ModerationError with a stable code;
+ * handleModerationError maps it to an RFC 7807 Problem Details 4xx/503.
  */
 import { Request, Response, NextFunction } from 'express';
 import { pipeline } from 'node:stream/promises';
@@ -11,9 +12,10 @@ import prisma from '../config/prisma';
 import { DISPLAY_NAME_SELECT } from '../utils/userDisplayName';
 import { createError } from '../middleware/errorHandler';
 import {
-  kickUser, muteUser, unmuteUser, createBan, reverseBan, ProtectedTargetError,
+  kickUser, muteUser, unmuteUser, createBan, reverseBan,
   type NewBanEvidence, REASON_CATEGORIES,
 } from '../services/moderationActionsService';
+import { isModerationError, httpStatusForModerationError } from '../services/moderationErrors';
 import { uploadEvidence, downloadEvidence } from '../services/banEvidenceStorage';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,7 +35,7 @@ function requireString(s: any, label: string, max = 4000): asserts s is string {
  * auto-creates a discord-only User row if the admin has no game account.
  * API-key actor is rejected — these actions need to attribute to a real human.
  */
-async function actorUserId(req: Request): Promise<string> {
+export async function actorUserId(req: Request): Promise<string> {
   return runRequiredBundle('moderation', 'moderationActionsController:c6ee73eab82e', async () => {
   const a = (req as any).adminUser as { id: string; username?: string; displayName?: string } | undefined;
   if (!a?.id) throw createError(401, 'no admin session');
@@ -54,9 +56,18 @@ async function actorUserId(req: Request): Promise<string> {
 
   });
 }
-function handleProtected(err: unknown, next: NextFunction): boolean {
-  if (err instanceof ProtectedTargetError) {
-    next(createError(409, err.message));
+/**
+ * Map a ModerationError to Problem Details. The stable code is exposed as the
+ * `title` and in the `type` URI (…/errors/moderation/<code>) so clients can
+ * branch on it without parsing the human-readable `detail`.
+ */
+export function handleModerationError(err: unknown, next: NextFunction): boolean {
+  if (isModerationError(err)) {
+    next(createError(httpStatusForModerationError(err), err.message, {
+      type: `https://fo76chat.app/errors/moderation/${err.code}`,
+      title: err.code,
+      code: err.code,
+    }));
     return true;
   }
   return false;
@@ -105,7 +116,7 @@ export async function kickUserHandler(req: Request, res: Response, next: NextFun
     const r = (reason as string).slice(0, 300);
     const result = await kickUser(userId, await actorUserId(req), r);
     res.json({ data: { kicked: true, until: result.until.toISOString(), disconnected: result.disconnected } });
-  } catch (err) { if (!handleProtected(err, next)) next(err); }
+  } catch (err) { if (!handleModerationError(err, next)) next(err); }
 }
 
 // ── POST /api/moderation/mutes  { userId, durationHours, category, reason, durationMinutes? } ─
@@ -127,7 +138,7 @@ export async function muteUserHandler(req: Request, res: Response, next: NextFun
       capped: minutes > cappedMin,
       maxMinutes: MAX_MUTE_DAYS * 24 * 60,
     } });
-  } catch (err) { if (!handleProtected(err, next)) next(err); }
+  } catch (err) { if (!handleModerationError(err, next)) next(err); }
 }
 
 // ── DELETE /api/moderation/mutes/:userId  ?reason=... ─────────────────────────
@@ -141,7 +152,7 @@ export async function unmuteUserHandler(req: Request, res: Response, next: NextF
     const reason = typeof rawReason === 'string' ? rawReason : '';
     await unmuteUser(req.params.userId, await actorUserId(req), reason.slice(0, 300));
     res.json({ data: { unmuted: true } });
-  } catch (err) { next(err); }
+  } catch (err) { if (!handleModerationError(err, next)) next(err); }
 }
 
 // ── POST /api/moderation/bans (multipart) ────────────────────────────────────
@@ -185,6 +196,7 @@ export async function createBanHandler(req: Request, res: Response, next: NextFu
       bannedUntil: bannedUntil?.toISOString() ?? null,
       disconnected: result.disconnected,
       evidenceCount: evidence.length,
+      identitiesDenyListed: result.identitiesDenyListed,
       discordLockdown: {
         rolesStripped: result.discordLockdown.stripped.length,
         voiceDisconnected: result.discordLockdown.voiceDisconnected,
@@ -192,7 +204,7 @@ export async function createBanHandler(req: Request, res: Response, next: NextFu
         warnings: result.discordLockdown.warnings,
       },
     } });
-  } catch (err) { if (!handleProtected(err, next)) next(err); }
+  } catch (err) { if (!handleModerationError(err, next)) next(err); }
 }
 
 // ── GET /api/moderation/bans ─────────────────────────────────────────────────
@@ -250,7 +262,7 @@ export async function reverseBanHandler(req: Request, res: Response, next: NextF
     requireString(reason, 'reason', 500);
     await reverseBan(req.params.id, await actorUserId(req), reason);
     res.json({ data: { reversed: true } });
-  } catch (err) { next(err); }
+  } catch (err) { if (!handleModerationError(err, next)) next(err); }
 }
 
 // ── GET /api/moderation/bans/:id/evidence/:fileId — image stream proxy ───────

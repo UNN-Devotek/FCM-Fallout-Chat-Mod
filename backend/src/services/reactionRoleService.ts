@@ -11,9 +11,11 @@ import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredEffect, runRequire
  *
  * Attached to the shared discord.js client via register() — no second login.
  */
-import { Client, type MessageReaction, type User, type PartialMessageReaction, type PartialUser, type Message } from 'discord.js';
+import { Client, PermissionFlagsBits, type Guild, type MessageReaction, type User, type PartialMessageReaction, type PartialUser, type Message } from 'discord.js';
+import env from '../config/environment';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { checkPostingStanding } from './chatPostingGate';
 
 export interface ReactionRoleInput {
   /** Unicode char (🎮) or custom emoji in <:name:id> / name:id form.
@@ -49,6 +51,102 @@ export class ReactionRolePanelError extends Error {
     this.name = 'ReactionRolePanelError';
     this.causeClass = cause instanceof Error ? cause.constructor.name : 'UnknownError';
   }
+}
+
+/** A requested panel role that must never be self-assignable. */
+export class ReactionRoleNotAllowedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReactionRoleNotAllowedError';
+  }
+}
+
+/** Permissions that make a role a staff/moderation role regardless of its name. */
+export const DANGEROUS_REACTION_ROLE_PERMISSIONS: ReadonlyArray<readonly [string, bigint]> = [
+  ['Administrator', PermissionFlagsBits.Administrator],
+  ['Manage Server', PermissionFlagsBits.ManageGuild],
+  ['Manage Roles', PermissionFlagsBits.ManageRoles],
+  ['Ban Members', PermissionFlagsBits.BanMembers],
+  ['Kick Members', PermissionFlagsBits.KickMembers],
+  ['Timeout Members', PermissionFlagsBits.ModerateMembers],
+  ['Manage Messages', PermissionFlagsBits.ManageMessages],
+  ['Manage Channels', PermissionFlagsBits.ManageChannels],
+];
+
+/**
+ * Configured staff, access-gate and paid-entitlement roles. Each one gates a
+ * capability (moderation, developer/QA access, supporter perks), so a
+ * reaction panel must never hand it out.
+ */
+export function protectedReactionRoleIds(): Set<string> {
+  return new Set([
+    env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID,
+    env.DEVELOPER_ROLE_ID, env.PROD_DEVELOPER_ROLE_ID, env.DEV_DEVELOPER_ROLE_ID, env.DEV_QA_ROLE_ID,
+    env.SUPPORT_ROLE_ID, env.SUPPORTER_ROLE_ID, env.OVERSEER_CIRCLE_ROLE_ID,
+  ].filter((id): id is string => typeof id === 'string' && id.length > 0));
+}
+
+export interface ReactionRoleLike {
+  id: string;
+  name: string;
+  position: number;
+  managed?: boolean;
+  permissions: { has(permission: bigint, checkAdmin?: boolean): boolean };
+}
+
+/** Pure policy: why `role` may not be offered on a reaction panel, or null when it may. */
+export function reactionRoleRefusal(
+  role: ReactionRoleLike | null | undefined,
+  ctx: { guildId: string; protectedRoleIds: ReadonlySet<string>; actorHighestPosition?: number | null },
+): string | null {
+  if (!role) return 'One of the selected roles no longer exists.';
+  const label = `The role "${role.name}"`;
+  if (role.id === ctx.guildId || role.managed) return `${label} is managed by Discord or an integration and cannot be self-assigned.`;
+  if (ctx.protectedRoleIds.has(role.id)) return `${label} is a configured staff, access or supporter role and cannot be offered on a reaction panel.`;
+  const dangerous = DANGEROUS_REACTION_ROLE_PERMISSIONS.filter(([, bit]) => role.permissions.has(bit, true)).map(([name]) => name);
+  if (dangerous.length > 0) return `${label} grants moderation permissions (${dangerous.join(', ')}) and cannot be offered on a reaction panel.`;
+  if (ctx.actorHighestPosition != null && role.position >= ctx.actorHighestPosition) {
+    return `${label} is at or above your highest Discord role and cannot be offered on a reaction panel.`;
+  }
+  return null;
+}
+
+/**
+ * Check every requested role against the policy. `actorDiscordId` adds the
+ * hierarchy rule for the moderator creating the panel; the guild owner has no
+ * ceiling. Returns the first refusal, or null.
+ */
+export async function checkPanelRoles(guild: Guild, roleIds: string[], actorDiscordId?: string | null): Promise<string | null> {
+  let actorHighestPosition: number | null = null;
+  if (actorDiscordId && guild.ownerId !== actorDiscordId) {
+    const member = await guild.members.fetch(actorDiscordId).catch(() => null);
+    if (!member) return 'Your Discord account is not a member of this server, so reaction roles cannot be checked against your roles.';
+    actorHighestPosition = member.roles.highest.position;
+  }
+  const protectedRoleIds = protectedReactionRoleIds();
+  for (const roleId of new Set(roleIds)) {
+    const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
+    const refusal = reactionRoleRefusal(role, { guildId: guild.id, protectedRoleIds, actorHighestPosition });
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+/**
+ * Pre-post validation for a new panel in `channelId`, run before the embed is
+ * posted so a refused role never leaves an orphan message. Throws
+ * ReactionRoleNotAllowedError with a user-facing reason.
+ */
+export async function assertPanelRolesAllowed(channelId: string, roleIds: string[], actorUserId?: string | null): Promise<void> {
+  if (roleIds.length === 0) return;
+  const channel = await clientRef?.channels.fetch(channelId).catch(() => null);
+  const guild = channel && 'guild' in channel ? (channel.guild as Guild | undefined) : undefined;
+  if (!guild) throw new ReactionRoleNotAllowedError('Reaction roles can only be added in a server channel the bot can see.');
+  const actor = actorUserId
+    ? await prisma.user.findUnique({ where: { id: actorUserId }, select: { discordId: true } }).catch(() => null)
+    : null;
+  const refusal = await checkPanelRoles(guild, roleIds, actor?.discordId ?? null);
+  if (refusal) throw new ReactionRoleNotAllowedError(refusal);
 }
 
 const CUSTOM_RE = /^<a?:(\w+):(\d+)>$|^(\w+):(\d+)$/;
@@ -111,6 +209,11 @@ export async function createPanel(message: Message, mappings: ReactionRoleMappin
   return runRequiredBundle('moderation', 'reactionRoleService:abd2039cd3f6', async () => {
   if (!message.guildId) throw new Error('Reaction-role panels must be in a guild channel');
   if (mappings.length === 0) throw new ReactionRolePanelError(new TypeError('No reaction mappings'));
+  // Defense in depth for callers that skip the pre-post check: never persist a
+  // panel that offers a staff, gated or moderation-permission role.
+  if (!message.guild) throw new ReactionRolePanelError(new ReactionRoleNotAllowedError('Reaction-role panels must be in a guild channel'));
+  const refusal = await checkPanelRoles(message.guild, mappings.map((m) => m.roleId));
+  if (refusal) throw new ReactionRolePanelError(new ReactionRoleNotAllowedError(refusal));
   const record: PanelRecord = { channelId: message.channelId, guildId: message.guildId, mappings };
 
   await runRequiredMutation('moderation', '9da83c19ca6a688270e702a7', { stage: 'primary-write-unconfirmed', channelId: record.channelId }, () => prisma.reactionRolePanel.upsert({
@@ -197,6 +300,26 @@ async function resolveFull(reaction: MessageReaction | PartialMessageReaction, u
   }
 }
 
+// Reactions the bot itself removed after refusing a claim. Discord echoes that
+// removal as messageReactionRemove; it must not strip a role the member
+// already held (e.g. a supporter clicking a refused panel entry).
+const BOT_REMOVAL_TTL_MS = 60_000;
+const botRemovedReactions = new Map<string, number>();
+function botRemovalKey(messageId: string, userId: string, matchKey: string): string {
+  return `${messageId}:${userId}:${matchKey}`;
+}
+/** True (once) when this removal was the bot undoing a refused claim. */
+export function consumeBotReactionRemoval(messageId: string, userId: string, matchKey: string, now = Date.now()): boolean {
+  for (const [k, at] of botRemovedReactions) if (now - at > BOT_REMOVAL_TTL_MS) botRemovedReactions.delete(k);
+  const key = botRemovalKey(messageId, userId, matchKey);
+  if (!botRemovedReactions.has(key)) return false;
+  botRemovedReactions.delete(key);
+  return true;
+}
+export function noteBotReactionRemoval(messageId: string, userId: string, matchKey: string, now = Date.now()): void {
+  botRemovedReactions.set(botRemovalKey(messageId, userId, matchKey), now);
+}
+
 async function onAdd(reaction: MessageReaction | PartialMessageReaction, user: User | PartialUser): Promise<void> {
   if (user.bot) return;
   const panel = await getPanel(reaction.message.id);
@@ -207,12 +330,34 @@ async function onAdd(reaction: MessageReaction | PartialMessageReaction, user: U
   if (!mapping) return;
   try {
     const guild = await clientRef!.guilds.fetch(panel.guildId);
+    // Click-time policy: panels created before the role policy existed, or
+    // whose role gained permissions later, must still not grant staff roles;
+    // and an FCM-banned player must not reclaim roles stripped by the ban.
+    const refusal = await reactionClaimRefusal(guild, mapping.roleId, resolved.u.id);
+    if (refusal) {
+      logger.warn({ userId: resolved.u.id, roleId: mapping.roleId, refusal }, 'reaction-role: claim refused');
+      noteBotReactionRemoval(reaction.message.id, resolved.u.id, mapping.matchKey);
+      await resolved.r.users.remove(resolved.u.id).catch(() => undefined);
+      return;
+    }
     const member = await guild.members.fetch(resolved.u.id);
     await member.roles.add(mapping.roleId, 'Reaction role');
     logger.info({ userId: resolved.u.id, roleId: mapping.roleId }, 'reaction-role: granted role');
   } catch (err) {
     logger.warn({ err, roleId: mapping.roleId }, 'reaction-role: failed to grant role (check Manage Roles + hierarchy)');
   }
+}
+
+/** Why a member's reaction may not grant `roleId` right now, or null. */
+export async function reactionClaimRefusal(guild: Guild, roleId: string, discordUserId: string): Promise<string | null> {
+  const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
+  const roleRefusal = reactionRoleRefusal(role, { guildId: guild.id, protectedRoleIds: protectedReactionRoleIds() });
+  if (roleRefusal) return roleRefusal;
+  const standing = await checkPostingStanding({ discordId: discordUserId });
+  // Bans block claims; a failed lookup also fails closed. Mutes and kick
+  // cooldowns restrict chat only, not cosmetic/notification roles.
+  if (standing && (standing.reason === 'banned' || standing.reason === 'unavailable')) return `FCM standing: ${standing.reason}`;
+  return null;
 }
 
 async function onRemove(reaction: MessageReaction | PartialMessageReaction, user: User | PartialUser): Promise<void> {
@@ -223,8 +368,15 @@ async function onRemove(reaction: MessageReaction | PartialMessageReaction, user
   if (!resolved) return;
   const mapping = panel.mappings.find((m) => m.matchKey === emojiKey(resolved.r));
   if (!mapping) return;
+  if (consumeBotReactionRemoval(reaction.message.id, resolved.u.id, mapping.matchKey)) return;
   try {
     const guild = await clientRef!.guilds.fetch(panel.guildId);
+    // A panel never manages a protected/staff role, in either direction.
+    const role = guild.roles.cache.get(mapping.roleId) ?? await guild.roles.fetch(mapping.roleId).catch(() => null);
+    if (reactionRoleRefusal(role, { guildId: guild.id, protectedRoleIds: protectedReactionRoleIds() })) {
+      logger.warn({ userId: resolved.u.id, roleId: mapping.roleId }, 'reaction-role: refusing to remove a protected role');
+      return;
+    }
     const member = await guild.members.fetch(resolved.u.id);
     await member.roles.remove(mapping.roleId, 'Reaction role removed');
     logger.info({ userId: resolved.u.id, roleId: mapping.roleId }, 'reaction-role: removed role');
@@ -256,5 +408,9 @@ export function register(client: Client): void {
   logger.info('reaction-role: service registered');
 }
 
-export default { register, createPanel, listPanels, deletePanel, buildMappings, parseEmoji };
-module.exports = { register, createPanel, listPanels, deletePanel, buildMappings, parseEmoji, ReactionRolePanelError };
+export default { register, createPanel, listPanels, deletePanel, buildMappings, parseEmoji, assertPanelRolesAllowed };
+module.exports = {
+  register, createPanel, listPanels, deletePanel, buildMappings, parseEmoji, assertPanelRolesAllowed,
+  checkPanelRoles, reactionRoleRefusal, reactionClaimRefusal, protectedReactionRoleIds,
+  DANGEROUS_REACTION_ROLE_PERMISSIONS, ReactionRolePanelError, ReactionRoleNotAllowedError,
+};

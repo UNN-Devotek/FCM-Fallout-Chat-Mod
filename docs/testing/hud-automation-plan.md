@@ -15,6 +15,25 @@ generation, diagnostics and teardown assertions. The temporary delay was removed
 Full final-source regression results are recorded in the
 [release assessment](../deployment/hud-bridge-release-readiness-20261103.md).
 
+## Staff moderation candidate (HUD 2.10.153)
+
+The `moderation` harness scenario runs on both providers
+(`?mode=harness&provider=zfe|xscal&scenario=moderation`) and drives the real
+`handleModerationCommand`, provider adapter and event parser. It asserts: `ban 0`, `ban` without
+a duration and `mute 5x` are refused locally with no relay call; `ban 1d` sends 1440 minutes both
+as `durationMinutes` and in the ZFE-safe `FCMMOD/1;d=1440` `messageId` carrier; `ban perm` is
+explicit (`FCMMOD/1;p=1`); a Server row decoded from an `FCMHUD/1;...;a=<account>` carrier
+targets the account, and the same player's General and Server rows are not ambiguous; the
+`[#S0004242]` Server reference resolves; Server deletes are refused locally; scripted
+`protected_target` and unknown relay codes map to their text; a provider without
+`moderationAction` reports that it is unsupported; by-name `unban` sends `FCMMOD/1;n=...`; and a
+private `FCMDEL/1;m=<id>` system event removes the row without raising the link gate. The parser
+cases themselves are pure Haxe tests in `TestFcmCommand.hx` (`haxe test-command.hxml`).
+
+Game-only, pending in-game capture: whether native ZFE and xScal forward the `FCMMOD/1;`
+`messageId` unchanged, whether ZFE answers `moderationAction` synchronously or with a queued
+request ID (both paths are implemented), and native delivery of the `FCMDEL/1;` event.
+
 ## Local input caret candidate
 
 The 2.10.152 native xScal candidate consumes optional UTF-16 `caretIndex` metadata

@@ -6,9 +6,9 @@ const { createRequire } = require('node:module');
 const br = createRequire(path.join(__dirname, '../../package.json')), parser = br('@babel/parser'), esbuild = br('esbuild');
 const userId = '11111111-1111-1111-1111-111111111111', partyId = '22222222-2222-2222-2222-222222222222';
 const cases = [
-  ['ban', 'healthy', false], ['ban', 'redis-discovery', true], ['ban', 'row-discovery', true],
-  ['ban', 'redis-delete', true], ['ban', 'db-delete', true], ['ban', 'audit', true],
-  ['ban', 'invalid-id', false], ['ban', 'primary-refusal', false], ['ban', 'held', false],
+  ['wipe', 'healthy', false], ['wipe', 'redis-discovery', true], ['wipe', 'row-discovery', true],
+  ['wipe', 'redis-delete', true], ['wipe', 'db-delete', true], ['wipe', 'audit', true],
+  ['wipe', 'invalid-id', false], ['wipe', 'primary-unknown', true], ['wipe', 'held', false],
   ['unmute', 'healthy', false], ['unmute', 'redis-discovery', true], ['unmute', 'redis-set', true], ['unmute', 'audit', true], ['unmute', 'primary-refusal', false],
   ['party', 'last', false], ['party', 'count', true], ['party', 'owner', false], ['party', 'owner-discovery', true], ['party', 'owner-fallback', true],
   ['party', 'absent', false], ['party', 'optional-notify', false], ['party', 'audit', true],
@@ -64,7 +64,7 @@ async function execute(root, spec) {
   const state = { primary: false, sessions: 1, cache: 1, audits: 0, immunity: false, member: true, partyDeleted: false, owner: 'old', identity: true, publication: 0, nameCopied: false };
   const calls = [], forwarded = [], logs = []; let release, checkpoint;
   const fault = () => Object.assign(new Error('synthetic-token synthetic-secret raw-query synthetic chat'), { code: spec.mode === 'primary-refusal' ? 'P2025' : 'ECONNRESET', token: 'synthetic-token' });
-  const fail = stage => { calls.push(stage); if (spec.mode === stage) throw fault(); };
+  const fail = stage => { calls.push(stage); if (spec.mode === stage || (spec.mode === 'primary-unknown' && stage === 'primary-refusal')) throw fault(); };
   const logger = Object.fromEntries(['info', 'warn', 'error', 'debug'].map(level => [level, (...args) => { logs.push(level); }]));
   const prisma = {
     user: { update: async () => { fail('primary-refusal'); state.primary = true; state.identity = false; return { id: userId }; }, findUnique: async () => ({ id: userId, discordId: spec.mode === 'absent' ? null : spec.group === 'steam' ? (spec.mode === 'remaining-provider' ? '100000000000000001' : null) : '100000000000000001', steamId: spec.mode === 'absent' ? null : '76561198000000000', installToken: 'synthetic-token' }) },
@@ -76,6 +76,7 @@ async function execute(root, spec) {
     hudPairingToken: { updateMany: async () => { state.primary = true; return { count: 1 }; }, findFirst: async () => { fail('discovery'); return spec.mode === 'absent' ? null : { fo76Name: 'synthetic chat', linkedUserId: userId }; } },
     nameBlacklistEntry: { create: async () => { state.primary = true; return { id: userId }; } },
   };
+  prisma.$executeRaw = async () => { fail('primary-refusal'); state.primary = true; return 1; };
   const redis = { del: async () => { fail('cache-delete'); fail('redis-delete'); state.cache = 0; return 1; }, set: async () => { fail('redis-set'); state.immunity = true; state.primary = true; return 'OK'; }, publish: async () => { state.publication++; return 1; }, incr: async () => { state.primary = true; return 1; } };
   let acquisition = 0;
   const getRedisClient = async () => {
@@ -96,8 +97,14 @@ async function execute(root, spec) {
   common.validateUuid = modules.selected('controllers/usersController', 'validateUuid', common);
   const fn = (file, name, bindings = {}) => modules.selected(file, name, { ...common, ...bindings });
   let handler;
-  if (spec.group === 'ban') handler = fn('controllers/usersController', 'banUser');
-  else if (spec.group === 'unmute') { const immunity = fn('services/autoModService', 'setSpamImmunity', { SPAM_IMMUNITY_TTL_SECONDS: 3600 }); handler = fn('controllers/usersController', 'unmuteUser', { setSpamImmunity: immunity, autoModService_1: { setSpamImmunity: immunity } }); }
+  // Session cleanup now belongs to account wipe; bans delegate to the canonical moderation service.
+  if (spec.group === 'wipe') handler = fn('controllers/usersController', 'wipeUser');
+  else if (spec.group === 'unmute') {
+    const audit = fn('services/moderationActionsService', 'audit');
+    const unmute = fn('services/moderationActionsService', 'unmuteUser', { audit, markClientMuted: () => {}, handlers_1: { markClientMuted: () => {} }, clearDiscordTimeout: async () => {}, displayNameOf: async () => '', postModAlert: async () => {}, discordService_1: { postModAlert: async () => {} } });
+    const legacyActor = fn('controllers/usersController', 'legacyActor', { actorUserId: async () => userId, moderationActionsController_1: { actorUserId: async () => userId } });
+    const moderation = { unmuteUser: unmute };
+    const immunity = fn('services/autoModService', 'setSpamImmunity', { SPAM_IMMUNITY_TTL_SECONDS: 3600 }); handler = fn('controllers/usersController', 'unmuteUser', { legacyActor, moderationUnmuteUser: unmute, moderationActionsService_1: moderation, handleModerationError: () => false, moderationActionsController_1: { handleModerationError: () => false }, setSpamImmunity: immunity, autoModService_1: { setSpamImmunity: immunity } }); }
   else if (spec.group === 'party') {
     const notifyBindings = { importHandlers: () => ({ broadcastToPartyMembers: async () => {} }), resolveOnlineCheck: () => () => false };
     handler = fn('controllers/partiesController', 'leaveParty', { emitMemberUpdate: fn('controllers/partiesController', 'emitMemberUpdate', notifyBindings), emitPartyDeleted: fn('controllers/partiesController', 'emitPartyDeleted', notifyBindings) });

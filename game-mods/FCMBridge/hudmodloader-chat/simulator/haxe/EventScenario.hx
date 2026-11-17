@@ -23,7 +23,7 @@ class EventScenario {
                 check("main help links moderation guide without staff actions",
                     FcmCommand.hudHelp().indexOf("/mod help") >= 0
                     && FcmCommand.hudHelp().indexOf("/mod <name|#ref>") < 0
-                    && widget.moderationHelp().indexOf("/mod #ref ban") >= 0);
+                    && widget.moderationHelp().indexOf("ban <duration|perm>") >= 0);
                 check("guides are private individual records",
                     widget._records.length == before + hudLines.length + eventLines.length
                     && MockXscal.lastEventBody == "");

@@ -65,11 +65,28 @@ If none of the three role IDs match, the user is treated as `'user'`.
 
 Source files:
 - `backend/src/services/roleVerificationService.ts` — background sweep + cache management
-- `backend/src/services/userRoleService.ts` — `getEffectiveRole(userId)` + `isProtectedTarget(userId)` + `isPrivilegedRole(role)` used by WS handlers and REST mod endpoints
+- `backend/src/services/userRoleService.ts` — `getEffectiveRole(userId)` + `isProtectedTarget(userId)` + `isPrivilegedRole(role)` used by WS handlers and REST mod endpoints, and `resolveTargetProtection(userId)` (the fail-closed moderation check)
 
 ### Protected Targets
 
-`isProtectedTarget(userId)` returns true for `moderator`, `admin`, and `owner`. All mod actions (`kickUser`, `muteUser`, `createBan`) call `ensureNotProtected(targetId)` first and throw `ProtectedTargetError` if the target holds a protected role. This prevents staff members from being moderated via the REST API.
+All mod actions (`kickUser`, `muteUser`, `createBan`) call `ensureNotProtected(targetId)` first. It uses `resolveTargetProtection(userId)`, which treats the target as staff (`moderator`, `admin`, `owner`) when **any** source says so: the verified-role Redis cache, the `admin_users` row, or a staff Discord role on the member in the bot's in-memory guild member cache (covers staff who never signed in to the dashboard and so have no `admin_users` row; no Discord API call is made, so a member missing from the gateway cache is only covered by the other two sources). A staff target throws `ProtectedTargetError` (code `ProtectedTarget`, HTTP 409).
+
+The check **fails closed**: if the users/`admin_users` lookup fails, the action is refused with code `ProtectionCheckFailed` (HTTP 503) instead of treating the target as a normal user. `getEffectiveRole` keeps its fail-open `'user'` default for privilege grants elsewhere.
+
+### Stable error codes
+
+`backend/src/services/moderationErrors.ts` exports `ModerationError` (with `code`) and `httpStatusForModerationError`. REST controllers return RFC 7807 Problem Details with `title` = code and `type` = `https://fo76chat.app/errors/moderation/<code>`; the Discord `/moderate` command and relay handlers map the same codes.
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `ProtectedTarget` | 409 | Target holds a staff role (`ProtectedTargetError`, `name` kept for the WS/relay handlers) |
+| `ProtectionCheckFailed` | 503 | Staff-role lookup failed; action refused |
+| `TargetNotFound` | 404 | No `users` row for the target |
+| `AlreadyBanned` | 409 | Target already has an active ban; reverse it first |
+| `NotBanned` | 409 | By-user unban with no active ban |
+| `BanNotFound` | 404 | Ban id does not exist |
+| `BanAlreadyReversed` | 409 | Ban was already reversed |
+| `InvalidInput` | 400 | Missing kick reason or ban evidence |
 
 ## Moderation Actions
 
@@ -80,18 +97,19 @@ Core actions are implemented in `backend/src/services/moderationActionsService.t
 3. Mirrors to live WebSocket connections (`disconnectByUserId`, `markClientMuted`)
 4. Propagates to Discord where applicable (timeouts, role stripping, guild ban)
 5. Writes an `audit_logs` row
-6. Posts a public system message into the General channel announcing the action
-7. Posts a mod-log embed to Discord (#vault-security channel via `postModAlert`)
+6. Posts a staff-only mod-log embed to Discord (#vault-security channel via `postModAlert`); no public chat message
 
 **Kick** — 5-minute `kicked_until` cooldown. Sends `user:kicked` WS event before disconnecting with close code 4002.
 
 **Mute** — Minimum 60 seconds, maximum 30 days. Optionally propagates as a Discord timeout (up to 28-day API ceiling). `skipDiscord=true` used by `MUTE_OVERLAY` auto-mod action. Calls `markClientMuted()` to update live WS client state.
 
-**Ban** — Requires at least one piece of evidence. Applies Discord lockdown: strips all manageable roles (below bot's highest), disconnects from voice, and for permanent bans applies a guild-level Discord ban. Strips roles are saved in `users.saved_discord_roles` for restoration on unban. Permanent bans also revoke the user's device keypair(s) in the `devices` table.
+**Ban** — Requires at least one piece of evidence. A target with an active ban (unreversed and permanent or not yet expired) is refused with `AlreadyBanned`. Applies Discord lockdown: strips all manageable roles (below bot's highest) and disconnects from voice. Only **permanent** bans apply a guild-level Discord ban; temporary bans (including Discord `/moderate ban` with a duration) never guild-ban, so the member stays in the guild and the expiry sweep can restore the roles. Stripped roles are saved in `users.saved_discord_roles`; a non-empty snapshot is never replaced by an empty one. Permanent bans also revoke the user's device keypair(s) in the `devices` table and deny-list the account's Discord, Steam and Nexus identities in `banned_identities`.
 
-**Reverse Ban** — Clears `users.is_banned` flags, restores saved Discord roles, and lifts the guild ban if one was applied.
+**Reverse Ban** — Marks the ban row reversed (atomic; a second reversal is `BanAlreadyReversed`). The user's flags are cleared, saved Discord roles restored and the guild ban lifted **only** when the reversed ban was still active and no other active ban remains for that user — reversing an old, expired or superseded ban never lifts a current one. Reversing a permanent ban removes the deny-listed identities when no other unreversed permanent ban remains.
 
-**Sweep** — `sweepExpired()` runs via node-cron every 5 minutes. It clears expired temp bans and mutes, restores Discord roles/timeouts, and clears `kicked_until` entries.
+**Sweep** — `sweepExpired()` runs via node-cron every 5 minutes (`server.ts`). It clears expired temp bans and mutes, restores Discord roles/timeouts, and clears `kicked_until` entries. Expired temp bans that were cleared lazily by the auth, link or WebSocket reconnect paths (flags reset, role snapshot left behind) also have their roles restored when the ban expired within the last 7 days; older leftover snapshots are dropped without re-granting roles.
+
+**Legacy per-user routes** — `POST/DELETE /api/users/:id/mute`, `POST /api/users/:id/kick`, `POST /api/users/:id/ban` (permanent, reason stored as text evidence) and `DELETE /api/users/:id/ban` (reverses the user's active ban rows) call the same service functions, so they get the protected-target check, `bans`/evidence rows, audit + mod-log, live socket and relay eviction, and Discord propagation. The dashboard Users page shows Ban to admins and owners and Unban/Wipe/Delete to owners only, matching the route gates.
 
 ## Content Moderation
 

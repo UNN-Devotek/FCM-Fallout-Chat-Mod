@@ -555,6 +555,7 @@ async function sendDiscordEmbed(req: Request, res: Response, next: NextFunction)
     // hides actionable causes like a missing channel permission). Map known
     // Discord/bot failures to 4xx with a helpful message that passes through.
     const raw = e instanceof Error ? e.message : 'Failed to send embed to Discord';
+    if (e instanceof Error && e.name === 'ReactionRoleNotAllowedError') return next(createError(422, raw));
     const lower = raw.toLowerCase();
     if (lower.includes('missing permissions') || lower.includes('missing access')) {
       return next(createError(422,

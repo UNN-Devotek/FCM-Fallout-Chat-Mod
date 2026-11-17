@@ -22,6 +22,12 @@ test.each(cases)('%s retains its unconfirmed required effect instead of acknowle
     expect(evidence).not.toContain(secret);
   }
 });
+test('message deletion refuses success when its required audit fails', () => {
+  const result = results.find(item => item.label === 'moderation-message-audit');
+  expect(result.facts).toMatchObject({ primarySoftDeleteCommitted: true, auditRejected: true, actionReturnedSuccess: false });
+  expect(result.returned).toEqual({ acknowledged: false });
+});
+
 test('ordinary shared image caching preserves its documented source-URL fallback without a required failure', () => {
   const result = results.find(item => item.label === 'shared-image-put');
   expect(result.facts.putAttempted).toBe(true); expect(result.phase).toBe('drained'); expect(result.failures).toEqual([]);

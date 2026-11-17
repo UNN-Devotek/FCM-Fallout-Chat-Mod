@@ -28,7 +28,7 @@ async function execute(root,group,mode){
  const res={status(n){this.statusCode=n;return this},json(v){this.body=v;return this},send(v){this.body=v;return this},redirect(v){this.redirected=v;return this}};
  let action;
  if(group==='permanent-ban'){
-  prisma.ban={create:async()=>{fail('primary-refusal');state.primary=true;return{id:uid}}};
+  prisma.ban={findFirst:async()=>null,create:async()=>{fail('primary-refusal');state.primary=true;return{id:uid}}};
   prisma.user={update:async()=>{state.banned=true;return{id:uid}},findUnique:async({select})=>{if(select.installToken){fail('device-discovery');return{installToken:install}}return{discordId:null}}};
   prisma.device={updateMany:async()=>{fail('device-write');state.deviceRevoked=true;return{count:1}}};prisma.auditLog={create:async()=>{state.audits++;return{id:uid}}};
   prisma.hudPairingToken={updateMany:async()=>({count:0})};
@@ -36,7 +36,7 @@ async function execute(root,group,mode){
   const getRedisClient=async()=>{fail('eviction-discovery');return{publish:async()=>{fail('eviction-publication');state.notices++;return 1}}};
   const evict=fn('services/relay/relayHandler','evictRelayUser',{evictLocalRelayUser:()=>0,getRedisClient,redis_1:{getRedisClient},RELAY_CONTROL_CHANNEL:'fixture'});
   const evictRelaySessions=fn('services/moderationActionsService','evictRelaySessions',{require:()=>({evictRelayUser:evict})});
-  const notifyAndDisconnect=()=>0,postModAlert=async()=>{},extra={WS_CLOSE_BANNED:4002,ensureNotProtected:async()=>{},applyDiscordBanLockdown:async()=>({stripped:[],warnings:[],guildBanApplied:false}),notifyAndDisconnect,handlers_1:{notifyAndDisconnect},revokeTokensForLinkedUser:revoke,tokenService_1:{revokeTokensForLinkedUser:revoke},postModAlert,discordService_1:{postModAlert},displayNameOf:async()=>'',evictRelaySessions,audit:fn('services/moderationActionsService','audit')};
+  const notifyAndDisconnect=()=>0,postModAlert=async()=>{},extra={activeBanWhere:fn('services/moderationActionsService','activeBanWhere'),savedRolesOf:fn('services/moderationActionsService','savedRolesOf'),denyListIdentities:async()=>0,WS_CLOSE_BANNED:4002,ensureNotProtected:async()=>{},applyDiscordBanLockdown:async()=>({stripped:[],warnings:[],guildBanApplied:false}),notifyAndDisconnect,handlers_1:{notifyAndDisconnect},revokeTokensForLinkedUser:revoke,tokenService_1:{revokeTokensForLinkedUser:revoke},postModAlert,discordService_1:{postModAlert},displayNameOf:async()=>'',evictRelaySessions,audit:fn('services/moderationActionsService','audit')};
   const entry=fn('services/moderationActionsService','createBan',extra);action=()=>entry(uid,uid,'fixture','fixture',null,[{type:'text',textContent:'fixture'}]);
  }else if(group==='event'){
   const mirror={id:uid,announcementChannelId:'fixture-channel',announcementMessageId:null,fcmMessageId:null,sourceFingerprint:'fixture',finalInterestedCount:2};

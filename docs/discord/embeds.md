@@ -219,7 +219,11 @@ Declared in `backend/src/routes/moderation.ts:53-58`.
 ```
 
 When `reactionRoles` is provided (max 20 entries), the bot adds the configured
-reactions to the posted message and registers a reaction-role panel. See
+reactions to the posted message and registers a reaction-role panel. Before
+anything is posted, every role is checked against the reaction-role policy
+(no configured staff/access/supporter roles, no moderation permissions, nothing
+at or above the sender's highest Discord role); a refused role fails the send
+with a readable reason and no embed is posted. See
 [reaction-roles.md](./reaction-roles.md) for details.
 
 Response: `{ data: { sent: true, messageId: "<snowflake>", reactionRoles: <count> } }`

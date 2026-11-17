@@ -39,6 +39,7 @@ import { clientIp } from '../../utils/clientIp';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS, SLUG_TO_UUID } from './channelMap';
 import { repairChannel, repairBody, readWireDisplayName } from './wireSanitize';
+import { relayHistoryDisplayName } from './historyDisplayName';
 import { setWorldId, getWorldId } from './worldIdService';
 import { readRoster } from './worldRosterService';
 import { coordinateRooms, clearRoomMembership, observeNativeRoster, registerNativeRoomHooks } from './roomCoordinator';
@@ -49,7 +50,17 @@ import {
 import {
   rememberTokenClientVersionDurable,
   tokenSupportsHudCosmeticsTransportDurable,
+  tokenSupportsHudModerationEventsDurable,
 } from './clientCapabilityStore';
+import {
+  RELAY_MODERATION_ACTIONS,
+  deletedMessageIdFromBroadcast,
+  hudDeleteEventBody,
+  parseModerationEnvelope,
+  relayModerationError,
+  repairModerationFrame,
+  resolveModerationDuration,
+} from './hudModeration';
 import { ingestMessage } from '../ingestMessage';
 import { getCommands, tryHandleCommand } from '../commandService';
 import { hudGiveawayCommand, hudGiveawayFeedback } from './hudGiveawayCommand';
@@ -354,6 +365,11 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
  *   message_blocked     — rejected by automod (NOT a link/permission problem)
  *   slash_ignored       — an unsupported "/command" was typed in-game
  *   invalid_action      — unknown moderationAction action
+ *
+ * moderationAction codes (the widget maps each to its own text; unknown codes fall back
+ * to the server message):
+ *   protected_target, already_banned, not_banned, target_not_found, ambiguous_target,
+ *   message_not_found, invalid_duration, unsupported_target, moderation_unavailable
  */
 function errEnvelope(code: string, message: string, retryAfterMs?: number): Record<string, unknown> {
   return { success: false, error: { code, message, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
@@ -570,6 +586,8 @@ interface SubscriberState {
   cursor: number;
   worldId: string | null;
   supportsHudCosmeticsTransport: boolean;
+  /** Widget understands private FCMDEL/1 removal events (version-gated). */
+  supportsHudModerationEvents: boolean;
   // Keep live events out of the socket while the cursor-zero history snapshot is being built.
   // Without this barrier a live frame can arrive before older backfill rows, and the same event
   // is then replayed again by the initial-history loop (or displayed out of order by a native HUD).
@@ -720,6 +738,24 @@ async function pushNameplatePresenceLocal(userId: string, reply: NameplateReply)
   for (const sub of subscribers) if (sub.userId === userId)
     sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor);
   });
+}
+
+/**
+ * Tell capable native subscribers that a message was removed, wherever the delete happened
+ * (dashboard, Discord, MCP or another HUD). Older widgets are excluded by capability because
+ * they would treat the private system body as a link notice. Removal is idempotent in the widget.
+ */
+async function pushHudMessageDeletedLocal(messageId: string): Promise<void> {
+  const targets = [...subscribers].filter(sub => sub.supportsHudModerationEvents && sub.ws.readyState === 1);
+  if (targets.length === 0) return;
+  const cursor = await nextRelaySeq();
+  const event = { id: cursor, kind: 'chat.message', channel: 'system', messageId: uuidv4(),
+    senderUserId: 'system', senderDisplayName: 'FCM', targetUserId: '', createdAt: new Date().toISOString(),
+    body: hudDeleteEventBody(messageId) };
+  const frame = JSON.stringify({ op: 'event', cursor, event });
+  for (const sub of targets) {
+    if (subscribers.has(sub) && !sendSubscriberFrame(sub, frame, cursor)) subscribers.delete(sub);
+  }
 }
 
 async function allowNameplateRequest(userId: string): Promise<boolean> {
@@ -882,6 +918,19 @@ async function ensurePubSub(): Promise<void> {
         if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
         parsed = value as Record<string, unknown>;
       } catch { return; }
+
+      // Deletions have no direct local relay path (localBroadcast forwards only chat
+      // messages and scheduled-event edits), so every instance — including the
+      // publisher — delivers its own subscribers from this Redis echo exactly once.
+      const deletionEnvelope = (parsed.instanceId !== undefined && parsed.payload
+        && typeof parsed.payload === 'object' && !Array.isArray(parsed.payload))
+        ? parsed.payload as Record<string, unknown> : parsed;
+      const deletedMessageId = deletedMessageIdFromBroadcast(deletionEnvelope);
+      if (deletedMessageId) {
+        pushHudMessageDeletedLocal(deletedMessageId).catch(err =>
+          logger.warn({ err }, '[relayHandler] HUD deletion delivery failed'));
+        return;
+      }
 
       // The direct local path already delivered this event. Without this guard,
       // the same Redis publish would produce a second HUD event on this process.
@@ -1864,25 +1913,34 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   send(ws, { success: true, events: events.slice(0, max) });
 }
 
-const RELAY_MODERATION_ACTIONS = new Set([
-  'deleteMessage', 'kickUser', 'muteUser', 'unmuteUser', 'banUser', 'unbanUser', 'setSlowMode',
-]);
-
 function boundedReason(frame: Record<string, unknown>): string {
   return typeof frame.reason === 'string' ? frame.reason.trim().slice(0, 500) : '';
 }
 
-function positiveDurationMinutes(frame: Record<string, unknown>, fallback: number): number {
-  const raw = frame.durationMinutes ?? (
-    typeof frame.durationHours === 'number' ? frame.durationHours * 60 : undefined
-  );
-  if (raw === undefined) return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.min(value, 30 * 24 * 60) : 0;
+/** Public chat-name columns a staff member may type into `/mod <name> unban|unmute`. */
+const MODERATION_NAME_FIELDS = [
+  'chatName', 'username', 'steamDisplayName', 'discordDisplayName', 'discordUsername',
+  'fo76CharacterName', 'fo76AccountName',
+] as const;
+
+/**
+ * Exact, case-insensitive name lookup for targets that have no visible HUD row (a banned or
+ * muted player usually cannot post). Like the Discord typed-name fallback, it succeeds only
+ * when exactly one account matches; IDs are never accepted through this path.
+ */
+async function resolveModerationTargetByName(name: string): Promise<string | 'none' | 'ambiguous'> {
+  const matches = await prisma.user.findMany({
+    where: { OR: MODERATION_NAME_FIELDS.map(field => ({ [field]: { equals: name, mode: 'insensitive' } })) } as Prisma.UserWhereInput,
+    select: { id: true },
+    take: 2,
+  });
+  if (matches.length === 0) return 'none';
+  if (matches.length > 1) return 'ambiguous';
+  return matches[0].id;
 }
 
-async function handleModerationAction(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
-  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+async function handleModerationAction(ws: WebSocket, rawFrame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof rawFrame.token === 'string' ? rawFrame.token : null;
   if (!rawToken) {
     send(ws, errEnvelope('auth_token_invalid', 'token is required'));
     return;
@@ -1899,6 +1957,8 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
   }
   if (await rejectBlockedAccount(ws, identity.linkedUserId)) return;
 
+  // ZFE pads mod-supplied string values; repair only when the action proves it.
+  const frame = repairModerationFrame(rawFrame);
   const action = typeof frame.action === 'string' ? frame.action : '';
   if (!RELAY_MODERATION_ACTIONS.has(action)) {
     send(ws, errEnvelope('invalid_action', `Unsupported moderation action: ${action || '(missing)'}`));
@@ -1924,7 +1984,12 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
     return;
   }
 
-  const targetUserId = typeof frame.targetUserId === 'string' ? frame.targetUserId.trim() : '';
+  // Account-level actions do not use messageId; the widget mirrors its duration, explicit
+  // permanent flag or by-name target there because ZFE may drop newer JSON members.
+  const envelope = action === 'deleteMessage' ? null : parseModerationEnvelope(frame.messageId);
+  let targetUserId = typeof frame.targetUserId === 'string' ? frame.targetUserId.trim() : '';
+  const targetName = typeof frame.targetName === 'string' && frame.targetName.trim()
+    ? frame.targetName.trim().slice(0, 64) : (envelope?.targetName ?? '');
   const service = require('../moderationActionsService') as {
     kickUser: (targetId: string, actorId: string, reason: string) => Promise<unknown>;
     deleteMessageById: (messageId: string, actorId: string, reason?: string) => Promise<void>;
@@ -1932,18 +1997,36 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
     unmuteUser: (targetId: string, actorId: string, reason: string) => Promise<void>;
     createBan: (targetId: string, actorId: string, category: string, reason: string, bannedUntil: Date | null, evidence: Array<{ type: 'text'; textContent: string }>) => Promise<unknown>;
     reverseBan: (banId: string, actorId: string, reason: string) => Promise<void>;
+    unbanUser?: (targetId: string, actorId: string, reason: string) => Promise<unknown>;
     REASON_CATEGORIES?: readonly string[];
   };
 
   try {
     if (action === 'deleteMessage') {
       const messageId = typeof frame.messageId === 'string' ? frame.messageId.trim() : '';
+      if (messageId.startsWith('server:')) {
+        send(ws, errEnvelope('unsupported_target',
+          'Server messages are temporary and cannot be deleted; kick, mute or ban the sender instead'));
+        return;
+      }
       if (!UUID_RE.test(messageId)) {
         send(ws, errEnvelope('invalid_request', 'messageId must be a valid message UUID'));
         return;
       }
       await service.deleteMessageById(messageId, identity.linkedUserId, reason);
     } else {
+      if (!targetUserId && targetName && (action === 'unbanUser' || action === 'unmuteUser')) {
+        const resolved = await resolveModerationTargetByName(targetName);
+        if (resolved === 'none') {
+          send(ws, errEnvelope('target_not_found', 'No FCM player has that exact name'));
+          return;
+        }
+        if (resolved === 'ambiguous') {
+          send(ws, errEnvelope('ambiguous_target', 'More than one FCM player has that name'));
+          return;
+        }
+        targetUserId = resolved;
+      }
       if (!UUID_RE.test(targetUserId)) {
         send(ws, errEnvelope('invalid_request', 'targetUserId must be a valid user UUID'));
         return;
@@ -1951,10 +2034,10 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
 
       if (action === 'kickUser') {
         await service.kickUser(targetUserId, identity.linkedUserId, reason);
-      } else if (action === 'muteUser') {
-        const minutes = positiveDurationMinutes(frame, 10);
-        if (!minutes) {
-          send(ws, errEnvelope('invalid_request', 'durationMinutes must be a positive number'));
+      } else if (action === 'muteUser' || action === 'banUser') {
+        const duration = resolveModerationDuration(action, frame, envelope);
+        if (!duration.ok) {
+          send(ws, errEnvelope('invalid_duration', duration.message));
           return;
         }
         const category = typeof frame.category === 'string' ? frame.category.trim() : 'Other';
@@ -1962,45 +2045,42 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
           send(ws, errEnvelope('invalid_request', 'category is invalid'));
           return;
         }
-        await service.muteUser(targetUserId, identity.linkedUserId, minutes * 60_000, category, reason);
+        if (action === 'muteUser') {
+          await service.muteUser(targetUserId, identity.linkedUserId, duration.minutes! * 60_000, category, reason);
+        } else {
+          const bannedUntil = duration.minutes === null ? null : new Date(Date.now() + duration.minutes * 60_000);
+          await service.createBan(
+            targetUserId,
+            identity.linkedUserId,
+            category,
+            reason,
+            bannedUntil,
+            [{ type: 'text', textContent: `In-game moderation action: ${reason}` }],
+          );
+        }
       } else if (action === 'unmuteUser') {
         await service.unmuteUser(targetUserId, identity.linkedUserId, reason);
-      } else if (action === 'banUser') {
-        const category = typeof frame.category === 'string' ? frame.category.trim() : 'Other';
-        if (service.REASON_CATEGORIES && !service.REASON_CATEGORIES.includes(category)) {
-          send(ws, errEnvelope('invalid_request', 'category is invalid'));
-          return;
-        }
-        const minutes = positiveDurationMinutes(frame, 0);
-        const bannedUntil = minutes > 0 ? new Date(Date.now() + minutes * 60_000) : null;
-        await service.createBan(
-          targetUserId,
-          identity.linkedUserId,
-          category,
-          reason,
-          bannedUntil,
-          [{ type: 'text', textContent: `In-game moderation action: ${reason}` }],
-        );
       } else if (action === 'unbanUser') {
-        const activeBan = await prisma.ban.findFirst({
-          where: { userId: targetUserId, reversedAt: null },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true },
-        });
-        if (!activeBan) {
-          send(ws, errEnvelope('invalid_request', 'No active ban found for targetUserId'));
-          return;
+        if (typeof service.unbanUser === 'function') {
+          await service.unbanUser(targetUserId, identity.linkedUserId, reason);
+        } else {
+          const activeBan = await prisma.ban.findFirst({
+            where: { userId: targetUserId, reversedAt: null },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+          });
+          if (!activeBan) {
+            send(ws, errEnvelope('not_banned', 'That player has no active ban'));
+            return;
+          }
+          await service.reverseBan(activeBan.id, identity.linkedUserId, reason);
         }
-        await service.reverseBan(activeBan.id, identity.linkedUserId, reason);
       }
     }
-  } catch (err: any) {
-    if (err?.name === 'ProtectedTargetError') {
-      send(ws, errEnvelope('permission_denied', 'Protected staff accounts must be moderated in Discord'));
-      return;
-    }
-    if (err?.message === 'Message not found' || err?.message === 'Ban not found' || err?.message === 'Ban already reversed') {
-      send(ws, errEnvelope('invalid_request', err.message));
+  } catch (err: unknown) {
+    const mapped = relayModerationError(err);
+    if (mapped) {
+      send(ws, errEnvelope(mapped.code, mapped.message));
       return;
     }
     throw err;
@@ -2030,7 +2110,12 @@ async function fetchHistoryEvents(
     source: string;
     channel_id: string;
     username: string;
+    chat_name?: string | null;
+    steam_display_name?: string | null;
+    fo76_character_name?: string | null;
     fo76_account_name: string | null;
+    discord_display_name?: string | null;
+    discord_username?: string | null;
     created_at: Date | string | null;
   }>;
 
@@ -2039,9 +2124,8 @@ async function fetchHistoryEvents(
       WITH ranked AS (
         SELECT m.id, m.relay_seq, m.content, m.user_id, m.source,
                m.channel_id, m.created_at,
-               CASE WHEN m.source = 'bot' THEN '[Vault-Tec]'
-                    ELSE COALESCE(u.fo76_account_name, u.discord_display_name, u.username) END AS username,
-               u.fo76_account_name,
+               u.username, u.chat_name, u.steam_display_name, u.fo76_character_name,
+               u.fo76_account_name, u.discord_display_name, u.discord_username,
                ROW_NUMBER() OVER (
                  PARTITION BY m.channel_id
                  ORDER BY m.relay_seq DESC
@@ -2057,7 +2141,9 @@ async function fetchHistoryEvents(
           AND  NOT c.is_archived
           AND  NOT m.is_deleted
       )
-      SELECT id, relay_seq, content, user_id, source, channel_id, created_at, username, fo76_account_name
+      SELECT id, relay_seq, content, user_id, source, channel_id, created_at,
+             username, chat_name, steam_display_name, fo76_character_name,
+             fo76_account_name, discord_display_name, discord_username
       FROM ranked
       WHERE channel_rank <= ${initialPerChannel}
       ORDER BY relay_seq DESC
@@ -2067,9 +2153,8 @@ async function fetchHistoryEvents(
     rows = await prisma.$queryRaw`
       SELECT m.id, m.relay_seq, m.content, m.user_id, m.source,
              m.channel_id, m.created_at,
-             CASE WHEN m.source = 'bot' THEN '[Vault-Tec]'
-                  ELSE COALESCE(u.fo76_account_name, u.discord_display_name, u.username) END AS username,
-             u.fo76_account_name
+             u.username, u.chat_name, u.steam_display_name, u.fo76_character_name,
+             u.fo76_account_name, u.discord_display_name, u.discord_username
       FROM   messages m
       JOIN   users    u ON u.id = m.user_id
       JOIN   channels c ON c.id = m.channel_id
@@ -2088,7 +2173,8 @@ async function fetchHistoryEvents(
     messageId:         row.id,
     channel:           channelIdToSlug(row.channel_id) ?? row.channel_id,
     senderUserId:      row.user_id,
-    senderDisplayName: row.username,
+    // Same label as the live event (placeholder usernames never reach the HUD).
+    senderDisplayName: relayHistoryDisplayName(row),
     body:              row.content,
     targetUserId:      '',
     createdAt:         row.created_at ? new Date(row.created_at).toISOString() : '',
@@ -2136,6 +2222,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   }
 
   const supportsHudCosmeticsTransport = await tokenSupportsHudCosmeticsTransportDurable(rawToken);
+  const supportsHudModerationEvents = await tokenSupportsHudModerationEventsDurable(rawToken);
 
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const worldId = await getWorldId(identity.userId);
@@ -2146,6 +2233,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
     cursor,
     worldId,
     supportsHudCosmeticsTransport,
+    supportsHudModerationEvents,
     initializing: true,
     pendingLiveFrames: [],
     pendingLiveBytes: 0,

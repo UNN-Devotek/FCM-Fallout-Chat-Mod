@@ -3,7 +3,9 @@ jest.mock('../src/config/logger', () => ({ __esModule: true, default: { warn: je
 jest.mock('../src/config/prisma', () => ({ __esModule: true, default: {
   discordRelayMapping: { findFirst: jest.fn(async () => ({ inGameChannelId: 'general' })) },
   channel: { findUnique: jest.fn(async () => ({ id: 'general', name: 'General', parentId: null })) },
+  user: { findUnique: jest.fn(async () => ({ id: 'account', isBanned: false, bannedUntil: null, kickedUntil: null, isMuted: false, muteExpiresAt: null })) },
 } }));
+jest.mock('../src/services/autoModEngine', () => ({ engineEvaluate: jest.fn(async () => ({ block: false, matches: [] })) }));
 jest.mock('../src/services/commandService', () => ({ getCommands: jest.fn(), tryHandleCommand: jest.fn(), buildHelpResponse: jest.fn() }));
 jest.mock('../src/services/discordOverlayCommandEmbeds', () => ({ buildDiscordOverlayCard: jest.fn() }));
 jest.mock('../src/services/giveawayService', () => ({}));

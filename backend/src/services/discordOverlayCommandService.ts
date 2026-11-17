@@ -21,7 +21,7 @@ import {
 import env from '../config/environment';
 import logger from '../config/logger';
 import prisma from '../config/prisma';
-import { buildHelpResponse, getCommands, tryHandleCommand, type ChatCommand, type CommandResult } from './commandService';
+import { buildHelpResponse, getCommands, isStaffAccount, tryHandleCommand, type ChatCommand, type CommandResult } from './commandService';
 import { buildDiscordOverlayCard } from './discordOverlayCommandEmbeds';
 import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
@@ -32,8 +32,8 @@ import { searchCampItems } from './campService';
 import { finalizeMessage } from './ingestMessage';
 import { publishDiscordCommandRelay } from './discordCommandPublication';
 import { getUserByDiscordId, getUserById } from './userLookup';
-import { resolveUserDisplayName } from '../utils/userDisplayName';
-import { getEffectiveRole, isPrivilegedRole } from './userRoleService';
+import { DISPLAY_NAME_SELECT, isPlaceholderUsername, resolveUserDisplayName } from '../utils/userDisplayName';
+import { createReportRateLimiter, REPORT_RATE_LIMIT } from './playerReportHelpers';
 import {
   REASON_CATEGORIES,
   createBan,
@@ -41,6 +41,7 @@ import {
   kickUser,
   muteUser,
   reverseBan,
+  unbanUser,
   unmuteUser,
 } from './moderationActionsService';
 
@@ -147,13 +148,19 @@ async function resolveContext(discordChannelId: string): Promise<CommandContext 
   return channel ? { channelId: channel.id, channelName: channel.name, parentChannelId: channel.parentId, isLinked } : null;
 }
 
-async function requireLinkedUser(interaction: ChatInputCommandInteraction) {
+type Responder = (content: string) => Promise<unknown>;
+
+/** Private reply that works before or after `deferReply`. */
+function ephemeralResponder(interaction: ChatInputCommandInteraction): Responder {
+  return (content) => (interaction.deferred || interaction.replied
+    ? interaction.editReply({ content })
+    : interaction.reply({ content, flags: MessageFlags.Ephemeral }));
+}
+
+async function requireLinkedUser(interaction: ChatInputCommandInteraction, respond: Responder = ephemeralResponder(interaction)) {
   const user = await getUserByDiscordId(interaction.user.id);
   if (!user) {
-    await interaction.reply({
-      content: `Link your Discord account to Fallout Chat Mod first: ${env.FCM_PUBLIC_BASE_URL}/link`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await respond(`Link your Discord account to Fallout Chat Mod first: ${env.FCM_PUBLIC_BASE_URL}/link`);
     return null;
   }
   return user;
@@ -249,7 +256,7 @@ async function handleOverlayCommand(interaction: ChatInputCommandInteraction): P
       displayName,
       source: 'discord',
       waitForPersistence: true,
-    }, interaction.user.id))) {
+    }, interaction.user.id, { rawInput: raw }))) {
       result.cancelCooldown?.();
       return;
     }
@@ -280,7 +287,7 @@ async function handleGiveawayButton(interaction: ButtonInteraction): Promise<voi
   }
   const displayName = user.chatName ?? user.discordDisplayName ?? user.discordUsername ?? user.username;
   try {
-    const isMod = button.action === 'stop' && isPrivilegedRole(await getEffectiveRole(user.id));
+    const isMod = button.action === 'stop' && await isStaffAccount(user.id);
     const message = await executeGiveawayButton(button, { id: user.id, displayName, isMod }, giveawayService);
     await interaction.editReply(message);
   } catch (err) {
@@ -332,19 +339,18 @@ async function runEventCommand(
     displayName,
     source: 'discord',
     waitForPersistence: true,
-  }, interaction.user.id))) {
+  }, interaction.user.id, { rawInput: raw }))) {
     result.cancelCooldown?.();
     return;
   }
   await interaction.reply({ content: 'Event announcement sent.', flags: MessageFlags.Ephemeral });
 }
 
-async function requireModerator(interaction: ChatInputCommandInteraction) {
-  const actor = await requireLinkedUser(interaction);
+async function requireModerator(interaction: ChatInputCommandInteraction, respond: Responder) {
+  const actor = await requireLinkedUser(interaction, respond);
   if (!actor) return null;
-  const role = await getEffectiveRole(actor.id);
-  if (!isPrivilegedRole(role)) {
-    await interaction.reply({ content: 'Only Fallout Chat Mod moderators and admins can use this command.', flags: MessageFlags.Ephemeral });
+  if (!(await isStaffAccount(actor.id))) {
+    await respond('Only Fallout Chat Mod moderators and admins can use this command.');
     return null;
   }
   return actor;
@@ -364,9 +370,59 @@ function moderationTargetSearch(query: string, mode: 'contains' | 'equals') {
   ];
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Name columns that can become the public chat display name (no IDs). */
+function publicNameSearch(query: string) {
+  return ['chatName', 'username', 'steamDisplayName', 'discordDisplayName', 'discordUsername', 'fo76CharacterName', 'fo76AccountName']
+    .map((field) => ({ [field]: { contains: query, mode: 'insensitive' as const } }));
+}
 
-async function requireTarget(interaction: ChatInputCommandInteraction) {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DISCORD_MESSAGE_LINK_RE = /^<?https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})\/?>?$/i;
+const SNOWFLAKE_RE = /^\d{17,20}$/;
+
+/** `/moderate delete-message` input: an FCM message UUID, a Discord message link, or a Discord message ID. */
+export function parseModerationMessageReference(raw: string):
+  | { kind: 'fcm'; messageId: string }
+  | { kind: 'discord'; discordMessageId: string; discordChannelId: string | null }
+  | null {
+  const value = raw.trim();
+  if (UUID_RE.test(value)) return { kind: 'fcm', messageId: value.toLowerCase() };
+  const link = value.match(DISCORD_MESSAGE_LINK_RE);
+  if (link) return { kind: 'discord', discordChannelId: link[1], discordMessageId: link[2] };
+  if (SNOWFLAKE_RE.test(value)) return { kind: 'discord', discordMessageId: value, discordChannelId: null };
+  return null;
+}
+
+/**
+ * Specific, private reply text for a failed moderation action. Service errors
+ * carry a `code` (moderationErrors.ts) or `name`; older ones only a message.
+ * Unknown failures keep the generic text (the caller logs the underlying error).
+ */
+export function moderationFailureMessage(err: unknown): string {
+  const e = (err ?? {}) as { code?: unknown; name?: unknown; message?: unknown; status?: unknown };
+  const tokens = [e.code, e.name].filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const message = typeof e.message === 'string' ? e.message : '';
+  const lower = message.toLowerCase();
+  const has = (...keys: string[]) => tokens.some((token) => keys.some((key) => token === key || token === `${key}error`));
+  if (has('protectedtarget') || lower.includes('protected role')) {
+    return 'That player holds a protected staff role. Remove the staff role in Discord before taking this action.';
+  }
+  if (has('protectioncheckfailed')) return 'Could not verify that the target is not staff, so nothing was changed. Try again shortly.';
+  if (has('alreadybanned') || lower.includes('already banned')) return 'That player is already banned. Use `/moderate unban` first to change the ban.';
+  if (has('notbanned')) return 'That player has no active FCM ban.';
+  if (has('banalreadyreversed') || lower.includes('already reversed')) return 'That ban has already been reversed.';
+  if (has('bannotfound') || lower.includes('ban not found')) return 'No FCM ban matches that ban ID.';
+  if (has('messagenotfound') || lower.includes('message not found')) return 'That message was not found or was already deleted.';
+  if (has('targetnotfound', 'usernotfound', 'p2025') || lower.includes('not found')) return 'That player or record was not found. Pick the player from the search list.';
+  if (has('invalidinput') && message) return message.slice(0, 300);
+  if (has('missingpermissions', '50013') || e.status === 403 || lower.includes('missing permissions')) {
+    return 'The action was refused because the bot is missing a Discord permission or sits below the target in the role hierarchy.';
+  }
+  return 'Moderation action failed. Check the target, permissions, and audit log.';
+}
+
+async function requireTarget(interaction: ChatInputCommandInteraction, respond: Responder) {
   const raw = interaction.options.getString('user', true).trim();
   let target = UUID_RE.test(raw) ? await getUserById(raw) : null;
   if (!target && raw && !UUID_RE.test(raw)) {
@@ -375,17 +431,14 @@ async function requireTarget(interaction: ChatInputCommandInteraction) {
     const matches = await prisma.user.findMany({ where: { OR: moderationTargetSearch(raw, 'equals') }, select: { id: true }, take: 2 });
     if (matches.length === 1) target = await getUserById(matches[0].id);
     else {
-      await interaction.reply({
-        content: matches.length > 1
-          ? `More than one FCM player matches "${raw.slice(0, 60)}". Pick the player from the search list.`
-          : `No FCM player is named "${raw.slice(0, 60)}". Type part of their chat, Steam, FO76, or Discord name and pick them from the search list.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await respond(matches.length > 1
+        ? `More than one FCM player matches "${raw.slice(0, 60)}". Pick the player from the search list.`
+        : `No FCM player is named "${raw.slice(0, 60)}". Type part of their chat, Steam, FO76, or Discord name and pick them from the search list.`);
       return null;
     }
   }
   if (!target) {
-    await interaction.reply({ content: 'That player was not found. Pick the player from the search list.', flags: MessageFlags.Ephemeral });
+    await respond('That player was not found. Pick the player from the search list.');
     return null;
   }
   return target;
@@ -406,11 +459,15 @@ export function moderationTargetLabel(user: ModerationTargetLabelFields): string
   return `${shown}${identities.length ? ` — ${identities.join(' · ')}` : ''}`.slice(0, 100);
 }
 
+async function isDiscordStaff(discordUserId: string): Promise<boolean> {
+  const actor = await getUserByDiscordId(discordUserId);
+  return !!actor && isStaffAccount(actor.id);
+}
+
 async function handleModerationAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   if (interaction.commandName !== MODERATION_COMMAND || interaction.options.getFocused(true).name !== 'user') return;
   try {
-    const actor = await getUserByDiscordId(interaction.user.id);
-    if (!actor || !isPrivilegedRole(await getEffectiveRole(actor.id))) {
+    if (!(await isDiscordStaff(interaction.user.id))) {
       await interaction.respond([]);
       return;
     }
@@ -454,31 +511,68 @@ async function handleLookupAutocomplete(interaction: AutocompleteInteraction): P
   await interaction.respond([]).catch(() => {});
 }
 
+export const REPORT_SEARCH_MIN_LENGTH = 2;
+
+/**
+ * `/report player` search. Any guild member can run it, so it never lists
+ * players without a query and, for non-staff, matches and shows only the
+ * public chat display name (no Discord/Steam IDs or linked identities).
+ * Staff keep the richer moderation label.
+ */
 async function handleReportAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   if (interaction.commandName !== 'report' || interaction.options.getFocused(true).name !== 'user') return;
   try {
     const query = interaction.options.getFocused().trim();
+    if (query.length < REPORT_SEARCH_MIN_LENGTH) {
+      await interaction.respond([]);
+      return;
+    }
+    if (await isDiscordStaff(interaction.user.id)) {
+      const users = await prisma.user.findMany({
+        where: { OR: moderationTargetSearch(query, 'contains') },
+        orderBy: { updatedAt: 'desc' }, take: 25,
+        select: MODERATION_TARGET_SELECT,
+      });
+      await interaction.respond(users.map((user) => ({ name: moderationTargetLabel(user), value: user.id })));
+      return;
+    }
     const users = await prisma.user.findMany({
-      where: query ? { OR: moderationTargetSearch(query, 'contains') } : {},
-      orderBy: { updatedAt: 'desc' }, take: 25,
-      select: MODERATION_TARGET_SELECT,
+      where: { OR: publicNameSearch(query) },
+      orderBy: { updatedAt: 'desc' }, take: 50,
+      select: { id: true, ...DISPLAY_NAME_SELECT },
     });
-    await interaction.respond(users.map((user) => ({ name: moderationTargetLabel(user), value: user.id })));
+    const needle = query.toLowerCase();
+    const choices = users
+      .map((user) => ({ name: resolveUserDisplayName(user).slice(0, 100), value: user.id }))
+      .filter((choice) => choice.name !== 'unknown' && !isPlaceholderUsername(choice.name) && choice.name.toLowerCase().includes(needle))
+      .slice(0, 25);
+    await interaction.respond(choices);
   } catch (err) {
     logger.warn({ err, discordUserId: interaction.user.id }, '[discord-overlay-commands] report target autocomplete failed');
     await interaction.respond([]).catch(() => {});
   }
 }
 
+const reportRateLimiter = createReportRateLimiter();
+
 async function handleReportCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  // Acknowledge before any lookup so Discord never times the interaction out.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const respond = ephemeralResponder(interaction);
   return runRequiredBundle('domain', 'discordOverlayCommandService:4af3c7a2ceeb', async () => {
-  const reporter = await requireLinkedUser(interaction);
+  const reporter = await requireLinkedUser(interaction, respond);
   if (!reporter) return;
   const type = interaction.options.getSubcommand(true) as 'bug' | 'player';
   const description = interaction.options.getString('description', true).trim();
   const target = type === 'player' ? await getUserById(interaction.options.getString('user', true)) : null;
   if (type === 'player' && !target) {
-    await interaction.reply({ content: 'Choose a valid FCM player from the search results.', flags: MessageFlags.Ephemeral });
+    await respond('Choose a valid FCM player from the search results.');
+    return;
+  }
+  const limit = reportRateLimiter.take(interaction.user.id);
+  if (!limit.allowed) {
+    const minutes = Math.max(1, Math.ceil(limit.retryAfterMs / 60_000));
+    await respond(`You have sent ${REPORT_RATE_LIMIT} reports in the last 10 minutes. Please wait ${minutes} minute${minutes === 1 ? '' : 's'} before sending another.`);
     return;
   }
   const involvedPlayers = target ? resolveUserDisplayName(target) : null;
@@ -490,37 +584,72 @@ async function handleReportCommand(interaction: ChatInputCommandInteraction): Pr
     const { postModAlert } = require('./discordService') as { postModAlert: (data: unknown) => Promise<unknown> };
     void postModAlert({ title: `${type === 'bug' ? 'Bug' : 'Player'} Report Submitted`, color: '#FF8C00', fields: [{ name: 'Reporter', value: resolveUserDisplayName(reporter), inline: true }, { name: 'Content', value: content.slice(0, 1500) }], footerText: `Report ID: ${report.id}`, timestamp: true });
   } catch { /* bot alert is best-effort; the report is persisted first */ }
-  await interaction.reply({ content: type === 'bug' ? 'Bug report submitted. Thank you.' : 'Player report submitted to the moderation team.', flags: MessageFlags.Ephemeral });
+  await respond(type === 'bug' ? 'Bug report submitted. Thank you.' : 'Player report submitted to the moderation team.');
 
   });
 }
 
+async function resolveModeratedMessageId(raw: string, respond: Responder): Promise<string | null> {
+  const ref = parseModerationMessageReference(raw);
+  if (!ref) {
+    await respond('Paste an FCM message ID, a Discord message link, or a Discord message ID. (Right-click the bridged message in Discord and choose Copy Message Link.)');
+    return null;
+  }
+  if (ref.kind === 'fcm') return ref.messageId;
+  const link = await prisma.discordMessageLink.findFirst({
+    where: { discordMessageId: ref.discordMessageId, ...(ref.discordChannelId ? { discordChannelId: ref.discordChannelId } : {}) },
+    select: { messageId: true },
+  });
+  if (!link) {
+    await respond('That Discord message is not linked to an FCM chat message. Only messages bridged between Discord and FCM can be deleted this way.');
+    return null;
+  }
+  return link.messageId;
+}
+
 async function handleModeration(interaction: ChatInputCommandInteraction): Promise<void> {
-  const actor = await requireModerator(interaction);
+  // Acknowledge before any database lookup: role, target and Discord
+  // propagation can exceed Discord's 3-second reply window.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const respond = ephemeralResponder(interaction);
+  const actor = await requireModerator(interaction, respond);
   if (!actor) return;
   const subcommand = interaction.options.getSubcommand(true);
-  // Moderation writes, Discord propagation and the mod-log embed can exceed
-  // Discord's 3-second reply window; acknowledge first so the result is shown.
-  const respond = (content: string) => (interaction.deferred || interaction.replied
-    ? interaction.editReply({ content })
-    : interaction.reply({ content, flags: MessageFlags.Ephemeral }));
   try {
     if (subcommand === 'unban') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      await reverseBan(interaction.options.getString('ban-id', true), actor.id, interaction.options.getString('reason') ?? 'Reversed from Discord');
-      await respond('Ban reversed.');
+      const reason = interaction.options.getString('reason') ?? 'Reversed from Discord';
+      const banIdRaw = interaction.options.getString('ban-id')?.trim() || null;
+      const userRaw = interaction.options.getString('user')?.trim() || null;
+      if (banIdRaw) {
+        if (!UUID_RE.test(banIdRaw)) {
+          await respond('That is not a valid FCM ban ID. Pick the banned player in the `user` option instead, or paste the ban ID from the dashboard or the Ban mod-log footer.');
+          return;
+        }
+        await reverseBan(banIdRaw, actor.id, reason);
+        await respond('Ban reversed.');
+        return;
+      }
+      if (!userRaw) {
+        await respond('Pick the banned player in the `user` option, or paste an FCM ban ID.');
+        return;
+      }
+      const target = await requireTarget(interaction, respond);
+      if (!target) return;
+      // Reverses every active ban row (and a legacy flag-only ban) for the player.
+      await unbanUser(target.id, actor.id, reason);
+      await respond(`Ban on ${resolveUserDisplayName(target)} reversed.`);
       return;
     }
     if (subcommand === 'delete-message') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      await deleteMessageById(interaction.options.getString('message-id', true), actor.id, interaction.options.getString('reason') ?? 'Removed from Discord moderation command');
+      const messageId = await resolveModeratedMessageId(interaction.options.getString('message-id', true), respond);
+      if (!messageId) return;
+      await deleteMessageById(messageId, actor.id, interaction.options.getString('reason') ?? 'Removed from Discord moderation command');
       await respond('Message deleted.');
       return;
     }
 
-    const target = await requireTarget(interaction);
+    const target = await requireTarget(interaction, respond);
     if (!target) return;
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const reason = interaction.options.getString('reason') ?? 'No reason provided';
     const targetName = resolveUserDisplayName(target);
     if (subcommand === 'kick') {
@@ -534,9 +663,8 @@ async function handleModeration(interaction: ChatInputCommandInteraction): Promi
       const minutes = interaction.options.getInteger('minutes', true);
       const category = interaction.options.getString('category') ?? 'Other';
       const result = await muteUser(target.id, actor.id, minutes * 60_000, category, reason);
-      await respond(result.discordPropagated
-          ? `Muted ${targetName} in FCM and Discord until ${result.until.toISOString()}.`
-          : `Muted ${targetName} in FCM until ${result.until.toISOString()}, but the Discord timeout was not applied. Check bot permissions and role hierarchy.`);
+      const until = result.until.toISOString();
+      await respond(muteReplyText(targetName, until, result.discordPropagated, !!target.discordId));
       return;
     }
     if (subcommand === 'unmute') {
@@ -550,14 +678,41 @@ async function handleModeration(interaction: ChatInputCommandInteraction): Promi
       const category = interaction.options.getString('category') ?? 'Other';
       const evidence = interaction.options.getString('evidence', true);
       const result = await createBan(target.id, actor.id, category, reason, until, [{ type: 'text', textContent: evidence }], { banDiscord: true });
-      await respond(result.discordLockdown.guildBanApplied
-          ? `Banned ${targetName} from FCM and Discord${until ? ` until ${until.toISOString()}` : ' permanently'}.`
-          : `Banned ${targetName} from FCM, but Discord ban was not applied: ${result.discordLockdown.warnings.join(' ') || 'check Ban Members permission and role hierarchy'}.`);
+      await respond(banReplyText(targetName, until, result.discordLockdown, !!target.discordId));
     }
   } catch (err) {
     logger.warn({ err, command: subcommand, actorId: actor.id }, '[discord-overlay-commands] moderation action failed');
-    await respond('Moderation action failed. Check the target, permissions, and audit log.').catch(() => {});
+    await respond(moderationFailureMessage(err)).catch(() => {});
   }
+}
+
+/**
+ * Ban result text. Permanent bans also guild-ban; temporary bans only strip
+ * Discord roles (restored on expiry), so a missing guild ban is expected there.
+ */
+export function banReplyText(
+  targetName: string,
+  until: Date | null,
+  lockdown: { guildBanApplied: boolean | null; warnings: string[] },
+  hasLinkedDiscord: boolean,
+): string {
+  const warnings = lockdown.warnings.join(' ');
+  if (!hasLinkedDiscord) {
+    return `Banned ${targetName} from FCM${until ? ` until ${until.toISOString()}` : ' permanently'}. No Discord action was applied because this player has no linked Discord account.`;
+  }
+  if (until) {
+    return `Banned ${targetName} from FCM until ${until.toISOString()}. Their Discord roles were removed for the ban (temporary bans do not ban from the server)${warnings ? `. Discord warnings: ${warnings}` : ''}.`;
+  }
+  return lockdown.guildBanApplied
+    ? `Banned ${targetName} from FCM and Discord permanently.`
+    : `Banned ${targetName} from FCM permanently, but the Discord ban was not applied: ${warnings || 'check Ban Members permission and role hierarchy'}.`;
+}
+
+/** Mute result text; an account without a linked Discord id cannot receive a Discord timeout. */
+export function muteReplyText(targetName: string, untilIso: string, discordPropagated: boolean, hasLinkedDiscord: boolean): string {
+  if (discordPropagated) return `Muted ${targetName} in FCM and Discord until ${untilIso}.`;
+  if (!hasLinkedDiscord) return `Muted ${targetName} in FCM until ${untilIso}. No Discord timeout was applied because this player has no linked Discord account.`;
+  return `Muted ${targetName} in FCM until ${untilIso}, but the Discord timeout was not applied. Check bot permissions and role hierarchy.`;
 }
 
 function buildOverlayCommand() {
@@ -606,13 +761,14 @@ function buildModerationCommand() {
     .setName(MODERATION_COMMAND)
     .setDescription('Fallout Chat Mod moderation actions')
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    // Visibility only: Manage Messages is held by the moderator role; FCM staff status is checked on every use.
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .addSubcommand((sub) => sub.setName('kick').setDescription('Kick an FCM user for five minutes').addStringOption((opt) => opt.setName('user').setDescription('Search FCM, Discord, Steam name, or ID').setAutocomplete(true).setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason').setRequired(true)))
     .addSubcommand((sub) => sub.setName('mute').setDescription('Mute an FCM user').addStringOption((opt) => opt.setName('user').setDescription('Search FCM, Discord, Steam name, or ID').setAutocomplete(true).setRequired(true)).addIntegerOption((opt) => opt.setName('minutes').setDescription('1–40320 minutes').setMinValue(1).setMaxValue(40_320).setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason').setRequired(true)).addStringOption((opt) => opt.setName('category').setDescription('Category').addChoices(...moderationCategoryChoices())))
     .addSubcommand((sub) => sub.setName('unmute').setDescription('Unmute an FCM user').addStringOption((opt) => opt.setName('user').setDescription('Search FCM, Discord, Steam name, or ID').setAutocomplete(true).setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason')))
     .addSubcommand((sub) => sub.setName('ban').setDescription('Ban an FCM user').addStringOption((opt) => opt.setName('user').setDescription('Search FCM, Discord, Steam name, or ID').setAutocomplete(true).setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason').setRequired(true)).addStringOption((opt) => opt.setName('evidence').setDescription('Evidence summary for the audit record').setRequired(true)).addIntegerOption((opt) => opt.setName('minutes').setDescription('Leave blank for permanent').setMinValue(1).setMaxValue(43_200)).addStringOption((opt) => opt.setName('category').setDescription('Category').addChoices(...moderationCategoryChoices())))
-    .addSubcommand((sub) => sub.setName('unban').setDescription('Reverse a ban by FCM ban ID').addStringOption((opt) => opt.setName('ban-id').setDescription('Ban UUID').setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason')))
-    .addSubcommand((sub) => sub.setName('delete-message').setDescription('Delete an FCM chat message by ID').addStringOption((opt) => opt.setName('message-id').setDescription('Message UUID').setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason')))
+    .addSubcommand((sub) => sub.setName('unban').setDescription("Reverse a player's active FCM ban").addStringOption((opt) => opt.setName('user').setDescription('Search FCM, Discord, Steam name, or ID').setAutocomplete(true)).addStringOption((opt) => opt.setName('ban-id').setDescription('Or an FCM ban ID from the dashboard or mod log')).addStringOption((opt) => opt.setName('reason').setDescription('Reason')))
+    .addSubcommand((sub) => sub.setName('delete-message').setDescription('Delete a bridged FCM chat message').addStringOption((opt) => opt.setName('message-id').setDescription('Discord message link, Discord message ID, or FCM message ID').setRequired(true)).addStringOption((opt) => opt.setName('reason').setDescription('Reason')))
     .toJSON();
 }
 
@@ -682,7 +838,8 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     }
   } catch (err) {
     logger.error({ err, command: interaction.commandName }, '[discord-overlay-commands] interaction failed');
-    if (!interaction.replied) await interaction.reply({ content: 'Command failed. Please try again.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    if (interaction.deferred && !interaction.replied) await interaction.editReply({ content: 'Command failed. Please try again.' }).catch(() => {});
+    else if (!interaction.replied) await interaction.reply({ content: 'Command failed. Please try again.', flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 }
 

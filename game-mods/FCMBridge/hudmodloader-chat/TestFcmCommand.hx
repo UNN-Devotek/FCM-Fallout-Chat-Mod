@@ -297,7 +297,93 @@ class TestFcmCommand {
             FcmCommand.mergeNativeInputTextWithMode("he", "e", "e", "delta") == "hee");
         check("native backspace removes one draft character",
             FcmCommand.mergeNativeInputTextWithMode("hello", "o", String.fromCharCode(8), "delta") == "hell");
+        moderationTests();
         if (failures > 0) Sys.exit(1);
+    }
+
+    static function moderationTests():Void {
+        // Durations: plain minutes and m/h/d/w units, independent expected minute values.
+        for (pair in [["30", "30"], ["30m", "30"], ["2h", "120"], ["1d", "1440"], ["1w", "10080"],
+                ["30d", "43200"], ["4W", "40320"], ["007", "7"]]) {
+            var parsed = FcmCommand.moderationDuration(pair[0]);
+            check("duration " + pair[0], parsed.kind == "minutes" && parsed.minutes == Std.parseInt(pair[1]));
+        }
+        for (bad in ["0", "0m", "-5", "+5", "1.5h", "31d", "5w", "43201", "1y", "10mins", "1234567"]) {
+            check("invalid duration " + bad, FcmCommand.moderationDuration(bad).kind == "invalid");
+        }
+        check("perm is explicit permanence", FcmCommand.moderationDuration("perm").kind == "permanent"
+            && FcmCommand.moderationDuration("PERMANENT").kind == "permanent");
+        check("a word starts the reason", FcmCommand.moderationDuration("spamming").kind == "none"
+            && FcmCommand.moderationDuration("").kind == "none");
+
+        // Regression: `ban 1d spam` used Std.parseInt and became a 1-minute ban.
+        var dayBan = FcmCommand.parseModerationAction("ban", "1d spam");
+        check("ban 1d is one day", dayBan.action == "banUser" && dayBan.minutes == 1440
+            && !dayBan.permanent && dayBan.reason == "spam" && dayBan.error == "");
+        // Regression: `ban 0` meant permanent.
+        check("ban 0 is rejected, never permanent", FcmCommand.parseModerationAction("ban", "0 spam").error.length > 0
+            && !FcmCommand.parseModerationAction("ban", "0 spam").permanent);
+        var permBan = FcmCommand.parseModerationAction("BAN", "perm repeated slurs");
+        check("ban perm is explicit", permBan.permanent && permBan.minutes == 0 && permBan.reason == "repeated slurs"
+            && permBan.error == "");
+        check("ban without duration is refused", FcmCommand.parseModerationAction("ban", "spamming links").error
+            .indexOf("Ban needs a duration") == 0);
+        check("ban garbage duration is refused", FcmCommand.parseModerationAction("ban", "2x spam").error
+            .indexOf("Ban duration") == 0);
+        check("ban needs a reason", FcmCommand.parseModerationAction("ban", "1d").error == "A moderation reason is required.");
+        // Regression: `mute spamming` errored although minutes are optional.
+        var defaultMute = FcmCommand.parseModerationAction("mute", "spamming links");
+        check("mute without duration uses the default", defaultMute.action == "muteUser" && defaultMute.minutes == 10
+            && defaultMute.reason == "spamming links" && defaultMute.error == "");
+        var hourMute = FcmCommand.parseModerationAction("mute", "2h  flooding");
+        check("mute 2h", hourMute.minutes == 120 && hourMute.reason == "flooding" && hourMute.error == "");
+        check("mute cannot be permanent", FcmCommand.parseModerationAction("mute", "perm spam").error.length > 0);
+        check("mute rejects zero", FcmCommand.parseModerationAction("mute", "0 spam").error.indexOf("Mute duration") == 0);
+        check("mute needs a reason", FcmCommand.parseModerationAction("mute", "").error == "A moderation reason is required.");
+        var kick = FcmCommand.parseModerationAction("kick", "10 rude");
+        check("kick keeps a numeric reason", kick.action == "kickUser" && kick.reason == "10 rude" && kick.minutes == 0);
+        check("unknown verb shows help", FcmCommand.parseModerationAction("slow", "5").error == "help"
+            && FcmCommand.parseModerationAction("", "").error == "help");
+        for (verb in [["delete", "deleteMessage"], ["unmute", "unmuteUser"], ["unban", "unbanUser"]]) {
+            var parsed = FcmCommand.parseModerationAction(verb[0], "appeal accepted");
+            check("verb " + verb[0], parsed.action == verb[1] && parsed.reason == "appeal accepted" && parsed.error == "");
+        }
+        var help = FcmCommand.moderationHelp();
+        check("help documents duration units and explicit perm", help.indexOf("1d") >= 0 && help.indexOf("perm") >= 0
+            && help.indexOf("default 10m") >= 0);
+
+        // References: UUID prefix; Server rows use the sequence, not the shared "server:r" prefix.
+        check("uuid reference", FcmCommand.moderationReference("3F2504E0-4F89-41D3-9A0C-0305E82C3301") == "3f2504e0");
+        check("server reference", FcmCommand.moderationReference(
+            "server:r:00000000-0000-4000-8000-000000000001:1234567") == "s1234567");
+        check("short server reference pads", FcmCommand.moderationReference(
+            "server:r:00000000-0000-4000-8000-000000000001:42") == "s0000042");
+        check("distinct server rows have distinct references", FcmCommand.moderationReference("server:r:x:1001")
+            != FcmCommand.moderationReference("server:r:x:1002"));
+        check("empty id has no reference", FcmCommand.moderationReference("") == "" && FcmCommand.moderationReference(null) == "");
+
+        check("account id accepted", FcmCommand.isAccountId("22222222-2222-4222-8222-222222222222"));
+        check("relay text id is not an account", !FcmCommand.isAccountId("user_0123456789abcdef0123456789abcdef"));
+
+        check("timed envelope", FcmCommand.moderationEnvelope(1440, false, "") == "FCMMOD/1;d=1440");
+        check("perm envelope", FcmCommand.moderationEnvelope(0, true, "") == "FCMMOD/1;p=1");
+        check("by-name envelope", FcmCommand.moderationEnvelope(0, false, "Alice Smith") == "FCMMOD/1;n=Alice%20Smith");
+        check("empty envelope", FcmCommand.moderationEnvelope(0, false, "") == "");
+
+        check("delete event id", FcmCommand.deletedMessageId("FCMDEL/1;m=server%3Ar%3Ax%3A5") == "server:r:x:5");
+        check("other system bodies are not deletes", FcmCommand.deletedMessageId("FCMACK/1;m=x") == ""
+            && FcmCommand.deletedMessageId("FCMDEL/1;") == "");
+
+        check("protected target text", FcmCommand.moderationErrorText("protected_target", "x")
+            .indexOf("Staff members cannot be moderated") == 0);
+        check("permission text kept for real permission loss", FcmCommand.moderationErrorText("permission_denied", "")
+            .indexOf("staff role may have changed") >= 0);
+        check("already banned text", FcmCommand.moderationErrorText("already_banned", "").indexOf("already banned") >= 0);
+        check("provider without moderation", FcmCommand.moderationErrorText("unsupported_command", "")
+            == "Moderation is not supported by this chat provider.");
+        check("unknown code falls back to server message", FcmCommand.moderationErrorText("new_code", "Server said no")
+            == "Moderation failed: Server said no");
+        check("unknown code without message", FcmCommand.moderationErrorText("new_code", "") == "Moderation failed: new_code");
     }
 }
 

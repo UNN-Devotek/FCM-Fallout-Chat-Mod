@@ -1429,6 +1429,125 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('moderationAction never turns a lost or invalid ban duration into a permanent ban', async () => {
+    const roleService = require('../src/services/userRoleService');
+    const moderation = require('../src/services/moderationActionsService');
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'DurationModerator' }),
+    );
+    wsReg.close();
+    const actorId = '44444444-4444-4444-8444-444444444444';
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    _userMap[actorId] = { id: actorId, discordId: 'discord-duration-mod', isBanned: false, isMuted: false };
+    markTokensLinked(lastRawUserId(), actorId);
+    roleService.getEffectiveRole.mockResolvedValue('moderator');
+
+    const { ws, msgs } = await conn();
+    const submit = (frame) => waitForMsg(ws, msgs, () => send(ws, {
+      op: 'moderationAction', token: regRes.token, action: 'banUser', targetUserId: targetId,
+      reason: 'duration test', ...frame,
+    }));
+
+    // ZFE drops durationMinutes: a ban without any duration must be refused, not made permanent.
+    await expect(submit({})).resolves.toMatchObject({ success: false, error: { code: 'invalid_duration' } });
+    await expect(submit({ durationMinutes: 0 })).resolves.toMatchObject({ success: false, error: { code: 'invalid_duration' } });
+    expect(moderation.createBan).not.toHaveBeenCalled();
+
+    // The widget's ZFE-safe envelope in messageId carries the timed duration and explicit permanence.
+    const before = Date.now();
+    await expect(submit({ messageId: 'FCMMOD/1;d=1440' })).resolves.toMatchObject({ success: true, action: 'banUser' });
+    const until = moderation.createBan.mock.calls[0][4];
+    expect(until).toBeInstanceOf(Date);
+    expect(until.getTime()).toBeGreaterThanOrEqual(before + 1440 * 60_000);
+    expect(until.getTime()).toBeLessThan(before + 1441 * 60_000);
+    await expect(submit({ messageId: 'FCMMOD/1;p=1' })).resolves.toMatchObject({ success: true, action: 'banUser' });
+    expect(moderation.createBan.mock.calls[1][4]).toBeNull();
+    roleService.getEffectiveRole.mockResolvedValue('user');
+    ws.close();
+  });
+
+  test('moderationAction forwards stable codes and resolves by-name unban targets', async () => {
+    const roleService = require('../src/services/userRoleService');
+    const moderation = require('../src/services/moderationActionsService');
+    const prisma = require('../src/config/prisma').default;
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'CodeModerator' }),
+    );
+    wsReg.close();
+    const actorId = '66666666-6666-4666-8666-666666666666';
+    const targetId = '77777777-7777-4777-8777-777777777777';
+    _userMap[actorId] = { id: actorId, discordId: 'discord-code-mod', isBanned: false, isMuted: false };
+    markTokensLinked(lastRawUserId(), actorId);
+    roleService.getEffectiveRole.mockResolvedValue('moderator');
+
+    const { ws, msgs } = await conn();
+    const submit = (frame) => waitForMsg(ws, msgs, () => send(ws, {
+      op: 'moderationAction', token: regRes.token, reason: 'code test', ...frame,
+    }));
+
+    moderation.kickUser.mockRejectedValueOnce(Object.assign(new Error('protected'), {
+      name: 'ProtectedTargetError', code: 'ProtectedTarget',
+    }));
+    await expect(submit({ action: 'kickUser', targetUserId: targetId }))
+      .resolves.toMatchObject({ success: false, error: { code: 'protected_target' } });
+
+    await expect(submit({ action: 'deleteMessage', messageId: 'server:r:abc:12' }))
+      .resolves.toMatchObject({ success: false, error: { code: 'unsupported_target' } });
+
+    prisma.user.findMany.mockResolvedValueOnce([{ id: targetId }]);
+    prisma.ban.findFirst.mockResolvedValueOnce({ id: 'named-ban' });
+    await expect(submit({ action: 'unbanUser', targetUserId: '', messageId: 'FCMMOD/1;n=Banned%20Player' }))
+      .resolves.toMatchObject({ success: true, action: 'unbanUser' });
+    expect(JSON.stringify(prisma.user.findMany.mock.calls.at(-1)[0].where)).toContain('Banned Player');
+    expect(moderation.reverseBan).toHaveBeenCalledWith('named-ban', actorId, 'code test');
+
+    prisma.user.findMany.mockResolvedValueOnce([{ id: targetId }, { id: actorId }]);
+    await expect(submit({ action: 'unmuteUser', targetUserId: '', messageId: 'FCMMOD/1;n=Twin' }))
+      .resolves.toMatchObject({ success: false, error: { code: 'ambiguous_target' } });
+    // A by-name lookup is never available for actions that need a visible row.
+    await expect(submit({ action: 'kickUser', targetUserId: '', messageId: 'FCMMOD/1;n=Banned%20Player' }))
+      .resolves.toMatchObject({ success: false, error: { code: 'invalid_request' } });
+    roleService.getEffectiveRole.mockResolvedValue('user');
+    ws.close();
+  });
+
+  test('remote deletions reach only HUD subscribers that negotiated the FCMDEL event', async () => {
+    const subscribeAs = async (displayName, clientVersion) => {
+      const { ws: wsReg, msgs: msgsReg } = await conn();
+      const regRes = await waitForMsg(wsReg, msgsReg, () =>
+        send(wsReg, { op: 'register', displayName, clientVersion }),
+      );
+      wsReg.close();
+      const rawId = lastRawUserId();
+      _userMap[rawId] = { id: rawId, discordId: `disc-${displayName}`, steamId: null, isBanned: false, isMuted: false };
+      const { ws, msgs } = await conn();
+      await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token: regRes.token, cursor: 0 }));
+      return { ws, msgs };
+    };
+    const modern = await subscribeAs('DeleteModern', '2.10.153');
+    const legacy = await subscribeAs('DeleteLegacy', '2.10.152');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const modernBefore = modern.msgs.length;
+    const legacyBefore = legacy.msgs.length;
+
+    // Same-instance publications are processed too: localBroadcast never forwards deletes.
+    const { INSTANCE_ID } = require('../src/config/instanceIdentity');
+    await redisMock.publish('chat:broadcast', JSON.stringify({ instanceId: INSTANCE_ID,
+      payload: { type: 'chat:delete', payload: { messageId: '88888888-8888-4888-8888-888888888888' } } }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const deletion = modern.msgs.slice(modernBefore).find((m) => m.op === 'event');
+    expect(deletion?.event).toMatchObject({
+      kind: 'chat.message', channel: 'system', senderUserId: 'system',
+      body: 'FCMDEL/1;m=88888888-8888-4888-8888-888888888888',
+    });
+    expect(legacy.msgs.slice(legacyBefore).some((m) => m.op === 'event')).toBe(false);
+    modern.ws.close();
+    legacy.ws.close();
+  });
+
   test('send forwards the linked FCM user UUID to ingestMessage, not the relay TEXT id', async () => {
     // Regression: handleSend used to pass identity.userId (the relay "user_"+hex TEXT
     // id) to ingestMessage, which runs prisma.user.findUnique({ id }) expecting a UUID

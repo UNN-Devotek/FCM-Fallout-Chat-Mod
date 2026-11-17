@@ -1,6 +1,7 @@
 import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { createRuntimeDiscordClient, loginRuntimeDiscordClient } from '../runtime/discordClient';
 import { checkChatSlowmode, chatSlowmodeMessage } from './chatSlowmodeService';
+import { checkPostingStanding } from './chatPostingGate';
 import { runtime, producerInterval } from '../runtime';
 import { discordRelayDigest } from '../runtime/discordRelayJournal';
 import { safeDiagnostic } from '../runtime/failureEvidence';
@@ -849,6 +850,21 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
         catch (err) { logger.warn({ err, channelId: msg.channelId }, 'Slowmode delete failed (Manage Messages required)'); }
         try { await msg.author.send(chatSlowmodeMessage(status.retryAfterMs)); }
         catch (err) { logger.debug({ err }, 'Slowmode DM failed'); }
+        return;
+      }
+      // FCM bans, kick cooldowns and mutes apply to the bridge as well: a
+      // player banned or muted only in FCM (no guild ban, no Discord timeout)
+      // must not keep chatting through a bridged channel. Remove the post and
+      // notify privately, mirroring slowmode. A failed standing lookup drops
+      // the relay without deleting the Discord message.
+      const standing = await checkPostingStanding({ discordId: msg.author.id });
+      if (standing) {
+        logger.info({ discordUserId: msg.author.id, reason: standing.reason }, '[discord-relay] author may not post in FCM chat; not relayed');
+        if (standing.reason === 'unavailable') return;
+        try { await msg.delete(); }
+        catch (err) { logger.warn({ err, channelId: msg.channelId }, 'Standing delete failed (Manage Messages required)'); }
+        try { await msg.author.send(standing.message); }
+        catch (err) { logger.debug({ err }, 'Standing DM failed'); }
         return;
       }
     }

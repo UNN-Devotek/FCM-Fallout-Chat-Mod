@@ -835,3 +835,31 @@ The `/event help` shortcut `/sos` identifies **Swarm of Suitors**, and `/sts`
 identifies **Surface to Air**. The backend
 command data repair applies the same event name to announcements across Discord,
 the overlay, and the optional HUD; packaged HUD help updates require a new HUD build.
+
+## Staff moderation (2.10.153 candidate)
+
+HUD 2.10.153 and the matching backend fix in-game `/mod` moderation:
+
+- Durations accept `30`, `30m`, `2h`, `1d`, `1w` (1 minute to 30 days). A ban needs a duration
+  or `perm`; a missing, zero or invalid duration is refused by both the widget and the relay
+  instead of becoming permanent. A mute without a duration lasts 10 minutes.
+- Because ZFE may drop request members it does not know, account-level actions mirror the
+  duration, explicit permanence or by-name target into `messageId` as `FCMMOD/1;...`. ZFE
+  moderation also requires `zfe-chat-async-control-v1`; a provider without `moderationAction`
+  reports that it is unsupported.
+- Server rows carry the sender's account (`a=` in `FCMHUD/1`), so Server-tab players can be
+  kicked, muted and banned, and General plus Server rows from one player are one target.
+  Server messages cannot be deleted.
+- `unban`/`unmute` resolve an exact account name on the relay when no row is visible.
+- Relay error codes (`protected_target`, `already_banned`, `not_banned`, ...) map to specific
+  text with a generic fallback.
+- Deletes from any surface reach widgets reporting 2.10.153+ as a private `FCMDEL/1;m=<id>`
+  system event, and the row is removed as on the overlay.
+- Relay history replay labels senders with the same resolver as live events, so Steam/HUD-linked
+  players no longer appear as `pending-*` after a reconnect.
+
+Pure Haxe parser tests and the `moderation` Ruffle scenario (both providers) cover these paths.
+Still game-only and pending capture: whether ZFE and xScal forward the `FCMMOD/1;` `messageId`
+unchanged, whether ZFE returns `moderationAction` synchronously or as a queued request, and
+delivery of the `FCMDEL/1;` system event through both native providers. In-game `/report` is
+deferred. Protocol details: [moderation action](native-chat-relay/protocol-spec.md#moderation-action).
