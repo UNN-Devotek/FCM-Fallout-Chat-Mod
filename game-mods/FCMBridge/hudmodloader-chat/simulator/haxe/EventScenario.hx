@@ -1,6 +1,8 @@
 /** Event command, private help, and physical feed-row navigation regression. */
 @:access(FCMChatWidget)
 class EventScenario {
+    static var _serverNow:Float = 0;
+
     static function check(label:String, ok:Bool):Void { if (!ok) throw label; }
 
     public static function start(widget:FCMChatWidget, provider:String):Void {
@@ -53,7 +55,26 @@ class EventScenario {
                         check("arrow keys reached first event line",
                             widget._feedRows[widget._selectedRowIndex].textField.text.indexOf("EVENT COMMANDS") >= 0
                             && widget._feedScrollY < widget._feedMaxScrollY);
+                        // Down with nothing selected must stay on the newest rows, not jump
+                        // to the oldest row (reported as "scrolled up to the beginning").
+                        widget.scrollToBottom();
+                        check("down arrow handled", widget.handleUserEvent("ArrowDown", true));
+                        widget.handleUserEvent("ArrowDown", false);
+                        check("down with no selection stays at newest",
+                            widget._selectedRowIndex == -1
+                            && widget._feedScrollY == widget._feedMaxScrollY);
                         widget._inputOpen = false;
+                        // Relay rows carry server time. Date the latest one a minute behind the
+                        // player's clock to reproduce a PC clock that runs fast.
+                        var serverNow = Date.now().getTime() - 60000;
+                        widget.parseAndRenderEvents(haxe.Json.stringify({success:true, events:[
+                            {id:0, kind:"chat.message", channel:"global",
+                                messageId:"event-clock-seed", senderUserId:"peer-1",
+                                senderDisplayName:"Peer", body:"before the announcement",
+                                createdAt:FcmFeedPlan.utcTimestamp(Date.fromTime(serverNow)),
+                                targetUserId:""}
+                        ]}));
+                        _serverNow = serverNow;
                         widget.handleSubmittedText("/sbq");
                         waitForAnnouncement(widget, provider);
                     } catch (error:Dynamic) {
@@ -95,6 +116,27 @@ class EventScenario {
                 timer.stop();
                 check("event shortcut sent from General",
                     MockXscal.lastEventBody == "/sbq" && MockXscal.lastEventChannel == "global");
+                // A relay row newer (server time) than the notice must follow it, even
+                // though it is older than the player's fast clock.
+                widget.parseAndRenderEvents(haxe.Json.stringify({success:true, events:[
+                    {id:0, kind:"chat.message", channel:"global",
+                        messageId:"event-clock-after", senderUserId:"peer-1",
+                        senderDisplayName:"Peer", body:"after the announcement",
+                        createdAt:FcmFeedPlan.utcTimestamp(Date.fromTime(_serverNow + 5000)),
+                        targetUserId:""}
+                ]}));
+                var notice:Dynamic = null;
+                var after:Dynamic = null;
+                for (row in widget._records) {
+                    if (row.body == "Event announced in Events.") notice = row;
+                    if (row.messageId == "event-clock-after") after = row;
+                }
+                check("newer chat follows event feedback despite a fast player clock"
+                    + (notice == null ? " notice=missing" : " notice=" + notice.createdAt + "#" + notice.arrivalOrder)
+                    + (after == null ? " after=missing" : " after=" + after.createdAt + "#" + after.arrivalOrder),
+                    notice != null && after != null
+                    && FcmFeedPlan.compareChronology(notice.createdAt, notice.arrivalOrder,
+                        after.createdAt, after.arrivalOrder) < 0);
                 widget.handleSubmittedText("t");
                 var before = widget._records.length;
                 widget.handleSubmittedText("/sbq");

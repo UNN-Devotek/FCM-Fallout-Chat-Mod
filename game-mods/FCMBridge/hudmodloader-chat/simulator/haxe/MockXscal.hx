@@ -26,6 +26,12 @@ class MockXscal {
     public static var lastChatBody(default, null):String = "";
     public static var giveawayMode:Bool = false;
     public static var eventMode:Bool = false;
+    /** Ordinary sends containing this phrase get the relay's synchronous automod rejection. */
+    public static var blockedPhrase:String = "";
+    /** Relay link silently dead: sends get only the worker's local ACK, nothing comes back. */
+    public static var silentRelay:Bool = false;
+    /** Older relays/xScal builds do not advertise the retry-capable outbox. */
+    public static var authCanRetry:Bool = true;
     public static var lastEventBody(default, null):String = "";
     public static var lastEventChannel(default, null):String = "";
     public static var lastGiveawayBody(default, null):String = "";
@@ -138,7 +144,7 @@ class MockXscal {
             authPollCount++;
             if (!authReady) return response({success:true, state:"connecting", status:"connecting"});
             var state:Dynamic = {success:true, state:"authenticated", status:"authenticated",
-                userId:"sim-relay-user", linkedUserId:"sim-linked-user", canRetryHudSend:true,
+                userId:"sim-relay-user", linkedUserId:"sim-linked-user", canRetryHudSend:authCanRetry,
                 canSendRoomDiagnostics:true};
             if (authAdvertisesLayout) Reflect.setField(state, "canSaveHudLayout", true);
             return response(state);
@@ -222,7 +228,7 @@ class MockXscal {
                     lastRoomDiagnosticBody = body;
                 } else serverControlCount++;
                 if (body == "FCMCTL/1/LEAVE") leaveControlCount++;
-                if (StringTools.startsWith(body, "FCMCTL/1/ROSTER:")) {
+                if (StringTools.startsWith(body, "FCMCTL/1/ROSTER:") && !silentRelay) {
                     lastRosterBody = body;
                     var target:String = Std.string(Reflect.field(args, "targetUserId"));
                     var separator:Int = target.indexOf(";");
@@ -237,8 +243,15 @@ class MockXscal {
                 }
                 return response({success:true, messageId:messageId, targetUserId:""});
             }
+            if (blockedPhrase.length > 0 && body.indexOf(blockedPhrase) >= 0) {
+                lastChatBody = body;
+                return response({success:false, error:{code:"message_blocked",
+                    message:"Message blocked by the chat filter"}});
+            }
             ordinarySendCount++;
             lastChatBody = body;
+            // The 2026-11-16 field log: a 49-byte local ACK with no message ID.
+            if (silentRelay) return response({success:true, status:"queued"});
             var nextId:Int = scenarioEvents.length + 1;
             scenarioEvents.push({kind:"chat.message", id:nextId, messageId:messageId,
                 channel:channel, senderUserId:"sim-linked-user", senderDisplayName:"Simulator76",

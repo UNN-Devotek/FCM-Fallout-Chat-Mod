@@ -5,6 +5,14 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
+**Desktop xScal 0.5.38 upgrade (2026-11-17):** the desktop's xScal 0.4.31 was replaced
+with official Nexus xScal 0.5.38 (mod 4183, Main file 25105) and the matching Address
+Library v7 for 1.7.27.11 (mod 4298, Main file 25075). The DLL and Steam address table
+match the downloads by SHA-256. The new `xscal.ini` template was merged, keeping the
+Dev relay endpoint and `[xScalPriority] enabled=false`; the new `[ProtoSync]` section keeps
+its upstream default. The 0.4.31 files are backed up in `xscal-backup-0.4.31/` in the
+game folder. The HUD under test is 2.10.153. In-game acceptance on 0.5.38 is pending.
+
 **Current Dev integration candidate 2.10.151 (2026-10-22):** combines the local
 2.10.150 nameplate work with current Dev's adaptive cooldown/retry handling.
 All required local gates pass, including 93/93 Ruffle cases. The rebuilt DEV
@@ -225,7 +233,48 @@ the linked FCM account, stay in the selected community channel, and do not creat
 command itself. Entering `giveaway` or `giveaway help` alone inserts a local
 private help row into the current HUD feed without contacting the relay; it is
 visible only to that player, including when the game strips a leading `/`.
+A send the relay rejects for good (chat filter `message_blocked`, mute, slash command, length)
+is removed from the feed and outbox at once, and the reason appears in the prompt row only.
+Earlier builds wrote it into the feed's status line, where the next feed render immediately
+replaced it, so the message vanished without explanation.
+
+**Silent relay recovery.** A provider can keep answering polls and reporting `authenticated`
+after its relay link has quietly died. A 2026-11-16 xScal field log showed this: the
+relay's room confirmations stopped while renewals kept going out, chat stopped arriving, and two
+sends got only xScal's local 49-byte ACK (no message ID). They were shown as delivered and never
+reached Discord, and the HUD never reconnected. The widget now restarts the transport in two cases:
+
+- a confirmed Server room lapses (60 s) after at least three roster renewals went unanswered
+  (`FcmReconnect.SILENT_RENEWALS`; the field log had four). The log shows
+  `reconnecting: relay stopped confirming the Server room`. A lapse with fewer unanswered
+  renewals, such as a loading screen or one missed reply, only closes the Server tab as before,
+  and the next renewal restores it;
+- no room was ever confirmed although six room requests went out (about one minute;
+  `FcmReconnect.SILENT_JOINS`), for example when the link died during a world hop
+  (`reconnecting: relay never confirmed the Server room`). An explicit rejection is an answer and
+  is not counted;
+- a send in the retry-capable outbox was attempted three times with no relay answer
+  (`SILENT_RETRIES`; a receipt, cooldown or in-progress reply resets the count). The message
+  stays queued with its `[sending]` label and is resent after the reconnect
+  (`reconnecting: queued sends got no relay answer`);
+- an ordinary send the provider accepted, with no relay message ID, no outbox retry entry,
+  no private receipt and no echo after 15 s (`FcmReconnect.SEND_CONFIRM_MS`). Its row keeps its
+  text and gains `[unconfirmed]`. The log shows `unconfirmed sends=N` and
+  `reconnecting: sent message was never confirmed by the relay`. A send the relay acknowledged
+  with a message ID is never flagged. A late echo can still reconcile the row, which removes
+  the label. Sends tracked by the retry-capable outbox keep their own `[sending]`/retry path.
+
+These checks run only while connected. Each reconnect restarts the counts, and the connect
+backoff resets after a successful connect, so a relay that stays silent is retried about once a
+minute instead of being trusted. Recovery does not depend on the provider noticing the dead socket. The pure rules (`FcmReconnect.relaySilent`, `joinSilent`, `sendUnconfirmed` and the outbox
+`answered`/`takeUnanswered` counts) are covered by `TestFcmOutbox`, and the `silent-relay` Ruffle
+scenario runs every path. The cause of the 2026-11-16 silence (xScal worker, network or relay) is not established
+from the HUD log, because xScal does not log its relay socket.
 The help row has a UTC timestamp and scrolls upward as newer chat arrives.
+Private help and command feedback rows (for example "Event announced in Events.") take the
+newest relay timestamp already in the feed, not the player's PC clock, so a fast PC clock cannot
+pin them below newer chat and make the feed look frozen. Only an empty feed falls back to the
+local UTC clock.
 The ZFE terminal command receipt clears the command outbox, so it no longer
 waits for a chat echo and reports a false delivery warning. In 2.10.129,
 command feedback used the prompt; 2.10.130 places it in the private feed.
@@ -560,7 +609,8 @@ The shipped key map is `openKey=INSERT`, `channelNextKey=NextPage`, `channelPrev
 `scrollUpKey=Up`, `scrollDownKey=Down`, `scrollBottomKey=`, `activateLinkKey=F8`, and
 `hideKey=DELETE`. Insert opens chat by
 default; Enter sends a non-empty draft and Escape cancels. Page Up/Down switch channels while idle
-or typing. Up/Down selects a message row and paints a bounded highlight. The configured link key
+or typing. Up/Down selects a message row and paints a bounded highlight. With no row selected,
+Up starts at the newest row and Down stays on the newest rows (it never jumps to the oldest row). The configured link key
 (F8 by default) activates the selected row's first HTTP(S) URL through the
 capability-gated ZFE browser-v1 service. Full URLs remain literal and selectable; ZFE accepts
 only validated HTTPS targets. No generic Flash, Electron, relay or alternate-provider launcher

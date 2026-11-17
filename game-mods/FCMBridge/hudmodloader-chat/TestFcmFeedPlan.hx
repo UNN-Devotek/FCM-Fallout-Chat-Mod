@@ -88,6 +88,23 @@ class TestFcmFeedPlan {
         check("later dated messages follow local help",
             FcmFeedPlan.compareChronology(helpTime, 10, "2026-09-25T19:25:40.000Z", 11) < 0);
 
+        // A fast player clock must not pin event-command feedback under newer chat.
+        var fastClock = Date.fromTime(1790364339640.0 + 10 * 60 * 1000.0);
+        var noticeTime = FcmFeedPlan.localNoticeTimestamp("2026-09-25T19:25:39.640Z", fastClock);
+        check("local notice anchors to newest relay time", noticeTime == "2026-09-25T19:25:39.640Z");
+        check("announcement after a fast-clock notice sorts below it",
+            FcmFeedPlan.compareChronology(noticeTime, 10, "2026-09-25T19:25:41.000Z", 11) < 0);
+        check("notice follows the row it was anchored to",
+            FcmFeedPlan.compareChronology("2026-09-25T19:25:39.640Z", 9, noticeTime, 10) < 0);
+        check("empty feed notice falls back to UTC now",
+            FcmFeedPlan.localNoticeTimestamp("", Date.fromTime(1790364339640.0)) == helpTime
+            && FcmFeedPlan.localNoticeTimestamp(null, Date.fromTime(1790364339640.0)) == helpTime);
+
+        // Scrolling with nothing selected: Up starts at newest, Down stays at newest.
+        check("down with no selection stays pinned to newest", FcmFeedPlan.initialRowSelection(1, 20) == -1);
+        check("up with no selection selects newest row", FcmFeedPlan.initialRowSelection(-1, 20) == 19);
+        check("empty feed selects nothing", FcmFeedPlan.initialRowSelection(-1, 0) == -1);
+
         // Coalescer: bursts collapse into one tick.
         var coalescer = new FcmRenderCoalescer();
         check("first request schedules the tick", coalescer.request());

@@ -1,5 +1,20 @@
 # FCMChatWidget build, install, and verification
 
+## Chat recovery test candidate 2.10.153 — 2026-11-17
+
+**Widget version:** 2.10.153. Local test candidate; native acceptance pending.
+
+- Event announcements no longer stop the feed; Down returns to the newest rows.
+- Automod-blocked and other rejected sends leave the feed with an explanation.
+- A relay link that goes quiet (unanswered room renewals, unconfirmed joins, or an
+  accepted send with no echo after 15 s) forces a reconnect; such a send is labelled
+  `[unconfirmed]`.
+- xScal answers `getAuthState` itself without `canRetryHudSend`. xScal sends now carry
+  the `FCMOUT/1` receipt ID, and the first private `FCMACK/1` receipt enables safe
+  retries for the widget instance, so a send the xScal worker drops is resent after
+  the reconnect and the relay deduplicates it.
+- The "Reconnecting..." prompt clears once the reconnect succeeds.
+
 ## Native caret test candidate 2.10.152 — 2026-10-28
 
 **Widget version:** 2.10.152. Local test candidate; native acceptance pending.

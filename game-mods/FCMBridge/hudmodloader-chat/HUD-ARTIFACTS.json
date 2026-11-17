@@ -1,14 +1,14 @@
 {
   "artifacts": {
-    "FCMChatWidget.ba2": "600948b678c562fc1f8f4818d14e41568ace8a7610bc93f93ffebaf33f264125",
-    "FCMChatWidget.swf": "90828c6b816680e1736c9d060e5c1505ffe7df04f2ba750bb2aa41c50257d85d"
+    "FCMChatWidget.ba2": "1493c1553a07ed782b1a63a179d2014650a2e54435062c653b33d5feb610f475",
+    "FCMChatWidget.swf": "d92df5075ce121c3a7aef5bf10c69a0ca7a3415d5c9d56206f05a312abd3d2f3"
   },
   "format": 1,
   "sources": {
     "FcmAuthFlow.hx": "dcfa605765f45a404ef3c139fd253e5ddadd491ff2f46751707a28f5901fc729",
     "FcmNativeApi.hx": "1bb137aebf8b5f596f6390fa8e615ce3a731cd4b2bf95befb8272496cf0b96fe",
     "FcmRuntimeError.hx": "4341725ac91f54c0329c312e7e947ae6dd7480db3a478c968f61c1de724fbef6",
-    "hudmodloader-chat/FCMChatWidget.hx": "5f9389d139d34773e0e5715d01d87cf38a5b941f8b902acdd47cf584368dd815",
+    "hudmodloader-chat/FCMChatWidget.hx": "484ec969c4fe63eda5584a58f1cf0b879b21d925fd94b5269fd3f199129b16b4",
     "hudmodloader-chat/FcmBrowser.hx": "e0ff11e37ccfc85a01019be369d6d8cea30388b239690c2fa865d93eefd02430",
     "hudmodloader-chat/FcmCommand.hx": "ab90179ef7c142e3553f55822c4a4d9d8eb50338a0e9a55075512613d8e064c2",
     "hudmodloader-chat/FcmConfig.hx": "5eacdb03a5216af9f608f4ae89c1669f8fe43d3a0914bc4efd55732c558fec9c",
@@ -21,7 +21,7 @@
     "hudmodloader-chat/FcmEmojiLayout.hx": "6a0743bba1b1ce8432f2aa965bf498e001457c16c6b6bf50f8f231c92ce80747",
     "hudmodloader-chat/FcmEmojiRenderer.hx": "f23d100a95c05a69726bd1cb35915a9ee8f5c481808cbb681ef1b222930481d1",
     "hudmodloader-chat/FcmEventCommands.hx": "61560fd087cba72a79fef30c0b5ab7381824ad388c519100c55249437dc58f9f",
-    "hudmodloader-chat/FcmFeedPlan.hx": "e94bd520abee785927dd145c1f9d95c0ced811e3245ed1217ff932a2b2ba6704",
+    "hudmodloader-chat/FcmFeedPlan.hx": "b5cbe113e4a7b5f914d9cdfd5ae4624338faf8fc579389066e10a1c737327434",
     "hudmodloader-chat/FcmFeedText.hx": "7964c4269c2fb8f27d8cea77e6c1f538d77da57374811d966d2f4407fe94e826",
     "hudmodloader-chat/FcmHistory.hx": "f3a904d7cffa7936929a0c509cbca373ff0f8b8fec50a352ebb9567c8a54a702",
     "hudmodloader-chat/FcmHudLayout.hx": "497e18a0114d7b78dfe2b460e020d2b5c28e021c65d3a7e7ef7831a1baea5ec6",
@@ -38,8 +38,8 @@
     "hudmodloader-chat/FcmNameplateProbe.hx": "837357e36c786d52daded4d09a57037f5cb1dea694604ed177e58f6679071366",
     "hudmodloader-chat/FcmNameplateSource.hx": "836563e8a02b27864c1ad137d8ea83a63869437b28ef739c2f09c781d10cbf35",
     "hudmodloader-chat/FcmNameplates.hx": "bab9abed968e519c959666b7249368362d1fac08ea965b5bc6c04b3232b1b011",
-    "hudmodloader-chat/FcmOutbox.hx": "80addaa0cab4dfd6c9df4baa174d92e320f2f63053d6dc0bb9d2ee4de9946175",
-    "hudmodloader-chat/FcmReconnect.hx": "de109657cf1365187a2dc7588c635ec8c225b187b1c907d607ac88c5c7985956",
+    "hudmodloader-chat/FcmOutbox.hx": "826d43b288ef2dcfc3c2556a3b5f1a332ac9ecb709eb6128a01f1f44f77ed4e7",
+    "hudmodloader-chat/FcmReconnect.hx": "5bd2883f60d56f341d712bb0c8de9117f6a37c59266747018f2596c5cabb41fe",
     "hudmodloader-chat/FcmRenderCoalescer.hx": "18983677235ad6f3a7ef8689623a7c02489847b3b01840804d1da621896b8092",
     "hudmodloader-chat/FcmRenderGeneration.hx": "766bce1f508435f6b16166f82babc1439d1fc8916f993f56e28fb432f9985559",
     "hudmodloader-chat/FcmRoster.hx": "ae2ee31336ce1122007e5c0ca0044ab94d9e86d0c380edb075b677c949f851ba",

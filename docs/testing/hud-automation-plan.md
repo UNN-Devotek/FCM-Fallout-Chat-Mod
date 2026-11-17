@@ -290,6 +290,26 @@ durable private receipt. The scenario excludes hosted snapshots and retains stan
 automatic teardown. Pure Haxe command tests, overlay fixture regressions, and website
 HUD-guide tests run in existing CI jobs; the complete Ruffle suite covers both providers.
 
+The provider-paired `automod-block` scenario sends a message the relay's automod rejects
+(`message_blocked`) through the synchronous xScal send response, the private outbox receipt,
+and the ZFE asynchronous completion. After the next render it requires that the optimistic row,
+its outbox entry and any feed row are gone, that the reason is visible in the prompt, and that
+newer chat still renders. The mock relay's `blockedPhrase` hook drives the synchronous path.
+
+The provider-paired `silent-relay` scenario covers a provider that stays "authenticated" while its
+relay link is dead (2026-11-16 xScal field log). First, a confirmed Server room lapses after
+three unanswered renewals, and the widget must reconnect and close the Server tab. The existing
+`typing-renewal` and `fast-travel` scenarios still require a single missed confirmation to
+recover through the next renewal without a reconnect. On xScal it then
+switches the mock to `silentRelay` and `authCanRetry=false`: sends get only a local ACK with no
+message ID, and roster controls get no confirmation. A real send must stay unflagged inside the
+15 s echo window. It must then be labelled `[unconfirmed]` while the prompt shows the reconnect
+notice, and the transport must reconnect. On both providers, six unanswered room requests with no
+confirmation must reconnect. A retry-capable queued send with three unanswered attempts must also
+reconnect and stay queued. Finally, an accepted send whose echo arrived must never be flagged. Ruffle's clock starts at zero, so the scenario waits until 15 s have elapsed instead of
+backdating the send. Whether a real xScal/ZFE reconnect restores a dead native socket remains
+in-game acceptance.
+
 Native acceptance remains required on ZFE and xScal: select General, send `/t message`,
 `/i message`, and `/e message`, then confirm each destination receives one message
 while General stays selected. Send plain text and confirm General receives it. Enter

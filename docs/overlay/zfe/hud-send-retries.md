@@ -1,7 +1,11 @@
 # HUD send receipts and retry safety
 
 The chat.v1 backend advertises `getAuthState.permissions.canRetryHudSend` for linked
-identities. A compatible HUD can retry an ambiguous send using the **same** local
+identities. xScal answers `getAuthState` itself and omits that permission (and
+`linkedUserId`), so the HUD (2.10.153+) always attaches the `FCMOUT/1` receipt ID to xScal
+sends. The first private `FCMACK/1` receipt proves the relay deduplicates retries and
+enables them for the rest of that widget instance. Until then a send is not retried,
+and one with no echo after 15 s is labelled `[unconfirmed]` and triggers a reconnect. A compatible HUD can retry an ambiguous send using the **same** local
 message ID in the native-preserved `targetUserId` member:
 
 ```text
