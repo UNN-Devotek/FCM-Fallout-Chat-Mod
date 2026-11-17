@@ -616,6 +616,64 @@ function buildModerationCommand() {
     .toJSON();
 }
 
+/** Minimum spacing between command mutations. Discord allows five edits per 20 s on
+ * the per-command route, and the runtime Discord client rejects (never waits on) a
+ * rate limit, recording a required-effect failure that fences the next boot. */
+export const COMMAND_MUTATION_SPACING_MS = 4_500;
+
+interface RegisteredCommand {
+  name: string;
+  equals(command: never): boolean;
+  edit(command: never): Promise<unknown>;
+  delete(): Promise<unknown>;
+}
+
+/**
+ * The commands that must be created or edited, and a stale alias to delete. Unchanged
+ * commands are skipped, so an ordinary restart sends no mutations at all; previously
+ * every boot edited all ~15 commands and always hit Discord's rate limit.
+ */
+export function planCommandSync<C extends { name: string }, R extends RegisteredCommand>(
+  desired: readonly C[], existing: readonly R[],
+): { changes: Array<{ command: C; current: R | undefined }>; stale: R | undefined } {
+  const changes: Array<{ command: C; current: R | undefined }> = [];
+  for (const command of desired) {
+    const current = existing.find((registered) => registered.name === command.name);
+    if (current && current.equals(comparableCommand(command) as never)) continue;
+    changes.push({ command, current });
+  }
+  return { changes, stale: existing.find((registered) => registered.name === 'newcodes') };
+}
+
+/**
+ * The builder JSON as Discord stores a guild command. Builders emit keys with
+ * undefined values (which discord.js's equals treats as set) and dm_permission /
+ * default_permission, which Discord does not return for guild commands, so a raw
+ * comparison would report every command as changed.
+ */
+export function comparableCommand<C extends object>(command: C): Partial<C> {
+  const plain = JSON.parse(JSON.stringify(command)) as Record<string, unknown>;
+  delete plain.dm_permission;
+  delete plain.default_permission;
+  return plain as Partial<C>;
+}
+
+/** Waits so consecutive mutations are at least COMMAND_MUTATION_SPACING_MS apart. */
+export function commandMutationPacer(
+  spacingMs = COMMAND_MUTATION_SPACING_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => number = Date.now,
+): () => Promise<void> {
+  let last: number | null = null;
+  return async () => {
+    if (last !== null) {
+      const wait = last + spacingMs - now();
+      if (wait > 0) await sleep(wait);
+    }
+    last = now();
+  };
+}
+
 async function registerCommands(client: Client): Promise<void> {
   if (!env.DISCORD_SERVER_ID) return;
   const eventShortcuts = [];
@@ -643,8 +701,10 @@ async function registerCommands(client: Client): Promise<void> {
   const manager = client.application?.commands;
   if (!manager) return;
   const existing = await manager.fetch({ guildId: env.DISCORD_SERVER_ID });
-  for (const command of commands) {
-    const current = existing.find((registered) => registered.name === command.name);
+  const plan = planCommandSync(commands, [...existing.values()]);
+  const pace = commandMutationPacer();
+  for (const { command, current } of plan.changes) {
+    await pace();
     // discord.js's edit overload is narrower than SlashCommandBuilder's valid
     // REST JSON output even though the API accepts the same command payload.
     if (current) await current.edit(command as unknown as Parameters<typeof current.edit>[0]);
@@ -652,9 +712,13 @@ async function registerCommands(client: Client): Promise<void> {
   }
   // `/newcodes` was an accidental public alias. Remove it from existing guilds
   // as registration otherwise only creates/edits commands.
-  const staleNewCodes = existing.find((registered) => registered.name === 'newcodes');
-  if (staleNewCodes) await staleNewCodes.delete();
-  logger.info({ count: commands.length, guildId: env.DISCORD_SERVER_ID }, '[discord-overlay-commands] registered');
+  const staleNewCodes = plan.stale;
+  if (staleNewCodes) {
+    await pace();
+    await staleNewCodes.delete();
+  }
+  logger.info({ count: commands.length, changed: plan.changes.length, guildId: env.DISCORD_SERVER_ID },
+    '[discord-overlay-commands] registered');
 }
 
 async function onInteraction(interaction: Interaction): Promise<void> {

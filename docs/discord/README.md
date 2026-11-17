@@ -24,6 +24,14 @@ the full server-side overlay command catalog, including configured custom comman
 so a new enabled overlay command does not require a separate Discord command
 registration change.
 
+On `ready` the service fetches the guild's registered commands and creates or edits
+only those whose definition differs from what Discord stores, so an ordinary restart
+sends no command mutations. Required mutations are spaced at least 4.5 s apart
+(`COMMAND_MUTATION_SPACING_MS`). Discord allows five edits per 20 s on that route, and
+the runtime Discord client rejects rather than waits on a rate limit. Before this, every
+boot edited all commands, hit the limit, and recorded a required-effect failure that
+fenced the next boot.
+
 The card-bearing Fallout lookups also have first-class public commands:
 `/wiki query:`, `/camp item:`, `/minerva`, `/nukecodes`, and
 `/serverstatus`.
