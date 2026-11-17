@@ -3,7 +3,11 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Current 2.10.152 test candidate:** adds a local native xScal caret when its
+**Current 2.10.153 test candidate:** recovers automatically when the relay link goes
+quiet, and lets xScal retry a dropped send once a relay receipt proves retries are
+deduplicated (see `BUILD.md`). Native testing remains pending.
+
+**2.10.152 test candidate:** adds a local native xScal caret when its
 provider supplies UTF-16 `caretIndex`, while preserving native input ownership.
 The existing ZFE/shared input path is unchanged. Native testing remains pending.
 It also includes current Dev's adaptive

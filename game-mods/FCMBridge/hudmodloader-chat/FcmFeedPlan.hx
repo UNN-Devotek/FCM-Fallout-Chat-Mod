@@ -31,6 +31,29 @@ class FcmFeedPlan {
     }
 
     /**
+     * Timestamp for a widget-local notice (command feedback, help). The player's
+     * clock is not the relay's clock: a PC that runs even slightly fast would date
+     * the notice after newer relay rows, pinning it under the feed so later chat
+     * (including the announcement the notice refers to) sorts above it and the
+     * feed appears frozen. Anchor to the newest relay-dated row instead; arrival
+     * order breaks the tie, and every later relay row sorts after the notice.
+     */
+    public static function localNoticeTimestamp(latestKnown:String, now:Date):String {
+        if (latestKnown != null && latestKnown.length > 0) return latestKnown;
+        return utcTimestamp(now);
+    }
+
+    /**
+     * First row selected when the player scrolls with nothing selected. Up starts
+     * at the newest row; Down returns -1 (stay pinned to the newest rows) instead
+     * of jumping to the oldest row.
+     */
+    public static function initialRowSelection(direction:Int, rowCount:Int):Int {
+        if (rowCount <= 0 || direction >= 0) return -1;
+        return rowCount - 1;
+    }
+
+    /**
      * Fast prefilter: true only when the body could contain an emoji token.
      * Unicode emoji needs a non-ASCII char; custom Discord markup needs ':' or
      * '<' (e.g. `:name:` or `<:name:123>`). Plain ASCII chat without those

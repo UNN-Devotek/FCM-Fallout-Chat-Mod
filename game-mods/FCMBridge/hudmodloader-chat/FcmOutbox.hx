@@ -7,6 +7,8 @@ typedef FcmQueuedSend = {
     var createdAt:Float;
     var nextAt:Float;
     var attempts:Int;
+    /** Attempts since the relay last answered this entry (receipt, cooldown, in-progress). */
+    var unanswered:Int;
 }
 
 /** In-memory, authenticated-widget outbox. No disk/private-message persistence. */
@@ -19,7 +21,7 @@ class FcmOutbox {
     public function add(id:String, channel:String, body:String, identity:String, room:String, now:Float):Bool {
         if (entries.length >= MAX || identity.length == 0) return false;
         entries.push({id:id, channel:channel, body:body, identity:identity, room:room,
-            createdAt:now, nextAt:now, attempts:0});
+            createdAt:now, nextAt:now, attempts:0, unanswered:0});
         return true;
     }
     public function get(id:String):FcmQueuedSend {
@@ -53,7 +55,18 @@ class FcmOutbox {
     public function attempted(id:String, now:Float):Void {
         var entry = get(id); if (entry == null) return;
         entry.attempts++;
+        entry.unanswered++;
         entry.nextAt = now + Math.min(30000, 3000 * Math.pow(2, Math.min(entry.attempts - 1, 4)));
+    }
+    /** The relay replied about this entry, so its link is alive. */
+    public function answered(id:String):Void {
+        var entry = get(id); if (entry != null) entry.unanswered = 0;
+    }
+    /** Entries whose retries prove the relay is not answering; their counts restart. */
+    public function takeUnanswered(limit:Int):Array<String> {
+        var ids:Array<String> = [];
+        for (entry in entries) if (entry.unanswered >= limit) { ids.push(entry.id); entry.unanswered = 0; }
+        return ids;
     }
     /** Pause this sender's existing chat retries; private commands stay usable. */
     public function deferCooldown(id:String, response:String, now:Float):Void {
@@ -105,6 +118,23 @@ class FcmOutbox {
             if (!Std.isOfType(wait, Float) || !Math.isFinite(wait) || wait <= 0 || wait > MAX_COOLDOWN_MS) return 0;
             return wait;
         } catch (_:Dynamic) { return 0; }
+    }
+    /**
+     * Sender-only explanation for a terminal send rejection (automod, mute, length...).
+     * Shown in the prompt row, never the feed: a feed status line is replaced by the next
+     * render, so the player would see their message vanish without a reason.
+     */
+    public static function rejectionNotice(code:String, maxSendLen:Int):String {
+        return switch (code == null ? "" : code) {
+            case "message_blocked": "Message blocked by the chat filter.";
+            case "slash_ignored": "Slash commands work in the dashboard, not in-game.";
+            case "user_muted": "You are muted and cannot send right now.";
+            case "message_too_long": "Message too long (max " + maxSendLen + ").";
+            case "send_uncertain": "Delivery unconfirmed. Check history before sending again.";
+            case "send_conflict": "Message could not be retried. Please send it again.";
+            case "": "Message not sent.";
+            case other: "Message not sent: " + other;
+        };
     }
     public static function retryable(code:String):Bool {
         return ["", "not_connected", "not_started", "timeout", "request_timeout", "relay_timeout",

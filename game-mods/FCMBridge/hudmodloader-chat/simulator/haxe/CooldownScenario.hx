@@ -54,7 +54,9 @@ class CooldownScenario {
                 check("direct transport cannot bypass queued cooldown", widget._outbox.get(delayedId).attempts == previousAttempts
                     && MockXscal.ordinarySendCount == sends);
                 widget._outbox.remove(delayedId);
+                // Model a relay without retry support: neither advertised nor receipt-proven.
                 widget._canRetryHudSend = false;
+                widget._relayReceiptsProven = false;
                 widget._zfePendingSends.set(901, id);
                 widget.applyZfeAsyncCompletion('{"kind":"chat.send.failed","requestId":901,'
                     + '"error":{"code":"rate_limited","retryAfterMs":33000}}', false);

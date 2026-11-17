@@ -38,6 +38,22 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).not.toContainText('COOLDOWN FAIL');
   });
 
+  test(`automod-blocked sends never stay on screen and the feed keeps updating (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=automod-block`);
+    await expect(page.locator('#log')).toContainText(/AUTOMOD (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`AUTOMOD PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('AUTOMOD FAIL');
+  });
+
+  test(`a silent relay forces a reconnect and flags unconfirmed sends (${provider})`, async ({ page }) => {
+    // Waits out the 15 s echo window, then a full reconnect and resend.
+    test.setTimeout(75_000);
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=silent-relay`);
+    await expect(page.locator('#log')).toContainText(/SILENT-RELAY (PASS|FAIL)/, { timeout: 65_000 });
+    await expect(page.locator('#log')).toContainText(`SILENT-RELAY PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('SILENT-RELAY FAIL');
+  });
+
   test(`giveaway command and announcement stay in the selected channel (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=giveaway`);
     await expect(page.locator('#log')).toContainText(/GIVEAWAY (PASS|FAIL)/, { timeout: 25_000 });
