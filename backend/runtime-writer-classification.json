@@ -24560,7 +24560,7 @@
               "file": "backend/src/services/relay/relayHandler.ts",
               "owner": "<module>"
             },
-            "fingerprint": "02265c3de5ebf26c6fa51d0d63bf17e9acb2ad2763b8057f1ec08f2c4c60190a",
+            "fingerprint": "f2e0c84d3bd14c3c0cdc45413518f98838e4e69c20ea4615b393b8d3eeb6ec99",
             "calls": []
           }
         ]
@@ -36465,7 +36465,7 @@
         "file": "backend/src/services/relay/relayHandler.ts",
         "owner": "<module>"
       },
-      "fingerprint": "02265c3de5ebf26c6fa51d0d63bf17e9acb2ad2763b8057f1ec08f2c4c60190a",
+      "fingerprint": "f2e0c84d3bd14c3c0cdc45413518f98838e4e69c20ea4615b393b8d3eeb6ec99",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
