@@ -183,6 +183,9 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
+      # Scheduled-event mirroring requires it; a missing value is recorded as a
+      # required-effect failure every five minutes and fences the next boot.
+      DISCORD_EVENTS_CHANNEL_ID: ${DISCORD_EVENTS_CHANNEL_ID:?set DISCORD_EVENTS_CHANNEL_ID (Dev events channel)}
       OVERLAY_UPDATE_NOTIFICATION_ROLE_ID: ${OVERLAY_UPDATE_NOTIFICATION_ROLE_ID:-}
       HUD_MOD_UPDATE_NOTIFICATION_ROLE_ID: ${HUD_MOD_UPDATE_NOTIFICATION_ROLE_ID:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
