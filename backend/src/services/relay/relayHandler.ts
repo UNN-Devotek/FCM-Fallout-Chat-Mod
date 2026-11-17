@@ -68,6 +68,7 @@ import {
   type PendingLiveFrame,
   registerRelayLiveFanout,
 } from './relayLiveFanout';
+import { relayMissedPongLimit, shouldReapSubscriber, supersededSubscriptions } from './relaySubscriberLiveness';
 import { engineEvaluate } from '../autoModEngine';
 import { getEffectiveRole, isPrivilegedRole } from '../userRoleService';
 import {
@@ -576,6 +577,10 @@ interface SubscriberState {
   initializing: boolean;
   pendingLiveFrames: PendingLiveFrame[];
   pendingLiveBytes: number;
+  subscribedAt: number;
+  /** True once the client answered a ping; only such sockets are judged by missed pongs. */
+  answeredPing: boolean;
+  unansweredPings: number;
 }
 
 // Module-level subscriber set — cleared on disconnect.
@@ -2149,14 +2154,25 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
     initializing: true,
     pendingLiveFrames: [],
     pendingLiveBytes: 0,
+    subscribedAt: Date.now(),
+    answeredPing: false,
+    unansweredPings: 0,
   };
   if (ws.readyState !== 1) return;
+  supersedeOlderSubscriptions(state);
   subscribers.add(state);
   let pingTimer: ReturnType<typeof setInterval> | null = null;
-  ws.once('close', () => {
+  ws.on('pong', () => {
+    state.answeredPing = true;
+    state.unansweredPings = 0;
+  });
+  ws.once('close', (code: number) => {
     if (pingTimer) cancelProducerTimer(pingTimer);
     subscribers.delete(state);
     void flushLocalPresenceToRedis();
+    // Lifetime and ping support per native subscription: evidence for liveness tuning.
+    logger.info({ userId: state.userId, code, lifetimeMs: Date.now() - state.subscribedAt,
+      answeredPing: state.answeredPing }, '[relayHandler] subscription closed');
   });
 
   // Ensure pub/sub is wired.
@@ -2269,6 +2285,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // traffic before its idle timeout fires. Tunable via RELAY_PING_INTERVAL_MS
   // (default 4000ms; 0 disables).
   const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
+  const missedPongLimit = relayMissedPongLimit();
   let checkingAccess = false;
   if (ws.readyState !== 1 || !subscribers.has(state)) return;
   void flushLocalPresenceToRedis();
@@ -2289,11 +2306,36 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
             );
             return;
           }
-          try { ws.ping(); } catch { /* socket closing */ }
+          if (ws.readyState !== 1) return;
+          if (shouldReapSubscriber(state.answeredPing, state.unansweredPings, missedPongLimit)) {
+            // The client stopped answering: free its per-IP slot instead of waiting for
+            // the proxy chain to notice, so its reconnect is not refused.
+            logger.warn({ userId: state.userId, unansweredPings: state.unansweredPings },
+              '[relayHandler] reaping unresponsive subscription');
+            subscribers.delete(state);
+            ws.terminate();
+            return;
+          }
+          try { ws.ping(); state.unansweredPings++; } catch { /* socket closing */ }
         }).catch((err) => logger.warn({ err, userId: state.userId }, '[relayHandler] subscriber access check failed'))
           .finally(() => { checkingAccess = false; });
       }, pingMs)
     : null;
+}
+
+/**
+ * A new subscription replaces older ones of the same relay identity. The client has
+ * abandoned those sockets; left open they hold per-IP slots and lock the player out.
+ */
+function supersedeOlderSubscriptions(current: SubscriberState): void {
+  for (const old of supersededSubscriptions(current, subscribers)) {
+    subscribers.delete(old);
+    logger.info({ userId: old.userId, ageMs: Date.now() - old.subscribedAt, answeredPing: old.answeredPing },
+      '[relayHandler] superseding older subscription for the same identity');
+    try { old.ws.close(4000, 'Superseded by a newer subscription'); } catch { /* closing */ }
+    // A vanished client never completes the close handshake; release the slot now.
+    setTimeout(() => { if (old.ws.readyState !== 3) old.ws.terminate(); }, 1_000).unref();
+  }
 }
 
 /** Serialize subscription setup so duplicate frames cannot create duplicate timers. */

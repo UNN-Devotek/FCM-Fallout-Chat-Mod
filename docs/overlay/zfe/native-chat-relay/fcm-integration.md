@@ -495,6 +495,28 @@ subscriber fan-out is backpressure-aware; a socket with more than 1 MiB buffered
 WebSocket status 1013 and removed from the subscriber set. Duplicate or concurrent `subscribe`
 frames on one connection receive `already_subscribed`.
 
+Each relay identity holds at most one live subscription. A new `subscribe` for the same identity
+closes the older socket with status 4000 (`Superseded by a newer subscription`) and terminates it
+after one second if the client never completes the close handshake. The server pings each
+subscription every `RELAY_PING_INTERVAL_MS` (default 4000 ms). A socket that has answered at least
+one ping and then misses `RELAY_MISSED_PONGS` consecutive pings (default 8, `0` disables) is
+terminated. A client whose WebSocket stack never answers pings is never judged by this rule. Both
+rules free the per-IP relay slot (five per IP) held by a connection the client has abandoned.
+Before them, abandoned subscriptions that the proxy chain had not yet closed filled all five slots
+and refused every send, room renewal and resubscribe from that player: production logs from
+2026-11-14 to 2026-11-16 show 143 such lockouts across 138 players, 57 lasting 5 to 30 minutes.
+Each closed subscription logs its lifetime and whether it ever answered a ping.
+
+Both rules need either a new socket from the client or a client that answers pings. A player
+whose five slots are all held by dead sockets that never answered a ping would still be refused,
+so the upgrade guard also evicts: when an IP is at its cap, a new connection takes the slot of
+that IP's longest-silent socket, provided it has had no inbound frame or pong for
+`RELAY_EVICT_IDLE_MS` (default 30000 ms, `0` disables). That socket is destroyed and the
+eviction is logged at info level (`[relayUpgrade] evicted silent connection to admit a new
+one`). Sockets with recent traffic are never evicted, so a burst of new connections is still
+refused with 429 while all five slots are active. On 2026-11-17 production still logged 9,461
+cap refusals in 72 hours from about 21 IPs, some refused every five seconds for hours.
+
 The modern widget does not equate native RPC acceptance with room membership. ROSTER/WORLD
 requests carry a current `FCMSESSION/1;<requestId>`; the widget waits for an authenticated system
 `FCMCTL/1/SERVER-READY:<requestId>|<roomKey>` matching that request. Up to 64 early SERVER rows

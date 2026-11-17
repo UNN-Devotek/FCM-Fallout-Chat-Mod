@@ -189,7 +189,10 @@ direct recovery from shared-population restoration and new-room assignment. Miss
 Redis diagnostic rings. These logs do not establish a private/public-world flag.
 
 Native relay connection slots are released by their owning TCP stream, including upgrades that
-abort before a WebSocket connection exists. The five-concurrent-connections-per-IP guard remains.
+abort before a WebSocket connection exists. The five-concurrent-connections-per-IP guard remains;
+abandoned subscriptions are released by identity supersession, missed-pong reaping and, at the
+cap, eviction of a socket silent for `RELAY_EVICT_IDLE_MS` (see
+`docs/overlay/zfe/native-chat-relay/fcm-integration.md`).
 Debug-level reservation/release logs pair a random connection reference with counts and a keyed `ipRef`;
 aborted-upgrade release is logged at info level. Normal RPC traffic does not generate info-level
 slot logs on every request. Cap
