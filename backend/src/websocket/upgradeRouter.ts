@@ -15,6 +15,7 @@ import type http from 'http';
 import type { Duplex } from 'stream';
 import { WebSocketServer } from 'ws';
 import { handleRelayConnection } from '../services/relay/relayHandler';
+import { evictableRelaySlot, relayEvictIdleMs } from '../services/relay/relaySubscriberLiveness';
 import logger from '../config/logger';
 import { clientIp, clientIpRef } from '../utils/clientIp';
 import { randomUUID } from 'node:crypto';
@@ -28,8 +29,23 @@ export const RELAY_WS_PATH = '/relay';
 // Internal WebSocketServer for the relay path (noServer mode).
 // Created once per process; relay connections are dispatched to handleRelayConnection.
 let relayWss: WebSocketServer | null = null;
-const relayConnsByIp = new Map<string, number>();
+/** One reserved relay connection; it holds one of its IP's slots until released. */
+interface RelaySlot {
+  connectionRef: string;
+  socket: Duplex;
+  lastActivityAt: number;
+}
+const relaySlotsByIp = new Map<string, Set<RelaySlot>>();
+const slotByRequest = new WeakMap<http.IncomingMessage, RelaySlot>();
 const upgradedRequests = new WeakSet<http.IncomingMessage>();
+
+/** Release a slot exactly once; returns the IP's remaining slot count. */
+function releaseRelaySlot(ip: string, slot: RelaySlot): number | null {
+  const slots = relaySlotsByIp.get(ip);
+  if (!slots || !slots.delete(slot)) return null;
+  if (slots.size === 0) relaySlotsByIp.delete(ip);
+  return slots.size;
+}
 
 // Relay frames contain a small JSON operation plus a token and a chat body (capped at
 // 500 characters by the handler). Keep this aligned with the main chat WS limit so
@@ -47,30 +63,45 @@ function getRelayWss(): WebSocketServer {
       verifyClient: (info, cb) => {
         const ip = clientIp(info.req);
         const ipRef = clientIpRef(info.req);
-        const current = relayConnsByIp.get(ip) ?? 0;
-        if (current >= RELAY_MAX_CONNS_PER_IP) {
-          logger.warn(
-            { ipRef, current, limit: RELAY_MAX_CONNS_PER_IP },
-            '[relayUpgrade] concurrent relay connection cap reached',
-          );
-          return cb(false, 429, 'Too many relay connections');
+        let slots = relaySlotsByIp.get(ip);
+        if (slots && slots.size >= RELAY_MAX_CONNS_PER_IP) {
+          const stale = evictableRelaySlot(slots, Date.now(), relayEvictIdleMs());
+          if (!stale) {
+            logger.warn(
+              { ipRef, current: slots.size, limit: RELAY_MAX_CONNS_PER_IP },
+              '[relayUpgrade] concurrent relay connection cap reached',
+            );
+            return cb(false, 429, 'Too many relay connections');
+          }
+          // Free the slot now; the socket's close event later finds it already released.
+          releaseRelaySlot(ip, stale);
+          logger.info({ event: 'relay_slot', action: 'evicted', connectionRef: stale.connectionRef, ipRef,
+            idleMs: Date.now() - stale.lastActivityAt, limit: RELAY_MAX_CONNS_PER_IP },
+          '[relayUpgrade] evicted silent connection to admit a new one');
+          stale.socket.destroy();
+          slots = relaySlotsByIp.get(ip);
+        }
+        if (!slots) {
+          slots = new Set();
+          relaySlotsByIp.set(ip, slots);
         }
         // Reserve before completing the upgrade. Connection callbacks run after
         // the handshake, so reserving there would allow a burst of parallel
         // upgrades to all observe the same pre-connection count.
-        relayConnsByIp.set(ip, current + 1);
-        const connectionRef = randomUUID();
+        const slot: RelaySlot = { connectionRef: randomUUID(), socket: info.req.socket, lastActivityAt: Date.now() };
+        slots.add(slot);
+        slotByRequest.set(info.req, slot);
+        const { connectionRef } = slot;
         logger.debug?.({ event: 'relay_slot', action: 'reserved', connectionRef, ipRef,
-          current: current + 1, limit: RELAY_MAX_CONNS_PER_IP }, '[relayUpgrade] connection slot');
+          current: slots.size, limit: RELAY_MAX_CONNS_PER_IP }, '[relayUpgrade] connection slot');
         // The TCP stream may abort before completeUpgrade emits a WebSocket
         // connection. Own the reservation on that stream, so both aborted and
         // completed upgrades release it exactly once.
         info.req.socket.once('close', () => {
-          const remaining = (relayConnsByIp.get(ip) ?? 1) - 1;
-          if (remaining <= 0) relayConnsByIp.delete(ip);
-          else relayConnsByIp.set(ip, remaining);
+          const remaining = releaseRelaySlot(ip, slot);
+          if (remaining === null) return; // already released by eviction
           const diagnostic = { event: 'relay_slot', action: 'released', connectionRef, ipRef,
-            current: Math.max(0, remaining), limit: RELAY_MAX_CONNS_PER_IP };
+            current: remaining, limit: RELAY_MAX_CONNS_PER_IP };
           if (upgradedRequests.has(info.req)) logger.debug?.(diagnostic, '[relayUpgrade] connection slot');
           else logger.info?.(diagnostic, '[relayUpgrade] aborted upgrade released');
         });
@@ -79,6 +110,15 @@ function getRelayWss(): WebSocketServer {
     });
     relayWss.on('connection', (ws, req) => {
       upgradedRequests.add(req);
+      const slot = slotByRequest.get(req);
+      if (slot) {
+        // Inbound frames and pongs prove the client is alive; silence makes the slot
+        // reusable when its IP is at the cap.
+        const touch = (): void => { slot.lastActivityAt = Date.now(); };
+        slot.lastActivityAt = Date.now();
+        ws.on('message', touch);
+        ws.on('pong', touch);
+      }
       handleRelayConnection(ws, req);
     });
   }
@@ -147,5 +187,5 @@ export function closeRelayWss(): Promise<void> {
 /** Reset the relay WSS singleton — for test isolation only. */
 export function _resetRelayWss(): void {
   relayWss = null;
-  relayConnsByIp.clear();
+  relaySlotsByIp.clear();
 }
