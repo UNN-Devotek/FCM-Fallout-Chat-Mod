@@ -11,12 +11,12 @@ $overlayDir = Join-Path $repoRoot 'cross-platform-overlay'
 if (-not $DistDir) { $DistDir = Join-Path $overlayDir 'dist-electron' }
 $installDir = Join-Path $overlayDir 'assets/install'
 $bridgeTemplate = Join-Path $repoRoot 'game-mods/FCMBridge/hudmodloader-bridge/INSTALL.template.txt'
-$expectedBridgeZipSha256 = 'b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47'
-$expectedBridgeBa2Sha256 = '47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45'
+$expectedBridgeZipSha256 = 'c3f9d104de66e5fa8b355317be1bf42b7d7ce34308133c081974c435fa44da33'
+$expectedBridgeBa2Sha256 = '5c03e2b65a45a2507051c32bcc2979f817344136e7cb48a16e0d3e9663d3aa2c'
 
 if (-not (Test-Path -LiteralPath $BridgeZip)) { throw "Bridge ZIP not found: $BridgeZip" }
 if ((Get-FileHash -LiteralPath $BridgeZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedBridgeZipSha256) {
-    throw 'Bridge ZIP does not match the reviewed 0.2.19 candidate'
+    throw 'Bridge ZIP does not match the reviewed 0.2.20 candidate'
 }
 
 $artifacts = @{
@@ -37,9 +37,9 @@ function Add-Bridge([string]$Stage) {
     Expand-Archive -LiteralPath $BridgeZip -DestinationPath $bridge
     $ba2 = Join-Path $bridge 'Data/FCMServerBridge.ba2'
     if ((Get-FileHash -LiteralPath $ba2 -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedBridgeBa2Sha256) {
-        throw 'Bridge BA2 does not match the reviewed 0.2.19 candidate'
+        throw 'Bridge BA2 does not match the reviewed 0.2.20 candidate'
     }
-    $install = (Get-Content -LiteralPath $bridgeTemplate -Raw).Replace('{version}', '0.2.19').Replace('{target}', 'PROD').Replace('{target_lower}', 'prod').Replace('{host}', 'falloutchatmod.com')
+    $install = (Get-Content -LiteralPath $bridgeTemplate -Raw).Replace('{version}', '0.2.20').Replace('{target}', 'PROD').Replace('{target_lower}', 'prod').Replace('{host}', 'falloutchatmod.com')
     [IO.File]::WriteAllText((Join-Path $bridge 'INSTALL.txt'), $install, [Text.UTF8Encoding]::new($false))
 }
 

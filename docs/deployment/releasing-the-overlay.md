@@ -76,7 +76,7 @@ fix(overlay): a range of reliability and quality fixes across chat connections, 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
 ```powershell
-.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
+.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.20-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
 # -SkipBuild: reuse existing dist-electron artifacts (Linux AppImage must already be present)
 # -DryRun: runs smoke-test + VT gates for real; prints what would run for steps 4-7 without uploading
 # -SkipWindowsNexus: omit the Windows support-review upload; Linux/.deb/HUD still publish
@@ -316,17 +316,18 @@ gates, uploads and size-verifies the EXE and ZIP, then records
 clearly optional folder with separate ZFE/xScal sections. The Install page presents
 the portable ZIP next to the installer; packaging alone does not publish or install.
 
-The pinned bridge candidate for the 1.4.3 / HUD 2.10.151 release is **0.2.19 PROD**.
-The original pinned ZIP was lost; for 1.4.4 (2026-11-20) it was rebuilt from the exact files the
-1.4.3 downloads shipped under `Optional FCM Bridge/` (same BA2), with fixed entry timestamps.
-Its ZIP SHA-256 is `b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47`;
-the embedded BA2 SHA-256 is `47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`.
+The pinned bridge is **0.2.20 PROD** (2026-11-20). It replaced the 0.2.19 bridge inside the
+already-published 1.4.4 download ZIPs on the owner's instruction, before native acceptance of 0.2.20.
+Its ZIP SHA-256 is `c3f9d104de66e5fa8b355317be1bf42b7d7ce34308133c081974c435fa44da33`;
+the embedded BA2 SHA-256 is `5c03e2b65a45a2507051c32bcc2979f817344136e7cb48a16e0d3e9663d3aa2c`.
+The previous 0.2.19 pin (ZIP `b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47`, BA2
+`47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`) was a rebuild of the files 1.4.3 shipped.
 Keep the validated ZIP: the release pin identifies this exact archive.
 
 `Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux), and invokes the repeatable HUD package helper:
 
 ```powershell
-.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>"
+.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.20-prod.zip>"
 ```
 
 Produces (in `cross-platform-overlay/dist-electron/`):
