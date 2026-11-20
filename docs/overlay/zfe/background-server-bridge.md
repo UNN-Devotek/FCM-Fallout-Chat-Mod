@@ -1,10 +1,11 @@
 # Drop-in Server bridge: one room across HUD and overlay
 
 **Published bundled release: FCMServerBridge 0.2.19**, included with Overlay 1.4.3
-on 2026-10-23. Current source still reports 0.2.19 but also contains unreleased
-self-alias/evidence-sequence recovery changes. Those require a new bridge version
-and a matching desktop reader; released Overlay 1.4.3 rejects the new export
-fields. The proposed next set is Overlay 1.4.4 / bridge 0.2.20. See the
+on 2026-10-23 and still the archive pinned by Overlay 1.4.4. **Source reports
+0.2.20** (2026-11-20): it adds the self-alias/evidence-sequence recovery changes
+(including #631). Those export fields need the Overlay 1.4.4 reader; released
+Overlay 1.4.3 rejects them. 0.2.20 is unpublished until it passes native
+acceptance and the packaging pins move to one frozen PROD ZIP. See the
 [release readiness assessment](../../deployment/hud-bridge-release-readiness-20261103.md)
 for the compatibility proof, test status and publication gates.
 
