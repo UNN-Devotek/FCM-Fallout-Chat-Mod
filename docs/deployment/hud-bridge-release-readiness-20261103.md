@@ -64,7 +64,7 @@ reader. The old reader accepts legacy exports but rejects `ownAliases` and
 `rosterSource`; the current reader accepts both formats. A backend-only update
 does not change installed desktop readers. Update the desktop before the bridge.
 
-**Bridge source still reports the already-published version 0.2.19.** Change both
+**Resolved 2026-11-20: bridge source now reports 0.2.20.** Previously: bridge source still reported the already-published version 0.2.19. Change both
 `FcmBridgeExport.hx` and `hudmodloader-bridge/package.py` to the proposed 0.2.20
 before freezing the new artifact. The HUD already reports 2.10.152; the desktop
 package and lockfile still report 1.4.3 and need the proposed 1.4.4 bump.
