@@ -4,6 +4,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import crypto from 'crypto';
 import logger from '../config/logger';
 import env from '../config/environment';
+import { runtime } from '../runtime';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_FILES = 3;
@@ -27,7 +28,7 @@ export async function uploadReportImages(buffers: Buffer[]): Promise<string[]> {
   if (buffers.length === 0) return [];
   if (buffers.length > MAX_FILES) throw new ImageUploadError(`Maximum ${MAX_FILES} images per report.`);
 
-  if (!bucketReady) { await ensureBucket(); bucketReady = true; }
+  if (!bucketReady) { await ensureBucket(true); bucketReady = true; }
 
   const urls: string[] = [];
   for (const buf of buffers) {
@@ -41,13 +42,13 @@ export async function uploadReportImages(buffers: Buffer[]): Promise<string[]> {
 
     // Store under a random UUID key — no user-supplied filename reaches storage
     const key = `report-images/${crypto.randomUUID()}.${MIME_TO_EXT[detected.mime]}`;
-    await s3.send(new PutObjectCommand({
+    await runtime.required('report-image:put', () => s3.send(new PutObjectCommand({
       Bucket: BUCKET,
       Key: key,
       Body: buf,
       ContentType: detected.mime,
       CacheControl: 'public, max-age=31536000',
-    }));
+    })), { objectKey: key, stage: 'object-put-result-unknown' });
 
     const publicBase = env.MINIO_PUBLIC_URL || `${env.MINIO_ENDPOINT}/${BUCKET}`;
     urls.push(`${publicBase}/${key}`);

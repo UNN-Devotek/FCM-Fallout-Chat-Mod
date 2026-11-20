@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import { runtimeRedisStore } from '../runtime/rateLimitStore';
 import { getRedisClient } from '../config/redis';
 import { createError } from './errorHandler';
 import { verifyToken } from '../services/mcpTokenService';
@@ -25,7 +25,7 @@ export const mcpLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => clientIp(req) ?? 'unknown',
-  store: new RedisStore({
+  store: runtimeRedisStore({
     sendCommand: async (...args: string[]) => {
       const redis = await getRedisClient();
       return (redis as any).sendCommand(args);

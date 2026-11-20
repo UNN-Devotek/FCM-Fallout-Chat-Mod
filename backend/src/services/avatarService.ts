@@ -1,5 +1,6 @@
 import { uploadAvatar, ensureBucket } from '../config/storage';
 import logger from '../config/logger';
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 
 let bucketReady = false;
 
@@ -39,6 +40,7 @@ async function captureAvatar(discordId: string, discordAvatar: string | null): P
     const cdnUrl = `https://cdn.discordapp.com/avatars/${discordId}/${discordAvatar}.png?size=128`;
     const response = await fetch(cdnUrl);
     if (!response.ok) {
+      await discardRuntimeResponse(response);
       logger.warn({ discordId, status: response.status }, 'Failed to fetch Discord avatar');
       return null;
     }

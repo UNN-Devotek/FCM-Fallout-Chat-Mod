@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 /**
  * Cosmetics service — THE shared contract.
  *
@@ -15,6 +16,7 @@ import prisma from '../../config/prisma';
 import { getRedisClient } from '../../config/redis';
 import logger from '../../config/logger';
 import env from '../../config/environment';
+import { runtime } from '../../runtime';
 import { SupporterTier, tierAtLeast } from '../../utils/supporterTier';
 import { getSupporterTierByUserId } from '../supporterService';
 import { findColorPreset, findEffectPreset, REDUCED_MOTION_FALLBACK } from './presets';
@@ -86,12 +88,17 @@ const RESOLVE_TTL = 60;
 const resolveKey = (userId: string) => `cosmetics:resolved:${userId}`;
 
 export async function bustCosmeticsCache(userId: string): Promise<void> {
+  return runRequiredBundle('authority', 'cosmeticsService:b41acad0f49d', async () => {
   try {
     const redis = await getRedisClient();
-    await redis.del(resolveKey(userId));
+    await runRequiredMutation('authority', '29ffa3cf5678e2c6794df9c9', { stage: 'primary-write-unconfirmed' }, () => redis.del(resolveKey(userId)), undefined, undefined, isRowCountNoChange);
   } catch (err) {
+    runtime.recordFailure('cosmetics:cache-invalidation', new Error('Cosmetics invalidation was not confirmed'),
+      { userId, stage: 'cosmetics-cache-delete-unconfirmed' });
     logger.warn({ err, userId }, '[cosmetics] cache bust failed (non-fatal)');
   }
+
+  });
 }
 
 /**
@@ -310,8 +317,7 @@ function rejectionToResult(r: CosmeticRejection): ApplyResult {
 
 /** Non-fatal audit write. */
 function audit(action: string, userId: string, metadata: Record<string, string | number | boolean | null>): void {
-  prisma.auditLog
-    .create({ data: { action, targetType: 'user_cosmetic', reason: userId, metadata } })
+  createRequiredAudit(prisma.auditLog, { data: { action, targetType: 'user_cosmetic', reason: userId, metadata } }, { userId })
     .catch((err: unknown) => logger.warn({ err, userId, action }, '[cosmetics] audit write failed'));
 }
 
@@ -326,6 +332,7 @@ export async function applyCosmetics(input: {
   patch: CosmeticPatch;
   actor: { kind: 'self' | 'moderator'; discordId?: string | null };
 }): Promise<ApplyResult> {
+  return runRequiredBundle('authority', 'cosmeticsService:2cdf0fbc50cc', async () => {
   const { userId, patch, actor } = input;
 
   if (!cosmeticsEnabled()) {
@@ -425,11 +432,11 @@ export async function applyCosmetics(input: {
     return { ok: true, cosmetics: await resolveCosmetics(userId), changed: [] };
   }
 
-  await prisma.userCosmetic.upsert({
+  await runRequiredMutation('authority', 'a3eb9dce059d2566e929cbc4', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.userCosmetic.upsert({
     where: { userId },
     create: { userId, ...data },
     update: data,
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   await bustCosmeticsCache(userId);
   const cosmetics = await resolveCosmetics(userId);
@@ -460,6 +467,8 @@ export async function applyCosmetics(input: {
   }
 
   return { ok: true, cosmetics, changed };
+
+  });
 }
 
 /**
@@ -474,6 +483,8 @@ export async function pushCosmeticsUpdate(userId: string, cosmetics: ResolvedCos
       .refreshClientCosmetics;
     if (typeof refresh === 'function') refresh(userId, cosmetics);
   } catch (err) {
+    runtime.recordFailure('cosmetics:live-presentation', new Error('Cosmetics presentation was not confirmed'),
+      { userId, stage: 'presentation-refresh-unconfirmed' });
     logger.warn({ err, userId }, '[cosmetics] live push failed (non-fatal)');
   }
 }

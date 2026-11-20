@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { afterHideTransition } from '../src/hide-transition';
 
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
 function harness() {
@@ -24,26 +25,59 @@ function harness() {
   vm.runInContext(source.slice(source.indexOf('function animateHeightTo('), source.indexOf('// ─── Tray menu rebuild')), context);
   return { call: code => vm.runInContext(code, context), bounds: () => bounds, frames };
 }
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe('native collapse animation', () => {
-  it('starts the hide deadline after a delayed first paint opportunity', () => {
+  it('waits for the actual hide transition when painting starts after the old deadline', async () => {
     vi.useFakeTimers();
-    const shell = readFileSync(new URL('../src/shell.ts', import.meta.url), 'utf8');
-    const body = shell.slice(shell.indexOf('function afterHidePaint('), shell.indexOf('// Timestamp of last collapse/expand.'))
-      .replace('finish: () => void', 'finish');
     let paint;
+    vi.stubGlobal('requestAnimationFrame', callback => { paint = callback; return 1; });
+    let finishTransition;
+    const finished = new Promise(resolve => { finishTransition = resolve; });
+    const body = { getAnimations: () => [
+      { transitionProperty: 'clip-path', finished },
+      { transitionProperty: 'opacity', finished: new Promise(() => {}) },
+      { finished: new Promise(() => {}) }, // Decorative animations must not block hiding.
+    ] };
     const finish = vi.fn();
-    const context = vm.createContext({
-      requestAnimationFrame: callback => { paint = callback; return 1; }, setTimeout,
-      HIDE_FADE_MS: 240, collapsePaintFrame: null, collapseCompletion: null, finish,
-    });
-    vm.runInContext(body, context);
-    vm.runInContext('afterHidePaint(finish)', context);
-    vi.advanceTimersByTime(500);
+    afterHideTransition(body, 'clip-path', finish);
+    await vi.advanceTimersByTimeAsync(500);
     expect(finish).not.toHaveBeenCalled();
-    paint(); vi.advanceTimersByTime(239);
+    paint();
+    await vi.advanceTimersByTimeAsync(1000);
     expect(finish).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1); expect(finish).toHaveBeenCalledOnce();
+    finishTransition();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finish).toHaveBeenCalledOnce();
+  });
+  it.each([false, true])('cancels an obsolete hide (transition observed: %s)', async observed => {
+    vi.useFakeTimers();
+    let paint;
+    vi.stubGlobal('requestAnimationFrame', callback => { paint = callback; return 7; });
+    const cancelFrame = vi.fn();
+    vi.stubGlobal('cancelAnimationFrame', cancelFrame);
+    let finishTransition;
+    let cancelTransition;
+    const finished = new Promise((resolve, reject) => { finishTransition = resolve; cancelTransition = reject; });
+    const body = { getAnimations: vi.fn(() => [{ transitionProperty: 'opacity', finished }]) };
+    const finish = vi.fn();
+    const cancel = afterHideTransition(body, 'opacity', finish);
+    if (observed) paint();
+    cancel();
+    if (observed) cancelTransition(new Error('CSS transition reversed by wake'));
+    else finishTransition();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finish).not.toHaveBeenCalled();
+    if (!observed) {
+      expect(cancelFrame).toHaveBeenCalledWith(7);
+      expect(body.getAnimations).not.toHaveBeenCalled();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('completes without a deadline when no transition is generated', async () => {
+    vi.stubGlobal('requestAnimationFrame', callback => { queueMicrotask(callback); return 1; });
+    const finish = vi.fn();
+    afterHideTransition({ getAnimations: () => [] }, 'opacity', finish);
+    await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce());
   });
   it.each([47, 1])('does not snap to final height %s before animating', target => {
     vi.useFakeTimers();

@@ -1,5 +1,33 @@
 # FCMChatWidget build, install, and verification
 
+## Responsiveness test candidate 2.10.154 — 2026-11-20
+
+**Widget version:** 2.10.154. Local test candidate; native frame-time acceptance pending.
+
+- Unchanged feed rows are kept when a send is acknowledged or echoed and when the
+  ring buffer trims its oldest record. 2.10.153 rebuilt every visible row in those
+  cases (62-81 ms per message in the 2026-11-20 field log).
+- xScal polls its local event queue every `xscalPollMs` (default 1000 ms) instead of
+  `pollMs` (5000 ms, still used by ZFE). Incoming messages and send confirmations
+  arrive in about 1 s instead of up to 5 s.
+- The log writes a `perf` line once a minute: polls, poll time, render turns, rows
+  built versus reused, the longest frame gap, and frame gaps of 50 ms or more.
+
+## Chat recovery test candidate 2.10.153 — 2026-11-17
+
+**Widget version:** 2.10.153 (superseded). Local test candidate; native acceptance pending.
+
+- Event announcements no longer stop the feed; Down returns to the newest rows.
+- Automod-blocked and other rejected sends leave the feed with an explanation.
+- A relay link that goes quiet (unanswered room renewals, unconfirmed joins, or an
+  accepted send with no echo after 15 s) forces a reconnect; such a send is labelled
+  `[unconfirmed]`.
+- xScal answers `getAuthState` itself without `canRetryHudSend`. xScal sends now carry
+  the `FCMOUT/1` receipt ID, and the first private `FCMACK/1` receipt enables safe
+  retries for the widget instance, so a send the xScal worker drops is resent after
+  the reconnect and the relay deduplicates it.
+- The "Reconnecting..." prompt clears once the reconnect succeeds.
+
 ## Native caret test candidate 2.10.152 — 2026-10-28
 
 **Widget version:** 2.10.152. Local test candidate; native acceptance pending.

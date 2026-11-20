@@ -107,6 +107,15 @@ ones. Implemented in
 thread↔report link is `player_reports.discord_thread_id`
 ([migration](../../backend/prisma/migrations/20260617120000_player_report_discord_thread/migration.sql)).
 
+Required report/thread and issue/thread links, report status/delete, attachment links, and
+mapping deletion failures enter the private [runtime drain journal](../backend/runtime-maintenance.md).
+They retain known report/issue/thread/message/object identifiers and distinguish confirmed
+external creation from an unconfirmed DB link. Failed writes do not produce a success
+acknowledgement or continue destructive teardown. If issue deletion and its close fallback
+are both unconfirmed, the issue mapping remains for repair. Users are directed to a moderator
+before submitting an ambiguously created report/ticket again. An absent optional panel/client
+can still skip web-report thread creation; ordinary role and input refusals remain unchanged.
+
 ---
 
 ## Configuration

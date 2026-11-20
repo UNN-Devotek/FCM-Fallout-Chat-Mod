@@ -95,3 +95,9 @@ Gateway deliveries are coalesced per scheduled-event ID. Reconciliation repairs
 missing mirrors, announcements, FCM projections, and generated links without
 mass-deleting or rewriting unrelated channel content. Transient failures are
 logged and retried by the bounded reconciliation pass.
+
+External description edits and subsequent local generated-link writes are separate required
+effects. Subscriber transaction/mirror/presentation failures also retain trusted event/mirror
+IDs and stage evidence in the private runtime journal; an outer fallback count does not erase
+them or permit a clean maintenance drain. Subscriber reads that fail before applying state
+keep the read fallback. See [runtime maintenance](../backend/runtime-maintenance.md).

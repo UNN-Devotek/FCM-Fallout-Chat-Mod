@@ -120,6 +120,7 @@ jest.mock('../src/services/wikiIngestionService', () => ({
 }));
 
 jest.mock('../src/config/redis', () => ({
+  client: {},
   getRedisClient: jest.fn().mockResolvedValue({
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),

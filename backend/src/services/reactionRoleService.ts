@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredEffect, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Reaction roles. A bot-posted message ("panel") has one or more emoji→role
  * mappings. Reacting with a mapped emoji grants the role; removing the reaction
@@ -107,15 +108,16 @@ let clientRef: Client | null = null;
  * the already-posted message so users have something to click.
  */
 export async function createPanel(message: Message, mappings: ReactionRoleMapping[]): Promise<void> {
+  return runRequiredBundle('moderation', 'reactionRoleService:abd2039cd3f6', async () => {
   if (!message.guildId) throw new Error('Reaction-role panels must be in a guild channel');
   if (mappings.length === 0) throw new ReactionRolePanelError(new TypeError('No reaction mappings'));
   const record: PanelRecord = { channelId: message.channelId, guildId: message.guildId, mappings };
 
-  await prisma.reactionRolePanel.upsert({
+  await runRequiredMutation('moderation', '9da83c19ca6a688270e702a7', { stage: 'primary-write-unconfirmed', channelId: record.channelId }, () => prisma.reactionRolePanel.upsert({
     where: { messageId: message.id },
     update: { channelId: record.channelId, guildId: record.guildId, mappings: mappings as any },
     create: { messageId: message.id, channelId: record.channelId, guildId: record.guildId, mappings: mappings as any },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   panels.set(message.id, record);
 
   try {
@@ -124,12 +126,14 @@ export async function createPanel(message: Message, mappings: ReactionRoleMappin
     for (const m of mappings) await message.react(m.reactValue);
   } catch (error) {
     panels.delete(message.id);
-    await prisma.reactionRolePanel.deleteMany({ where: { messageId: message.id } }).catch(() => undefined);
-    await message.reactions.removeAll().catch(() => undefined);
+    await runRequiredEffect('reaction-role:rollback', { messageId: message.id, stage: 'panel-rollback-delete-unconfirmed' }, () => prisma.reactionRolePanel.deleteMany({ where: { messageId: message.id } })).catch(() => undefined);
+    await runRequiredEffect('reaction-role:rollback-reactions', { messageId: message.id, stage: 'panel-reaction-cleanup-unconfirmed' }, () => message.reactions.removeAll()).catch(() => undefined);
     logger.warn({ messageId: message.id, causeClass: error instanceof Error ? error.constructor.name : 'UnknownError' }, 'reaction-role: strict panel creation rolled back');
     throw new ReactionRolePanelError(error);
   }
   logger.info({ messageId: message.id, count: mappings.length }, 'reaction-role: panel created');
+
+  });
 }
 
 export async function listPanels(): Promise<Array<{ messageId: string; channelId: string; guildId: string; mappings: ReactionRoleMapping[]; createdAt: Date }>> {
@@ -145,9 +149,10 @@ export async function listPanels(): Promise<Array<{ messageId: string; channelId
 
 /** Delete a panel mapping. Best-effort: also clears the bot's reactions on the message. */
 export async function deletePanel(messageId: string): Promise<boolean> {
+  return runRequiredBundle('moderation', 'reactionRoleService:18300c42fedf', async () => {
   const existing = await prisma.reactionRolePanel.findUnique({ where: { messageId } });
   if (!existing) return false;
-  await prisma.reactionRolePanel.delete({ where: { messageId } });
+  await runRequiredMutation('moderation', 'c4ec03336dfa0fe587942f57', { stage: 'primary-write-unconfirmed' }, () => prisma.reactionRolePanel.delete({ where: { messageId } }), isPrismaAtomicRefusal, undefined, undefined);
   const cached = panels.get(messageId);
   panels.delete(messageId);
   // Try to remove the reactions so the message no longer invites clicks.
@@ -160,6 +165,8 @@ export async function deletePanel(messageId: string): Promise<boolean> {
     }
   } catch { /* non-fatal */ }
   return true;
+
+  });
 }
 
 async function getPanel(messageId: string): Promise<PanelRecord | null> {

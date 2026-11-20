@@ -81,7 +81,7 @@ Close codes used by the backend:
 
 | Code | Meaning |
 |------|---------|
-| `4001` | Auth failed (missing/invalid/expired token or ticket) |
+| `4001` | Auth failed (missing/invalid/expired token or ticket). On `Invalid or expired token` / `User not found` the overlay re-registers — see [Redis Session Store](presence-and-sessions.md#redis-session-store). |
 | `4002` | User is banned |
 | `4002` with body `KICK_COOLDOWN:<secs>` | Kicked; retry after N seconds |
 | `4003` | Outdated build — only on the dev backend when `QA_BUILD_LOCK=true`; the close reason is `OUTDATED_BUILD:<activeVersion>`. The overlay shows an update prompt. |

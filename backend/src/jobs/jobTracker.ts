@@ -15,6 +15,7 @@
  */
 
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 
 export const FAILURE_THRESHOLD = 5;
 
@@ -29,6 +30,7 @@ export function makeJobTracker(label: string, threshold = FAILURE_THRESHOLD) {
       }
       consecutiveFailures = 0;
     } catch (err) {
+      runtime.recordFailure(label, err);
       consecutiveFailures++;
       if (consecutiveFailures >= threshold) {
         logger.error(

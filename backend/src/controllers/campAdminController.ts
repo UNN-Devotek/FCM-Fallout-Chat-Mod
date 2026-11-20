@@ -14,12 +14,14 @@
 import { Request, Response, NextFunction } from 'express';
 import { runCampSync, getCampUpdateStatus } from '../services/campService';
 import logger from '../config/logger';
+import { randomUUID } from 'node:crypto';
+import { runtime } from '../runtime';
 
 /** POST /api/admin/camp/ingest — full re-sync (blocks until complete). */
 export async function triggerCampIngest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     logger.info('[campAdmin] admin-triggered CAMP sync started');
-    const result = await runCampSync();
+    const result = await runtime.required('camp:admin-ingest', () => runCampSync(), { operationId: randomUUID() });
     logger.info({ ...result }, '[campAdmin] admin-triggered CAMP sync completed');
     res.json({ data: { status: 'completed', ...result } });
   } catch (err) {

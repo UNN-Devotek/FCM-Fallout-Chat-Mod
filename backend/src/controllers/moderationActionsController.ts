@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * REST controller for moderator actions (kick, mute, unmute, ban, unban,
  * evidence proxy). All routes gated upstream by requireDiscordRole(OWNER,
@@ -5,7 +6,9 @@
  * moderationActionsService (throws ProtectedTargetError → 409 here).
  */
 import { Request, Response, NextFunction } from 'express';
+import { pipeline } from 'node:stream/promises';
 import prisma from '../config/prisma';
+import { DISPLAY_NAME_SELECT } from '../utils/userDisplayName';
 import { createError } from '../middleware/errorHandler';
 import {
   kickUser, muteUser, unmuteUser, createBan, reverseBan, ProtectedTargetError,
@@ -31,12 +34,13 @@ function requireString(s: any, label: string, max = 4000): asserts s is string {
  * API-key actor is rejected — these actions need to attribute to a real human.
  */
 async function actorUserId(req: Request): Promise<string> {
+  return runRequiredBundle('moderation', 'moderationActionsController:c6ee73eab82e', async () => {
   const a = (req as any).adminUser as { id: string; username?: string; displayName?: string } | undefined;
   if (!a?.id) throw createError(401, 'no admin session');
   if (a.id === 'api-key') throw createError(400, 'moderation actions require Discord OAuth, not API key');
   const existing = await prisma.user.findFirst({ where: { discordId: a.id }, select: { id: true } });
   if (existing) return existing.id;
-  const created = await prisma.user.create({
+  const created = await runRequiredMutation('moderation', '0ace5da94ee4f603cf87ea73', { stage: 'primary-write-unconfirmed', discordId: a.id }, () => prisma.user.create({
     data: {
       username: `admin-discord-${a.id}`,
       installToken: `admin:${a.id}`,
@@ -45,8 +49,10 @@ async function actorUserId(req: Request): Promise<string> {
       discordDisplayName: a.displayName ?? a.username ?? null,
     },
     select: { id: true },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   return created.id;
+
+  });
 }
 function handleProtected(err: unknown, next: NextFunction): boolean {
   if (err instanceof ProtectedTargetError) {
@@ -196,9 +202,9 @@ export async function listBansHandler(_req: Request, res: Response, next: NextFu
       orderBy: { createdAt: 'desc' },
       take: 200,
       include: {
-        user:       { select: { id: true, username: true, discordId: true, discordDisplayName: true, discordUsername: true, discordAvatar: true, isBanned: true } },
-        bannedBy:   { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
-        reversedBy: { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
+        user:       { select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true } },
+        bannedBy:   { select: { id: true, ...DISPLAY_NAME_SELECT } },
+        reversedBy: { select: { id: true, ...DISPLAY_NAME_SELECT } },
         evidence:   { select: { id: true, type: true, mime: true, sizeBytes: true } },
       },
     });
@@ -213,9 +219,9 @@ export async function getBanHandler(req: Request, res: Response, next: NextFunct
     const row = await prisma.ban.findUnique({
       where: { id: req.params.id },
       include: {
-        user:       { select: { id: true, username: true, discordId: true, discordDisplayName: true, discordUsername: true, discordAvatar: true, isBanned: true } },
-        bannedBy:   { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
-        reversedBy: { select: { id: true, username: true, discordDisplayName: true, discordUsername: true } },
+        user:       { select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true } },
+        bannedBy:   { select: { id: true, ...DISPLAY_NAME_SELECT } },
+        reversedBy: { select: { id: true, ...DISPLAY_NAME_SELECT } },
         evidence:   true,
       },
     });
@@ -277,8 +283,8 @@ export async function streamBanEvidenceHandler(req: Request, res: Response, next
     res.setHeader('Content-Disposition', `inline; filename="evidence-${req.params.fileId}"`);
     if (obj.sizeBytes) res.setHeader('Content-Length', String(obj.sizeBytes));
     res.setHeader('Cache-Control', 'private, max-age=300');
-    obj.stream.pipe(res);
-  } catch (err) { next(err); }
+    await pipeline(obj.stream, res);
+  } catch (err) { if (!res.destroyed && !res.writableEnded) next(err); }
 }
 
 // ── GET /api/moderation/evidence — gallery list (all evidence, paginated) ────
@@ -295,7 +301,7 @@ export async function listEvidenceHandler(req: Request, res: Response, next: Nex
       where,
       orderBy: { createdAt: 'desc' },
       take: 200,
-      include: { ban: { select: { id: true, userId: true, reasonCategory: true, reasonText: true, createdAt: true, reversedAt: true, user: { select: { username: true, discordDisplayName: true, discordUsername: true } } } } },
+      include: { ban: { select: { id: true, userId: true, reasonCategory: true, reasonText: true, createdAt: true, reversedAt: true, user: { select: DISPLAY_NAME_SELECT } } } },
     });
     res.json({ data: rows });
   } catch (err) { next(err); }
@@ -310,13 +316,10 @@ export async function lookupUserHandler(req: Request, res: Response, next: NextF
     const rows = await prisma.user.findMany({
       where: isUuid
         ? { id: q }
-        : { OR: [
-            { username: { contains: q, mode: 'insensitive' } },
-            { discordUsername: { contains: q, mode: 'insensitive' } },
-            { discordDisplayName: { contains: q, mode: 'insensitive' } },
-          ] },
+        : { OR: (['username', 'chatName', 'steamDisplayName', 'fo76CharacterName', 'fo76AccountName', 'discordUsername', 'discordDisplayName'] as const)
+            .map((field) => ({ [field]: { contains: q, mode: 'insensitive' as const } })) },
       take: 20,
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, isBanned: true, isMuted: true },
+      select: { id: true, ...DISPLAY_NAME_SELECT, discordId: true, discordAvatar: true, isBanned: true, isMuted: true },
     });
     res.json({ data: rows });
   } catch (err) { next(err); }

@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr, paramsOf } from '../utils/reqParams';
 import crypto from 'crypto';
@@ -27,6 +28,7 @@ const VALID_REPORT_STATUSES = new Set(['open', 'reviewed', 'closed']);
 const VALID_REPORT_TYPES_CREATE = new Set(['player', 'bug']);
 
 export async function updatePlayerReport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'playerReportsController:db1c7c4d232e', async () => {
   const { id } = paramsOf(req);
   const { status } = req.body;
   // SR-007: constrain status to known enum values
@@ -35,15 +37,17 @@ export async function updatePlayerReport(req: Request, res: Response, next: Next
     return;
   }
   try {
-    const report = await prisma.playerReport.update({
+    const report = await runRequiredMutation('moderation', '803b80145b3dcf729b3c91e1', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.playerReport.update({
       where: { id },
       data: { ...(status && { status }) },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: report });
   } catch (err: any) {
     if (err.code === 'P2025') { res.status(404).json({ title: 'Not Found' }); return; }
     next(err);
   }
+
+  });
 }
 
 /**
@@ -57,11 +61,12 @@ async function resolveUserByDiscordId(id: {
   discordDisplayName?: string | null;
   avatar?: string | null;
 }) {
+  return runRequiredBundle('moderation', 'playerReportsController:c20af91fd482', async () => {
   let user = await prisma.user.findFirst({ where: { discordId: id.discordId } });
   if (!user) {
     // SR-004: use discordId as the username slug for new users — Discord display
     // names are NOT unique and would trip the UNIQUE(username) constraint.
-    user = await prisma.user.create({
+    user = await runRequiredMutation('moderation', '4b47c29615621bce28db8bd8', { stage: 'primary-write-unconfirmed', discordId: id.discordId }, () => prisma.user.create({
       data: {
         username: `discord:${id.discordId}`,
         installToken: crypto.randomUUID(),
@@ -70,9 +75,11 @@ async function resolveUserByDiscordId(id: {
         discordDisplayName: id.discordDisplayName ?? null,
         discordAvatar: id.avatar || null,
       },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
   }
   return user;
+
+  });
 }
 
 /**
@@ -115,6 +122,7 @@ export async function getMinePlayerReport(req: Request, res: Response, next: Nex
 }
 
 export async function createPlayerReportWeb(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'playerReportsController:0f1588381f70', async () => {
   // Accept either a public-form session (req.publicUser) or a dashboard session
   // (req.dashboardUser). The route's requireDashboardAuth sets the latter.
   const pub = req.dashboardUser ?? (req as any).publicUser;
@@ -153,7 +161,7 @@ export async function createPlayerReportWeb(req: Request, res: Response, next: N
       if (valid.length > 0) imageUrlsSafe = JSON.stringify(valid);
     }
 
-    const report = await prisma.playerReport.create({
+    const report = await (<PreparedArgs extends Parameters<typeof prisma.playerReport.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('moderation', '7c58a5cb67425d81234bb920', { stage: 'primary-write-unconfirmed', userId: user.id }, () => prisma.playerReport.create(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
       data: { userId: user.id, content: content.trim(), reportType: reportTypeSafe, involvedPlayers: involvedSafe, imageUrls: imageUrlsSafe },
     });
 
@@ -195,6 +203,8 @@ export async function createPlayerReportWeb(req: Request, res: Response, next: N
 
     res.status(201).json({ data: report });
   } catch (err) { next(err); }
+
+  });
 }
 
 /**

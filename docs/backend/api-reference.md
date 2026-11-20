@@ -118,9 +118,19 @@ Uses `channelsLimiter` (500 req/15min) instead of `apiLimiter`.
 | GET | `/api/messages/public` | public | Recent messages (public read-only mode) |
 | GET | `/api/messages/search` | requireDiscordRole(owner/admin/mod) | Full-text message search |
 | GET | `/api/messages` | requireAuth | Message history (authenticated) |
-| POST | `/api/messages` | requireDiscordRole(owner/admin/mod) | Create a message (admin-injected) |
-| POST | `/api/messages/scrub` | requireDiscordRole(owner/admin) | Bulk-delete messages matching criteria |
+| POST | `/api/messages` | requireDiscordRole(owner/admin/mod) | Publish an admin message live and relay to Discord; no history row |
+| POST | `/api/messages/scrub` | requireDiscordRole(owner/admin) | Replace content of the supplied message UUIDs with `[REDACTED]` |
 | DELETE | `/api/messages/:id` | requireDiscordRole(owner/admin/mod) | Delete a message |
+
+Authenticated administrator WebSocket chat is a separate persisted path using
+`source: "web"`. Its ACK UUID and broadcast timestamp are retained through Bull
+and the composite `(id, created_at)` SQL key. The REST publication above remains
+live-only and passes that generated UUID/time to the ordinary Discord relay. Its original
+input/prefix is retained privately until verified relay completion, without adding a history
+row. Required relay uncertainty blocks maintenance drain even though the existing HTTP 201
+availability response is preserved; see [runtime maintenance](runtime-maintenance.md).
+Audited mutations resolve the internal actor before changing data;
+unconfirmed attribution returns HTTP 503 under the [audit attribution rules](auth.md).
 
 ---
 
@@ -399,6 +409,11 @@ and GitHub Release still update in either quiet mode. See
 |--------|------|------|-------------|
 | GET | `/api/health` | public | Service health (DB + Redis ping) |
 
+During operator maintenance or a signal drain, health reports `data.status: "maintenance"`.
+Frozen health probes bypass session/rate-limit writes. Other requests receive retriable HTTP 503
+before mutation-producing middleware; existing static downloads and installer scripts remain
+readable. See [runtime maintenance](runtime-maintenance.md) for activation and shutdown behavior.
+
 ---
 
 ## Admin Users (`/api/admin-users`)
@@ -539,6 +554,18 @@ Outside `/api/`; gated by `requireMigrationKey` (10 req/15min per IP).
 | POST | `/admin/migration/sql` | requireMigrationKey | Execute ad-hoc SQL (returns up to 1000 rows) |
 | POST | `/admin/migration/dump` | requireMigrationKey | Stream `pg_dump` as `.sql` attachment |
 | POST | `/admin/migration/restore` | requireMigrationKey | Pipe SQL dump into `psql` (overwrites data) |
+| POST | `/admin/migration/storage/dump` | requireMigrationKey | Stream allowed wiki/CAMP objects as a tar archive |
+| POST | `/admin/migration/storage/restore` | requireMigrationKey | Add allowed objects from a raw tar stream; returns `{ data: { restored, rejected, failed } }` |
+| POST | `/admin/migration/backfill-images` | requireMigrationKey | Start wiki image backfill, optionally CAMP; returns HTTP 202 |
+
+Accepted restores remain tracked after the HTTP client disconnects. Database
+restore awaits verified child closure; storage restore awaits archive entries and
+each object PUT. Child/input/archive failures and unconfirmed PUTs retain private
+runtime failure evidence and prevent a clean maintenance drain. A nonzero storage
+`failed` count remains a required-effect failure even when the counter response is
+HTTP 200. Invalid object keys are rejected before writing and counted separately.
+Read-only dump disconnects cancel reads and await teardown. See
+[runtime maintenance](runtime-maintenance.md#accepted-work-accounting-and-close-ordering).
 
 ---
 
@@ -715,7 +742,7 @@ Public endpoints — no auth required. Mounted **before** `requireClientAuth`. S
 |--------|------|------|------------|-------------|
 | GET | `/api/wiki/search?q=&limit=` | public | `wikiSearchLimiter` (300 req/15min) | Fuzzy `pg_trgm` search over entry names + aliases. `q` 1–100 chars, null bytes stripped. Returns `{ data: [{ id, name, kind, thumbnailUrl, score }] }`. |
 | GET | `/api/wiki/entry/:title` | public | `apiLimiter` | Fetch a single entry by display name (case-insensitive; alias fallback). Returns `{ data: { id, name, kind, imageUrl, imageAspect, imageMime, imageWidth, imageHeight, imageSourceUrl, images, locations, articleUrl, wikiTitle, fields, attribution, campData } }`. `fields` is trimmed per-kind subset of the infobox. `images` is an array of `{ url, aspect, isMap, width, height }` ordered by position (primary first). `locations` is a string array of spawn/find location names. `imageUrl` = `images[0]?.url` (back-compat). `campData` is an array of matching CAMP buildable rows (empty when not a CAMP item). 404 if not found; 200 with `fields: {}` / `images: []` / `locations: []` / `campData: []` when no data. |
-| POST | `/api/admin/wiki/ingest` | requireDiscordRole(owner/admin) | `apiLimiter` | Trigger catalog ingestion (async, non-blocking). Body: `{ mode?: "incremental"\|"full", titles?: string[] }`. `mode` defaults to `"incremental"` (recentchanges since last sync); `"full"` walks all seed categories. `titles` overrides both modes (targeted re-sync, bypasses rate limit). Returns 202 `{ data: { status: "started", mode } }` or 409 if already running / rate-limited. |
+| POST | `/api/admin/wiki/ingest` | requireDiscordRole(owner/admin) | `apiLimiter` | Body: `{ mode?: "incremental"\|"full", titles?: string[] }`. Default incremental sync is awaited and returns 200 `{ data: { status: "completed", mode, ...counts } }`. Full/targeted runs return 202 `{ data: { status: "started", mode } }`; targeted titles override the mode/category walk and retain the full-run rate/lock guard (maximum 200 titles, 300 characters each). Returns 409 when the initial full-run guard refuses a running/rate-limited request. Failures after 202 remain in the private runtime drain journal; a competing lock-held skip is expected. |
 | GET | `/api/admin/wiki/updates` | requireDiscordRole(owner/admin) | `apiLimiter` | Check how many wiki pages changed since last sync. Result cached ~5 min in Redis. Returns 200 `{ data: { lastSyncAt, updatesAvailable, changedPages, newPages, checkedAt } }`. |
 
 ### Query parameters — `GET /api/wiki/search`

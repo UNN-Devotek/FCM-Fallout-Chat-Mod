@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import type { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import { postEmbed, type EmbedData } from './discordService';
@@ -164,24 +165,33 @@ export async function get(id: number) {
 }
 
 export async function create(name: string, data: unknown) {
+  return runRequiredBundle('domain', 'discordEmbedService:9eda60a743bf', async () => {
   const error = validateEmbed(data);
   if (error) throw new Error(error);
-  return prisma.discordEmbed.create({
+  return (<PreparedArgs extends Parameters<typeof prisma.discordEmbed.create>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('domain', '193342eb9ce2d1b613083352', { stage: 'primary-write-unconfirmed' }, () => prisma.discordEmbed.create(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
     data: { name: name.trim().slice(0, 100), data: data as Prisma.InputJsonValue },
+  });
+
   });
 }
 
 export async function update(id: number, name: string, data: unknown) {
+  return runRequiredBundle('domain', 'discordEmbedService:154f493e34d3', async () => {
   const error = validateEmbed(data);
   if (error) throw new Error(error);
-  return prisma.discordEmbed.update({
+  return (<PreparedArgs extends Parameters<typeof prisma.discordEmbed.update>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('domain', 'e829b819d13ea51a9dd84ae4', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.discordEmbed.update(preparedArgs), isPrismaAtomicRefusal, undefined, undefined))({
     where: { id },
     data: { name: name.trim().slice(0, 100), data: data as Prisma.InputJsonValue },
+  });
+
   });
 }
 
 export async function remove(id: number): Promise<void> {
-  await prisma.discordEmbed.delete({ where: { id } });
+  return runRequiredBundle('domain', 'discordEmbedService:f0b2c8b876e6', async () => {
+  await runRequiredMutation('domain', '8ea7591168eca57af0f6dd64', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.discordEmbed.delete({ where: { id } }), isPrismaAtomicRefusal, undefined, undefined);
+
+  });
 }
 
 export function validateReactionRoles(value: unknown): { error: string | null; mappings: ReactionRoleInput[] } {
@@ -226,7 +236,7 @@ export async function send(input: SendEmbedInput): Promise<SendEmbedResult> {
       throw new PartialEmbedSendError(message.id, input.channelId, causeClass);
     }
   }
-  if (!input.suppressAudit) await prisma.auditLog.create({
+  if (!input.suppressAudit) await createRequiredAudit(prisma.auditLog, {
     data: {
       actorId: input.actorId ?? null,
       action: 'send_discord_embed',
@@ -234,7 +244,7 @@ export async function send(input: SendEmbedInput): Promise<SendEmbedResult> {
       reason: `Sent embed to channel ${input.channelId}${validatedRoles.mappings.length ? ` (+${validatedRoles.mappings.length} reaction roles)` : ''}`,
       metadata: { channelId: input.channelId, title: normalized.title ?? null, reactionRoles: validatedRoles.mappings.length },
     },
-  }).catch(() => {});
+  }, { discordMessageId: message.id, channelId: input.channelId }).catch(() => {});
   return { sent: true, messageId: message.id, reactionRoles: validatedRoles.mappings.length };
 }
 

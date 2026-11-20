@@ -1,3 +1,4 @@
+import { createRequiredAudit, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Device enrolment + admin management for per-install keypair auth.
  * See docs/device-keypair-auth-plan.md.
@@ -23,6 +24,7 @@ import {
  *   (revoke is the explicit "let this device re-establish trust" signal).
  */
 export async function enrollDevice(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('authority', 'devicesController:81a9f286c005', async () => {
   try {
     const { installToken, publicKey } = req.body ?? {};
     if (typeof installToken !== 'string' || !installToken.trim()) {
@@ -57,14 +59,16 @@ export async function enrollDevice(req: Request, res: Response, next: NextFuncti
       }
     }
 
-    const device = await prisma.device.upsert({
+    const device = await runRequiredMutation('authority', '4dcd75899a3f10692a578438', { stage: 'primary-write-unconfirmed' }, () => prisma.device.upsert({
       where: { installToken },
       create: { installToken, publicKey },
       update: { publicKey, revokedAt: null, enrolledAt: new Date() },
       select: { id: true, enrolledAt: true },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
     res.json({ data: { enrolled: true, deviceId: device.id, enrolledAt: device.enrolledAt.toISOString() } });
   } catch (err) { next(err); }
+
+  });
 }
 
 /** GET /api/admin/devices — admin device list (most recently seen first). */
@@ -96,12 +100,13 @@ export async function listDevices(_req: Request, res: Response, next: NextFuncti
 
 /** DELETE /api/admin/devices/:installToken — revoke a device key (admin). */
 export async function revokeDevice(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('authority', 'devicesController:ee830743f39d', async () => {
   try {
     const { installToken } = paramsOf(req);
     const existing = await prisma.device.findUnique({ where: { installToken }, select: { id: true } });
     if (!existing) return next(createError(404, 'Device not found'));
-    await prisma.device.update({ where: { installToken }, data: { revokedAt: new Date() } });
-    await prisma.auditLog.create({
+    await runRequiredMutation('authority', '22378a4ea059e5b14d130f85', { stage: 'primary-write-unconfirmed' }, () => prisma.device.update({ where: { installToken }, data: { revokedAt: new Date() } }), isPrismaAtomicRefusal, undefined, undefined);
+    await createRequiredAudit(prisma.auditLog, {
       data: {
         actorId: (req as any).adminUser?.id ?? null,
         action: 'revoke_device',
@@ -109,7 +114,9 @@ export async function revokeDevice(req: Request, res: Response, next: NextFuncti
         reason: `Revoked device key for install ${installToken}`,
         metadata: { installToken },
       },
-    }).catch(() => {});
+    }, { deviceId: existing.id }).catch(() => {});
     res.json({ data: { revoked: true } });
   } catch (err) { next(err); }
+
+  });
 }

@@ -16,6 +16,7 @@ import env from '../config/environment';
 import { runCampSync } from '../services/campService';
 import { getRedisClient } from '../config/redis';
 import { makeJobTracker } from './jobTracker';
+import { producerInterval } from '../runtime';
 
 const LOCK_KEY     = 'fo76:camp:sync-lock';
 const LOCK_TTL_SEC = 60 * 60; // 1 hour — generous ceiling for a full sync
@@ -32,7 +33,7 @@ export function startCampSyncSchedule(): void {
 
   const tracker = makeJobTracker('[campSyncSchedule]');
   let running = false;
-  setInterval(() => {
+  producerInterval('camp-sync', () => {
     // Overlap guard: skip if the previous tick is still in flight.
     if (running) {
       logger.warn('[campSyncSchedule] previous tick still running — skipping this tick');
@@ -43,7 +44,7 @@ export function startCampSyncSchedule(): void {
     // promise always resolves; .finally clears the running flag. A lock-held /
     // lock-acquire skip returns normally (not a failure); only a real
     // runCampSync() error rethrows so the tracker can escalate it.
-    void tracker(async () => {
+    return tracker(async () => {
       logger.info('[campSyncSchedule] sync tick starting');
 
       // Distributed lock: skip if another sync is already in progress.

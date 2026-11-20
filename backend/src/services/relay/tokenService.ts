@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation } from '../../lib/requiredEffects';
 /**
  * tokenService.ts — relay token mint / verify / revoke.
  *
@@ -133,6 +134,7 @@ export interface RelayToken {
  * The hash lives in the DB; the raw value is never stored.
  */
 export async function mintToken(fo76Name: string): Promise<{ userId: string; token: string; role: 'user' }> {
+  return runRequiredBundle('identity', 'tokenService:1ff43b1afadd', async () => {
   // Relay userId: "user_" + 32 random hex chars (128 bits). TEXT, not UUID.
   const userId      = `user_${randomBytes(16).toString('hex')}`;
   const rawBytes    = randomBytes(32);
@@ -141,7 +143,7 @@ export async function mintToken(fo76Name: string): Promise<{ userId: string; tok
   const tokenHash   = await argon2.hash(token, ARGON2_OPTIONS);
 
   // No users row — relay identity starts anonymous/limited.
-  await prisma.hudPairingToken.create({
+  await runRequiredMutation('identity', 'f90f10a44912943cc8664f4c', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.hudPairingToken.create({
     data: {
       userId,
       tokenHash,
@@ -150,10 +152,12 @@ export async function mintToken(fo76Name: string): Promise<{ userId: string; tok
       role: 'user',
       // linkedUserId starts NULL — "limited" until link redemption.
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   logger.info({ userId, tokenPrefix, fo76Name }, '[tokenService] minted relay token');
   return { userId, token, role: 'user' };
+
+  });
 }
 
 /**
@@ -242,10 +246,11 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
  * no-op (updateMany count = 0 is not an error).
  */
 export async function markRelayTokenLinked(relayUserId: string, fcmUserId: string): Promise<number> {
-  const result = await prisma.hudPairingToken.updateMany({
+  return runRequiredBundle('identity', 'tokenService:ae8da1c0f4ed', async () => {
+  const result = await runRequiredMutation('identity', '985d3b52c4042011832cf4c6', { stage: 'primary-write-unconfirmed', userId: relayUserId }, () => prisma.hudPairingToken.updateMany({
     where:  { userId: relayUserId, revokedAt: null },
     data:   { linkedUserId: fcmUserId },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
   logger.info({ relayUserId, fcmUserId, count: result.count }, '[tokenService] relay token linked');
   invalidateVerificationCache(relayUserId);
 
@@ -253,12 +258,12 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
   // fo76AccountName field. This does not change username/chatName or prove a
   // character name/world location; normal display-name resolution remains separate.
   try {
-    const tok = await prisma.hudPairingToken.findFirst({
+    const tok = await runRequiredLookup('identity', 'relay-link:account-name', () => prisma.hudPairingToken.findFirst({
       where:  { userId: relayUserId },
       select: { fo76Name: true },
-    });
+    }));
     if (tok?.fo76Name) {
-      await prisma.user.update({ where: { id: fcmUserId }, data: { fo76AccountName: tok.fo76Name } });
+      await runRequiredEffect('relay:account-name', { userId: fcmUserId, relayUserId, stage: 'linked-account-name-write-unconfirmed' }, () => prisma.user.update({ where: { id: fcmUserId }, data: { fo76AccountName: tok.fo76Name } }));
     }
   } catch (err) {
     logger.warn({ err, relayUserId, fcmUserId }, '[tokenService] fo76AccountName propagation failed (non-fatal)');
@@ -269,6 +274,8 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
   // permanently limited state, which is indistinguishable from a successful web
   // redeem to the user.
   return result.count;
+
+  });
 }
 
 /**
@@ -276,12 +283,15 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
  * Sets revoked_at = NOW() on every row where revoked_at IS NULL.
  */
 export async function revokeToken(userId: string): Promise<void> {
-  await prisma.hudPairingToken.updateMany({
+  return runRequiredBundle('identity', 'tokenService:c2d96a96e074', async () => {
+  await runRequiredMutation('identity', '57759e7b43d01175ba054a11', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.hudPairingToken.updateMany({
     where: { userId, revokedAt: null },
     data:  { revokedAt: new Date() },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
   invalidateVerificationCache(userId);
   logger.info({ userId }, '[tokenService] revoked relay tokens');
+
+  });
 }
 
 /**
@@ -292,12 +302,15 @@ export async function revokeToken(userId: string): Promise<void> {
  * database revocation for the cache TTL.
  */
 export async function revokeTokensForLinkedUser(linkedUserId: string): Promise<void> {
-  await prisma.hudPairingToken.updateMany({
+  return runRequiredBundle('identity', 'tokenService:563277c9b818', async () => {
+  await runRequiredMutation('identity', '4a49d854e369b87309e3d895', { stage: 'primary-write-unconfirmed' }, () => prisma.hudPairingToken.updateMany({
     where: { linkedUserId, revokedAt: null },
     data: { revokedAt: new Date() },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
   invalidateVerificationCacheByLinkedUserId(linkedUserId);
   logger.info({ linkedUserId }, '[tokenService] revoked linked relay tokens');
+
+  });
 }
 
 /**
@@ -306,11 +319,14 @@ export async function revokeTokensForLinkedUser(linkedUserId: string): Promise<v
  * Does NOT update the users table (relay userId has no users row).
  */
 export async function updateDisplayName(userId: string, fo76Name: string): Promise<void> {
-  await prisma.hudPairingToken.updateMany({
+  return runRequiredBundle('identity', 'tokenService:66ddc03561b8', async () => {
+  await runRequiredMutation('identity', 'deb5cf1fb1a859a199d6726c', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.hudPairingToken.updateMany({
     where: { userId, revokedAt: null },
     data:  { fo76Name },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
   invalidateVerificationCache(userId);
+
+  });
 }
 
 /** Test/maintenance seam: clear process-local auth state between isolated runs. */

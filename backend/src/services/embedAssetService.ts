@@ -1,7 +1,9 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation, runRequiredEffect, isConfirmedObjectRefusal } from '../lib/requiredEffects';
 import { createHash, randomUUID } from 'crypto';
 import { lookup as dnsLookup } from 'dns/promises';
 import type { LookupAddress } from 'dns';
 import https from 'https';
+import type { IncomingMessage } from 'http';
 import type { LookupFunction } from 'net';
 import { fileTypeFromBuffer } from 'file-type';
 import prisma from '../config/prisma';
@@ -68,17 +70,19 @@ async function resolvePublic(hostname: string, deps: Deps): Promise<Address[]> {
 async function resolveBeforeDeadline(hostname: string, deadline: number, deps: Deps): Promise<Address[]> {
   const remaining = deadline - deps.now();
   if (remaining <= 0) throw new EmbedAssetError('Image fetch timed out', 504);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      resolvePublic(hostname, deps),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new EmbedAssetError('Image fetch timed out', 504)), remaining);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  // A canceled Promise.race deadline would remain unresolved forever. One
+  // result owns the timer; the real lookup and its observers still settle even
+  // if the deadline wins. An uncompleted lookup therefore remains accounted.
+  return new Promise<Address[]>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new EmbedAssetError('Image fetch timed out', 504)), remaining);
+    resolvePublic(hostname, deps).then(addresses => {
+      clearTimeout(timer);
+      resolve(addresses);
+    }, error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }
 
 function sameAddresses(left: Address[], right: Address[]): boolean {
@@ -111,60 +115,90 @@ async function requestOnce(url: URL, deadline: number, deps: Deps): Promise<{ st
   if (remaining <= 0) throw new EmbedAssetError('Image fetch timed out', 504);
   return new Promise((resolve, reject) => {
     let settled = false;
-    let req: ReturnType<typeof https.request>;
-    const finish = (value: { status: number; location?: string; body?: Buffer }) => {
-      if (settled) return;
+    let req: ReturnType<typeof https.request> | undefined;
+    let response: IncomingMessage | undefined;
+    let requestClosed = false;
+    let responseEnded = false;
+    let responseClosed = false;
+    type Result = { status: number; location?: string; body?: Buffer };
+    let outcome: { kind: 'success'; value: Result } | { kind: 'error'; error: unknown } | undefined;
+    // Headers, resume(), destroy(), and an error notification are not stream
+    // completion. Keep this result (and its total deadline) through the actual
+    // request close and response end, or the canceled response's actual close.
+    const complete = () => {
+      if (settled || !outcome || req && !requestClosed || response && !responseEnded && !responseClosed) return;
       settled = true;
       clearTimeout(deadlineTimer);
-      resolve(value);
+      if (outcome.kind === 'error') reject(outcome.error); else resolve(outcome.value);
+    };
+    const finish = (value: Result) => {
+      if (settled || outcome?.kind === 'error') return;
+      outcome = { kind: 'success', value };
+      complete();
     };
     const fail = (error: unknown) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(deadlineTimer);
-      reject(error);
+      if (outcome?.kind !== 'error') outcome = { kind: 'error', error };
+      req?.destroy(error instanceof Error ? error : undefined);
+      response?.destroy(error instanceof Error ? error : undefined);
+      complete();
     };
-    const deadlineTimer = setTimeout(() => req.destroy(new EmbedAssetError('Image fetch timed out', 504)), remaining);
-    req = deps.request(url, {
+    const deadlineTimer = setTimeout(() => fail(new EmbedAssetError('Image fetch timed out', 504)), remaining);
+    try { req = deps.request(url, {
       method: 'GET',
       headers: { Accept: 'image/png,image/jpeg,image/webp,image/gif', 'Accept-Encoding': 'identity', 'User-Agent': 'FCM-Embed-Asset-Importer/1.0' },
       lookup: makePinnedLookup(addresses),
-    }, async response => {
+    }, async incoming => {
+      response = incoming;
+      incoming.once('end', () => { responseEnded = true; complete(); });
+      incoming.once('close', () => {
+        responseClosed = true;
+        if (!responseEnded && !outcome) fail(new EmbedAssetError('Image response ended before completion'));
+        complete();
+      });
+      incoming.once('error', fail);
+      incoming.once('aborted', () => fail(new EmbedAssetError('Image response was aborted')));
       try {
         const rebound = await resolveBeforeDeadline(url.hostname, deadline, deps);
+        if (outcome?.kind === 'error') return;
         if (!sameAddresses(addresses, rebound)) throw new EmbedAssetError('Image host address changed during fetch');
-        const status = response.statusCode ?? 502;
-        const location = response.headers.location;
-        if (status >= 300 && status < 400) { response.resume(); finish({ status, ...(location ? { location } : {}) }); return; }
-        if (status !== 200) { response.resume(); throw new EmbedAssetError(`Image host returned HTTP ${status}`); }
-        const encoding = response.headers['content-encoding'];
-        if (encoding && encoding !== 'identity') { response.resume(); throw new EmbedAssetError('Compressed image responses are not accepted'); }
-        const declared = Number(response.headers['content-length']);
-        if (response.headers['content-length'] !== undefined && (!Number.isSafeInteger(declared) || declared < 0)) {
-          response.resume(); throw new EmbedAssetError('Invalid Content-Length from image host');
+        const status = incoming.statusCode ?? 502;
+        const location = incoming.headers.location;
+        if (status >= 300 && status < 400) { finish({ status, ...(location ? { location } : {}) }); incoming.resume(); return; }
+        if (status !== 200) throw new EmbedAssetError(`Image host returned HTTP ${status}`);
+        const encoding = incoming.headers['content-encoding'];
+        if (encoding && encoding !== 'identity') throw new EmbedAssetError('Compressed image responses are not accepted');
+        const declared = Number(incoming.headers['content-length']);
+        if (incoming.headers['content-length'] !== undefined && (!Number.isSafeInteger(declared) || declared < 0)) {
+          throw new EmbedAssetError('Invalid Content-Length from image host');
         }
-        if (Number.isFinite(declared) && declared > MAX_BYTES) { response.resume(); throw new EmbedAssetError('Image exceeds the 10 MiB limit', 413, 'size'); }
+        if (Number.isFinite(declared) && declared > MAX_BYTES) throw new EmbedAssetError('Image exceeds the 10 MiB limit', 413, 'size');
         const chunks: Buffer[] = [];
         let total = 0;
-        response.on('data', (chunk: Buffer | string) => {
+        incoming.on('data', (chunk: Buffer | string) => {
           const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
           total += data.length;
           if (total > MAX_BYTES) {
-            response.destroy(new EmbedAssetError('Image exceeds the 10 MiB limit', 413, 'size'));
+            fail(new EmbedAssetError('Image exceeds the 10 MiB limit', 413, 'size'));
           } else chunks.push(data);
         });
-        response.on('end', () => {
+        incoming.once('end', () => {
           if (Number.isFinite(declared) && declared !== total) {
             fail(new EmbedAssetError('Image response length did not match Content-Length'));
             return;
           }
           finish({ status, body: Buffer.concat(chunks, total) });
         });
-        response.on('error', fail);
-      } catch (error) { response.destroy(); fail(error); }
+      } catch (error) { fail(error); }
     });
     req.on('error', fail);
+    req.once('close', () => {
+      requestClosed = true;
+      if (!response && !outcome) fail(new EmbedAssetError('Image request ended before a response'));
+      complete();
+    });
     req.end();
+    } catch (error) { fail(error); }
   });
 }
 
@@ -229,6 +263,7 @@ export async function uploadPublicAsset(
 }
 
 async function persistAsset(buffer: Buffer, mimeType: string, ext: string, originalHost: string, creatorDiscordId: string | null, overrides: Partial<Deps>) {
+  return runRequiredBundle('domain', 'embedAssetService:90af29e21f49', async () => {
   const sha256 = createHash('sha256').update(buffer).digest('hex');
   const objectKey = `embed-assets/${sha256}.${ext}`;
   const id = randomUUID();
@@ -238,10 +273,10 @@ async function persistAsset(buffer: Buffer, mimeType: string, ext: string, origi
   const publicUrl = `${env.FCM_PUBLIC_BASE_URL.replace(/\/$/, '')}/embed-assets/${id}/${sha256}.${ext}`;
   let claim;
   try {
-    claim = await prisma.embedAsset.create({ data: {
+    claim = await runRequiredMutation('domain', 'f643ae8c1a12a2818925c02e', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.embedAsset.create({ data: {
       id, sha256, objectKey, publicUrl, mimeType, byteSize: buffer.length,
       originalHost, creatorDiscordId, status: 'pending', claimToken, leaseExpiresAt,
-    } });
+    } }), isPrismaAtomicRefusal, undefined, undefined);
   } catch (error: unknown) {
     const isConflict = typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
     if (!isConflict) throw error;
@@ -251,7 +286,7 @@ async function persistAsset(buffer: Buffer, mimeType: string, ext: string, origi
       if (!competing.claimToken || !competing.leaseExpiresAt || competing.leaseExpiresAt > now) {
         throw new EmbedAssetError('An import of this image is already in progress', 409);
       }
-      const takeover = await prisma.embedAsset.updateMany({
+      const takeover = await runRequiredMutation('domain', '5c4c1ba38dbbf6aea7724e87', { stage: 'primary-write-unconfirmed', rowId: competing.id }, () => prisma.embedAsset.updateMany({
         where: {
           id: competing.id, sha256, status: 'pending', claimToken: competing.claimToken,
           leaseExpiresAt: { lte: now },
@@ -260,7 +295,7 @@ async function persistAsset(buffer: Buffer, mimeType: string, ext: string, origi
           claimToken, leaseExpiresAt, mimeType, byteSize: buffer.length,
           originalHost, creatorDiscordId,
         },
-      });
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
       if (takeover.count !== 1) throw new EmbedAssetError('An import of this image is already in progress', 409);
       claim = { ...competing, claimToken, leaseExpiresAt, mimeType, byteSize: buffer.length, originalHost, creatorDiscordId };
     } else {
@@ -269,18 +304,23 @@ async function persistAsset(buffer: Buffer, mimeType: string, ext: string, origi
   }
   let createdObject = false;
   try {
-    createdObject = await (overrides.upload ?? defaultDeps.upload)(objectKey, buffer, mimeType);
-    const published = await prisma.embedAsset.updateMany({
+    createdObject = await runRequiredEffect('embed-asset:managed-upload', { objectKey, sha256, rowId: claim.id,
+      stage: 'managed-asset-put-unconfirmed' }, () => (overrides.upload ?? defaultDeps.upload)(objectKey, buffer, mimeType), isConfirmedObjectRefusal,
+      undefined, result => result === false);
+    const published = await runRequiredMutation('domain', '1ce15e6b0379a1ee1d88639f', { stage: 'primary-write-unconfirmed', rowId: claim.id }, () => prisma.embedAsset.updateMany({
       where: { id: claim.id, sha256, status: 'pending', claimToken },
       data: { status: 'ready', claimToken: null, leaseExpiresAt: null },
-    });
+    }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (published.count !== 1) throw new Error('Embed asset ownership was lost before publication');
     return { ...claim, status: 'ready', claimToken: null, leaseExpiresAt: null };
   } catch (error) {
-    const released = await prisma.embedAsset.deleteMany({ where: { id: claim.id, sha256, status: 'pending', claimToken } });
-    if (createdObject && released.count === 1) await (overrides.remove ?? defaultDeps.remove)(objectKey);
+    const released = await runRequiredMutation('domain', 'a35d31730631af62c52d95ad', { stage: 'primary-write-unconfirmed', rowId: claim.id }, () => prisma.embedAsset.deleteMany({ where: { id: claim.id, sha256, status: 'pending', claimToken } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
+    if (createdObject && released.count === 1) await runRequiredEffect('embed-asset:managed-remove', { objectKey, sha256, rowId: claim.id,
+      stage: 'managed-asset-remove-unconfirmed' }, () => (overrides.remove ?? defaultDeps.remove)(objectKey), isConfirmedObjectRefusal);
     throw error;
   }
+
+  });
 }
 
 export const embedAssetPolicy = { MAX_BYTES, MAX_REDIRECTS, DEADLINE_MS, CLAIM_LEASE_MS, isPublicIp, parseRemoteUrl, makePinnedLookup };

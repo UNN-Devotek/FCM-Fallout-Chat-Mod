@@ -1,3 +1,5 @@
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Discord <-> GitHub ticketing.
  *
@@ -39,6 +41,7 @@ import {
 import env from '../config/environment';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 import githubService from './githubService';
 import playerReportService from './playerReportService';
 import {
@@ -74,10 +77,10 @@ async function getPanelChannelId(): Promise<string | null> {
   const row = await prisma.moderationSetting.findUnique({ where: { key: PANEL_CHANNEL_KEY } }).catch(() => null);
   return row?.value || null;
 }
-async function setPanelChannelId(channelId: string): Promise<void> {
-  await prisma.moderationSetting
-    .upsert({ where: { key: PANEL_CHANNEL_KEY }, update: { value: channelId }, create: { key: PANEL_CHANNEL_KEY, value: channelId } })
-    .catch((err) => logger.warn({ err }, 'ticket: failed to persist panel channel'));
+async function setPanelChannelId(channelId: string, discordMessageId: string): Promise<void> {
+  await runtime.required('ticket:panel-link', () => prisma.moderationSetting
+    .upsert({ where: { key: PANEL_CHANNEL_KEY }, update: { value: channelId }, create: { key: PANEL_CHANNEL_KEY, value: channelId } }),
+  { channelId, discordMessageId, stage: 'panel-sent-channel-link-unconfirmed' });
 }
 
 function staffRoleIds() {
@@ -294,8 +297,8 @@ async function handlePanelCommand(interaction: any): Promise<void> {
   if (!channel || channel.type !== ChannelType.GuildText) {
     return ephem(interaction, 'Run this in a standard text channel.');
   }
-  await (channel as TextChannel).send(buildPanel());
-  await setPanelChannelId(channel.id);
+  const panel = await (channel as TextChannel).send(buildPanel());
+  await setPanelChannelId(channel.id, panel.id);
   return ephem(interaction, '✅ Ticket panel posted. New reports (Discord + website) open their threads here.');
 }
 
@@ -307,6 +310,7 @@ async function handleOpenButton(interaction: any, type: TicketType): Promise<voi
 }
 
 async function handleModalSubmit(interaction: any, type: TicketType): Promise<void> {
+  return runRequiredBundle('domain', 'ticketService:28cdb0654956', async () => {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const channel = interaction.channel;
@@ -319,13 +323,17 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
   const steps = type === 'bug' ? interaction.fields.getTextInputValue('steps')?.trim() : undefined;
   const reporterId = interaction.user.id;
   const reporterTag = interaction.user.tag || interaction.user.username;
+  let issueNumber: number | undefined;
+  let issueNodeId: string | undefined;
+  let discordThreadId: string | undefined;
 
   try {
-    const issue = await githubService.createIssue({
+    const issue = await runtime.required('ticket:issue-create', () => githubService.createIssue({
       title,
       body: buildIssueBody({ type, description, steps, reporterTag, reporterId }),
       labels: [labelForType(type)],
-    });
+    }), { reporterId, stage: 'issue-create-result-unknown' });
+    issueNumber = issue.number; issueNodeId = issue.nodeId;
 
     // Boards are populated by GitHub's built-in "Auto-add to project" workflow,
     // keyed off the issue's labels — the bot does not write Projects v2 directly
@@ -339,13 +347,14 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
       invitable: false,
       reason: `Ticket #${issue.number} (${type})`,
     });
+    discordThreadId = thread.id;
     await thread.members.add(reporterId).catch(() => {});
     await deleteThreadSystemMessage(channel as TextChannel, thread.id);
     await thread.send(await buildThreadIntro({ type, issue, reporterId, description, steps })).catch((err) =>
       logger.warn({ err, threadId: thread.id }, 'ticket: failed to post thread intro'),
     );
 
-    await prisma.githubIssueThread
+    await runRequiredMutation('domain', '51b57caf02813598c7a8de0e', { stage: 'primary-write-unconfirmed' }, () => prisma.githubIssueThread
       .create({
         data: {
           issueNumber: issue.number,
@@ -357,16 +366,26 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
           reporterId,
           isPrivate: true,
         },
-      })
-      .catch((err) => logger.error({ err, issue: issue.number }, 'ticket: failed to persist issue<->thread map'));
+      }), isPrismaAtomicRefusal, undefined, undefined)
+      .catch((err) => {
+        runtime.recordFailure('ticket:issue-thread-link', err, { issueNumber: issue.number, issueNodeId: issue.nodeId,
+          discordThreadId: thread.id, discordChannelId: channel.id, stage: 'issue-and-thread-created-link-unconfirmed' });
+        logger.error({ err, issue: issue.number }, 'ticket: failed to persist issue<->thread map');
+        throw err;
+      });
 
     logger.info({ issue: issue.number, type, threadId: thread.id }, 'ticket: created');
     // Angle-bracket the URL so Discord does NOT unfurl it into a link-preview embed.
     return ephem(interaction, `✅ Created **#${issue.number}** — track it in <#${thread.id}>.\n<${issue.htmlUrl}>`);
   } catch (err) {
+    runtime.recordFailure('ticket:creation-incomplete', err, { issueNumber, issueNodeId, discordThreadId,
+      discordChannelId: channel.id, reporterId, stage: discordThreadId ? 'issue-and-thread-created-setup-unconfirmed'
+        : issueNumber ? 'issue-created-thread-unconfirmed' : 'issue-create-result-unknown' });
     logger.error({ err, type }, 'ticket: creation failed');
-    return ephem(interaction, '⚠️ Something went wrong creating your ticket. Please try again or ping a mod.');
+    return ephem(interaction, '⚠️ Your ticket could not be fully linked. Contact a moderator before submitting it again.');
   }
+
+  });
 }
 
 async function handleMilestoneSelect(interaction: any, issueNumberRaw: string): Promise<void> {
@@ -382,7 +401,9 @@ async function handleMilestoneSelect(interaction: any, issueNumberRaw: string): 
     }
     const value = interaction.values?.[0];
     const milestoneNumber = !value || value === 'none' ? null : parseInt(value, 10);
-    await githubService.setIssueMilestone(issueNumber, Number.isFinite(milestoneNumber as number) ? (milestoneNumber as number) : null);
+    await runtime.required('ticket:milestone', () => githubService.setIssueMilestone(issueNumber,
+      Number.isFinite(milestoneNumber as number) ? (milestoneNumber as number) : null),
+    { issueNumber, issueNodeId: map.issueNodeId, discordThreadId: map.discordThreadId, stage: 'issue-milestone-update-unconfirmed' });
     logger.info({ issueNumber, milestoneNumber, by: interaction.user.id }, 'ticket: milestone set');
     return ephem(
       interaction,
@@ -422,7 +443,8 @@ async function handleCloseButton(interaction: any, issueNumberRaw: string): Prom
   // 2) Close the GitHub issue (independent of the lock above).
   let ghMsg: string;
   try {
-    await githubService.closeIssue(issueNumber);
+    await runtime.required('ticket:issue-close', () => githubService.closeIssue(issueNumber),
+      { issueNumber, discordThreadId: thread?.id, stage: 'issue-close-unconfirmed' });
     ghMsg = `GitHub issue #${issueNumber} closed`;
   } catch (err) {
     logger.error({ err, issueNumber }, 'ticket: close issue failed');
@@ -453,38 +475,56 @@ async function handleDeleteButton(interaction: any, issueNumberRaw: string): Pro
 }
 
 async function handleDeleteConfirm(interaction: any, issueNumberRaw: string): Promise<void> {
+  return runRequiredBundle('domain', 'ticketService:907e064dd1f3', async () => {
   if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete tickets.');
   const issueNumber = parseInt(issueNumberRaw, 10);
   if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } }).catch(() => null);
+  const map = await runtime.required('ticket:issue-thread-lookup', () => prisma.githubIssueThread.findUnique({ where: { issueNumber } }),
+    { issueNumber, discordThreadId: interaction.channel?.id, stage: 'required-issue-link-lookup-unconfirmed' });
 
   let ghResult: string;
+  let disposition = 'not-tracked';
+  const unconfirmed = (err: unknown) => {
+    runtime.recordFailure('ticket:issue-delete', err, { issueNumber, issueNodeId: map?.issueNodeId,
+      discordThreadId: map?.discordThreadId ?? interaction.channel?.id, stage: 'issue-delete-or-close-unconfirmed' });
+    return ephem(interaction, `⚠️ Could not confirm deletion or closure of #${issueNumber}. Contact a moderator before retrying.`);
+  };
   try {
     if (map) {
-      await githubService.deleteIssue(map.issueNodeId);
+      await runRequiredMutation('domain', 'e8588d8590e42cb4a03bd31e', { issueNumber, issueNodeId: map.issueNodeId,
+        discordThreadId: map.discordThreadId, stage: 'github-issue-delete-unconfirmed' }, () => githubService.deleteIssue(map.issueNodeId), undefined, undefined, undefined);
+      disposition = 'issue-delete-confirmed';
       ghResult = `deleted GitHub issue #${issueNumber}`;
     } else {
       ghResult = `no tracked record for #${issueNumber}`;
     }
-  } catch {
+  } catch (err) {
+    if (!githubService.isIssueDeleteRefused(err)) return unconfirmed(err);
     try {
-      await githubService.closeIssue(issueNumber);
+      await runRequiredMutation('domain', '9382ad1009ef7aad493cbe37', { stage: 'primary-write-unconfirmed' }, () => githubService.closeIssue(issueNumber), undefined, undefined, undefined);
+      disposition = 'issue-close-confirmed';
       ghResult = `couldn't delete issue #${issueNumber} (token lacks delete perms) — closed it instead`;
-    } catch {
-      ghResult = `couldn't delete or close issue #${issueNumber}`;
+    } catch (err) {
+      return unconfirmed(err);
     }
   }
 
-  await prisma.githubIssueThread.deleteMany({ where: { issueNumber } }).catch(() => {});
+  await runtime.required('ticket:issue-thread-unlink', () => prisma.githubIssueThread.deleteMany({ where: { issueNumber } }),
+    { issueNumber, issueNodeId: map?.issueNodeId, discordThreadId: map?.discordThreadId ?? interaction.channel?.id,
+      stage: `${disposition}-map-delete-unconfirmed` });
   logger.info({ issueNumber, by: interaction.user.id, ghResult }, 'ticket: deleted');
   await ephem(interaction, `🧨 Teardown: ${ghResult}. Deleting this thread…`);
 
   const thread = interaction.channel;
   if (thread?.isThread?.()) {
-    await thread.delete(`Ticket #${issueNumber} deleted by ${interaction.user.id}`).catch(() => {});
+    await runtime.required('ticket:thread-delete', () => thread.delete(`Ticket #${issueNumber} deleted by ${interaction.user.id}`),
+      { issueNumber, issueNodeId: map?.issueNodeId, discordThreadId: thread.id,
+        stage: 'issue-disposition-and-mapping-removed-thread-delete-unconfirmed' });
   }
+
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +596,7 @@ async function handlePlayerSubmit(interaction: any): Promise<void> {
     );
   } catch (err) {
     logger.error({ err }, 'player-report: submit failed');
-    return ephem(interaction, '⚠️ Something went wrong filing your report. Please try again or ping a mod.');
+    return ephem(interaction, '⚠️ Your report could not be fully linked. Contact a moderator before submitting it again.');
   }
 }
 
@@ -602,6 +642,8 @@ export async function openReportThread(info: ReportThreadInfo, channel?: TextCha
     ch = fetched as TextChannel;
   }
 
+  let createdThreadId: string | undefined;
+  let introMessageId: string | undefined;
   try {
     const thread = await ch.threads.create({
       name: buildPlayerReportThreadName(info.reporterName, info.involvedPlayers ?? null, info.reportNumber),
@@ -610,6 +652,7 @@ export async function openReportThread(info: ReportThreadInfo, channel?: TextCha
       invitable: false,
       reason: `Player report #${info.reportNumber}`,
     });
+    createdThreadId = thread.id;
     if (info.reporterDiscordId) await thread.members.add(info.reporterDiscordId).catch(() => {});
     await deleteThreadSystemMessage(ch, thread.id);
 
@@ -628,8 +671,7 @@ export async function openReportThread(info: ReportThreadInfo, channel?: TextCha
         { name: 'What happened', value: (info.content || '').slice(0, 1024) || '_n/a_' },
         ...(info.involvedPlayers ? [{ name: 'Involved', value: info.involvedPlayers.slice(0, 1024) }] : []),
       );
-    await thread
-      .send({
+    const intro = await runtime.required('report-thread:intro', () => thread.send({
         content: pings || undefined,
         embeds: [embed],
         components: buildReportThreadComponents(),
@@ -637,14 +679,17 @@ export async function openReportThread(info: ReportThreadInfo, channel?: TextCha
           users: info.reporterDiscordId ? [info.reporterDiscordId] : [],
           roles: [mod, overseer].filter(Boolean) as string[],
         },
-      })
-      .catch((err) => logger.warn({ err, threadId: thread.id }, 'report-thread: failed to post intro'));
+      }), { reportId: info.reportId, discordThreadId: thread.id, stage: 'thread-created-intro-send-unconfirmed' });
+    introMessageId = intro.id;
 
     await playerReportService.setReportThreadId(info.reportId, thread.id);
     return thread.id;
   } catch (err) {
+    runtime.recordFailure('report-thread:setup', err, { reportId: info.reportId, reportNumber: info.reportNumber,
+      discordThreadId: createdThreadId, discordChannelId: ch.id, introMessageId,
+      stage: createdThreadId ? 'thread-created-report-setup-unconfirmed' : 'thread-create-result-unknown' });
     logger.error({ err, reportNumber: info.reportNumber }, 'report-thread: creation failed');
-    return null;
+    throw err;
   }
 }
 
@@ -660,8 +705,10 @@ async function handleReportClose(interaction: any): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const report = await reportFromThread(interaction);
   if (!report) return ephem(interaction, 'No tracked report for this thread.');
-  await playerReportService.setReportStatus(report.id, 'closed').catch(() => {});
-  await interaction.channel.send(`✅ Report #${report.reportNumber} closed by <@${interaction.user.id}>.`).catch(() => {});
+  await playerReportService.setReportStatus(report.id, 'closed', interaction.channel.id);
+  await runtime.required('player-report:close-notice', () =>
+    interaction.channel.send(`✅ Report #${report.reportNumber} closed by <@${interaction.user.id}>.`),
+  { reportId: report.id, discordThreadId: interaction.channel.id, stage: 'report-status-confirmed-close-notice-unconfirmed' });
   logger.info({ reportNumber: report.reportNumber, by: interaction.user.id }, 'report: closed');
   return ephem(interaction, `✅ Report #${report.reportNumber} marked closed.`);
 }
@@ -698,11 +745,12 @@ async function handleReportDeleteConfirm(interaction: any): Promise<void> {
   if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete reports.');
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const report = await reportFromThread(interaction);
-  if (report) await playerReportService.deleteReport(report.id).catch((err) => logger.warn({ err }, 'report: delete row failed'));
+  if (report) await playerReportService.deleteReport(report.id, interaction.channel.id);
   logger.info({ reportNumber: report?.reportNumber, by: interaction.user.id }, 'report: deleted');
   await ephem(interaction, `🧨 ${report ? `Report #${report.reportNumber} ` : 'Report '}deleted. Removing thread…`);
   const thread = interaction.channel as any;
-  if (thread?.isThread?.()) await thread.delete(`Report deleted by ${interaction.user.id}`).catch(() => {});
+  if (thread?.isThread?.()) await runtime.required('player-report:thread-delete', () => thread.delete(`Report deleted by ${interaction.user.id}`),
+    { reportId: report?.id, discordThreadId: thread.id, stage: 'report-delete-confirmed-thread-delete-unconfirmed' });
 }
 
 // Attach screenshots dropped in a player-report lockdown thread to the report.
@@ -729,7 +777,7 @@ async function onThreadMessage(message: any): Promise<void> {
         const timer = setTimeout(() => ac.abort(), 10_000);
         const res = await fetch(a.url, { signal: ac.signal });
         clearTimeout(timer);
-        if (!res.ok) continue;
+        if (!res.ok) { await discardRuntimeResponse(res); continue; }
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length <= REPORT_IMAGE_MAX_BYTES) buffers.push(buf); // post-download size guard
       } catch {
@@ -766,26 +814,26 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     if (!parsed.isOurs) return;
 
     if (anyI.isButton?.()) {
-      if (parsed.action === 'open' && isTicketType(parsed.arg)) return handleOpenButton(anyI, parsed.arg);
-      if (parsed.action === 'player') return handlePlayerOpen(anyI);
-      if (parsed.action === 'close') return handleCloseButton(anyI, parsed.arg);
-      if (parsed.action === 'delete') return handleDeleteButton(anyI, parsed.arg);
-      if (parsed.action === 'delconfirm') return handleDeleteConfirm(anyI, parsed.arg);
-      if (parsed.action === 'rclose') return handleReportClose(anyI);
-      if (parsed.action === 'rlock') return handleReportLock(anyI);
-      if (parsed.action === 'rdelete') return handleReportDelete(anyI);
-      if (parsed.action === 'rdelconfirm') return handleReportDeleteConfirm(anyI);
+      if (parsed.action === 'open' && isTicketType(parsed.arg)) return await handleOpenButton(anyI, parsed.arg);
+      if (parsed.action === 'player') return await handlePlayerOpen(anyI);
+      if (parsed.action === 'close') return await handleCloseButton(anyI, parsed.arg);
+      if (parsed.action === 'delete') return await handleDeleteButton(anyI, parsed.arg);
+      if (parsed.action === 'delconfirm') return await handleDeleteConfirm(anyI, parsed.arg);
+      if (parsed.action === 'rclose') return await handleReportClose(anyI);
+      if (parsed.action === 'rlock') return await handleReportLock(anyI);
+      if (parsed.action === 'rdelete') return await handleReportDelete(anyI);
+      if (parsed.action === 'rdelconfirm') return await handleReportDeleteConfirm(anyI);
       return;
     }
 
     if (anyI.isStringSelectMenu?.()) {
-      if (parsed.action === 'milestone') return handleMilestoneSelect(anyI, parsed.arg);
+      if (parsed.action === 'milestone') return await handleMilestoneSelect(anyI, parsed.arg);
       return;
     }
 
     if (anyI.isModalSubmit?.()) {
-      if (parsed.action === 'submit' && isTicketType(parsed.arg)) return handleModalSubmit(anyI, parsed.arg);
-      if (parsed.action === 'psubmit') return handlePlayerSubmit(anyI);
+      if (parsed.action === 'submit' && isTicketType(parsed.arg)) return await handleModalSubmit(anyI, parsed.arg);
+      if (parsed.action === 'psubmit') return await handlePlayerSubmit(anyI);
       return;
     }
   } catch (err) {

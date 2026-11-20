@@ -1,3 +1,4 @@
+import { runRequiredEffect } from '../lib/requiredEffects';
 /**
  * wikiIngestionService — recursive category walk + upsert pipeline for the
  * local FO76 wiki catalog.
@@ -425,10 +426,10 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
           existing.revId === meta.revId &&
           existing.imageUrl
         ) {
-          await prisma.wikiEntry.update({
+          await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikientry-update-unconfirmed' }, () => prisma.wikiEntry.update({
             where: { pageId: meta.pageId },
             data:  { ingestedAt: new Date(), isStale: false },
-          });
+          }));
           skipped++;
           return;
         }
@@ -553,11 +554,11 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
 
         // If hash unchanged, just touch ingestedAt (and store revId if we now have it)
         if (hashUnchanged && existing) {
-          await prisma.wikiEntry.update({
+          await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikientry-update-unconfirmed' }, () => prisma.wikiEntry.update({
             where: { pageId: meta.pageId },
             // revId not yet in generated client — cast until next prisma generate
             data:  { ingestedAt: new Date(), isStale: false, ...(meta.revId != null ? { revId: meta.revId } as any : {}) },
-          });
+          }));
           skipped++;
           return;
         }
@@ -606,16 +607,16 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
             ingestedAt:     new Date(),
           },
         };
-        const upserted_entry = await prisma.wikiEntry.upsert(upsertArgs);
+        const upserted_entry = await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikientry-upsert-unconfirmed' }, () => prisma.wikiEntry.upsert(upsertArgs));
 
         // 9) Auto-generate aliases
         const aliasStrings = generateAliases(displayName);
         for (const alias of aliasStrings) {
-          await prisma.wikiAlias.upsert({
+          await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikialias-upsert-unconfirmed' }, () => prisma.wikiAlias.upsert({
             where:  { alias_wikiEntryId: { alias, wikiEntryId: upserted_entry.id } },
             create: { alias, wikiEntryId: upserted_entry.id, source: 'auto' },
             update: {},
-          });
+          }));
         }
 
         // 10) Fetch + populate multi-image carousel
@@ -694,8 +695,8 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
 
                 // Write the wiki_images row immediately (the ordered loop below
                 // will produce no rows since ordered.length === 0).
-                await prisma.wikiImage.deleteMany({ where: { wikiEntryId: upserted_entry.id } });
-                await prisma.wikiImage.create({
+                await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikiimage-deletemany-unconfirmed' }, () => prisma.wikiImage.deleteMany({ where: { wikiEntryId: upserted_entry.id } }));
+                await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikiimage-create-unconfirmed' }, () => prisma.wikiImage.create({
                   data: {
                     wikiEntryId: upserted_entry.id,
                     url:         perkCardRow.url,
@@ -707,11 +708,11 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
                     isMap:       false,
                     position:    0,
                   },
-                });
+                }));
 
                 // Also populate the entry-level image fields so the primary
                 // image thumbnail + aspect layout work on search/detail views.
-                await prisma.wikiEntry.update({
+                await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikientry-update-unconfirmed' }, () => prisma.wikiEntry.update({
                   where: { id: upserted_entry.id },
                   data: {
                     imageUrl:       perkCardRow.url,
@@ -721,7 +722,7 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
                     imageHeight:    perkCardRow.height,
                     imageAspect:    perkCardRow.aspect,
                   } as any,
-                });
+                }));
 
                 logger.debug(
                   { title: meta.title, perkCardImageFilename, url: perkCardRow.url },
@@ -782,9 +783,9 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
           }
 
           // Replace wiki_images rows: delete-then-insert
-          await prisma.wikiImage.deleteMany({ where: { wikiEntryId: upserted_entry.id } });
+          await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikiimage-deletemany-unconfirmed' }, () => prisma.wikiImage.deleteMany({ where: { wikiEntryId: upserted_entry.id } }));
           if (imageRows.length > 0) {
-            await prisma.wikiImage.createMany({
+            await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikiimage-createmany-unconfirmed' }, () => prisma.wikiImage.createMany({
               data: imageRows.map(r => ({
                 wikiEntryId: upserted_entry.id,
                 url:         r.url,
@@ -796,7 +797,7 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
                 isMap:       r.isMap,
                 position:    r.position,
               })),
-            });
+            }));
           }
 
           logger.debug({ title: meta.title, imageCount: imageRows.length }, '[wikiIngest] images populated');
@@ -807,12 +808,12 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
         // 11) Fetch + populate locations
         try {
           const locations = await fetchLocations(meta.title);
-          await prisma.wikiEntry.update({
+          await runRequiredEffect('wiki:ingest', { pageId: meta.pageId, stage: 'wikientry-update-unconfirmed' }, () => prisma.wikiEntry.update({
             where: { id: upserted_entry.id },
             // Cast: named segment interface lacks the index signature Prisma's
             // InputJsonValue wants; the value is plain JSON-serializable data.
             data:  { locations: locations as unknown as object[] },
-          });
+          }));
           if (locations.length > 0) {
             logger.debug({ title: meta.title, locationCount: locations.length }, '[wikiIngest] locations populated');
           }
@@ -829,13 +830,13 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
         // Write to wiki_ingest_errors — best-effort (we already have the title but may not know pageId)
         try {
           // Try to parse a pageId from a prior meta fetch; fall back to -1 sentinel
-          await prisma.wikiIngestError.create({
+          await runRequiredEffect('wiki:ingest', { pageId: -1, stage: 'ingest-error-row-write-unconfirmed' }, () => prisma.wikiIngestError.create({
             data: {
               pageId:      -1,
               error:       String(err instanceof Error ? err.message : err).slice(0, 1000),
               attemptedAt: new Date(),
             },
-          });
+          }));
         } catch { /* non-fatal */ }
       } finally {
         processed++;
@@ -867,10 +868,10 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
     // other entry as stale just because it wasn't in the requested set)
     const staleResult = (titlesOverride && titlesOverride.length > 0)
       ? { count: 0 }
-      : await prisma.wikiEntry.updateMany({
+      : await runRequiredEffect('wiki:ingest', { stage: 'stale-entry-write-unconfirmed' }, () => prisma.wikiEntry.updateMany({
           where: { ingestedAt: { lt: runStart } },
           data:  { isStale: true },
-        });
+        }));
 
     // ── Update last-run timestamp ──
     await redis.set(LAST_RUN_KEY, String(Date.now()), { EX: LOCK_TTL_SEC * 10 });

@@ -87,6 +87,51 @@ owns that token — do not point a GitHub repo webhook at the prod compose's tok
 
 ### Manual deployment while auto-deploy is paused
 
+On 2026-11-17 Dev `e32df0ec` (relay slot release, PR #671) was deployed from an exact Git
+archive under `/home/devotek/fcm-dev-deploy/dev-e32df0ec/`. The image `fcm-reviewed-dev:e32df0ec`
+was built from that archive. Only `backend-dev` was recreated, with `--no-deps --no-build
+--pull never`, using the live customized Compose (checksum unchanged,
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`), the earlier build override
+and a new `image-override.yml`. That override also reconciles the runtime-control contract:
+the `runtime_dev_control` volume, `FCM_RUNTIME_CONTROL_DIR`, `FCM_DRAIN_TIMEOUT_MS` and a 180 s
+stop grace. The rollback tag is `fcm-reviewed-rollback-dev:20261117` (the prior `eb3d93d3` image).
+
+A new named volume's root is mode 0755, and the backend refuses to start until it is 0700
+("Discord relay journal is incomplete or unavailable"). Set it once with a throwaway container
+before the first boot: `docker run --rm --entrypoint sh -v <project>_runtime_dev_control:/x
+<image> -c 'chmod 700 /x'`.
+
+The first boot recorded two required-effect failures in `failures.jsonl`:
+- scheduled-event mirroring, because `DISCORD_SERVER_ID` and `DISCORD_EVENTS_CHANNEL_ID` are not
+  set in the Dev environment;
+- a rate-limited slash-command sync.
+
+The running process is not frozen, but unresolved failures fence the next process. **The next
+Dev backend restart starts frozen** until those records are resolved and the Dev event
+configuration is fixed.
+
+The storage and tunnel containers kept their IDs. External health reported connected
+DB/Redis/Discord, `/relay` upgraded with 101, and the compiled relay contains the eviction and
+supersession code.
+
+The two failure causes were then fixed:
+- `DISCORD_EVENTS_CHANNEL_ID` is set to the Dev `events` channel (the same channel role
+  Production uses) and the checked-in Dev Compose passes it through.
+- Overlay slash-command registration now edits only changed commands, spaced 4.5 s apart.
+
+After review, the recorded failures were moved aside to `.reviewed-20261117/` in the control
+volume, with the backend stopped, and the backend restarted.
+
+**Auto-deploy re-enabled (2026-11-17).** The Dokploy record for `fcm-dev-stack` previously
+had an empty environment, so a Dokploy deploy could not even interpolate the Compose file.
+Its environment now holds the same values as the manual deployment env file, except
+`COMPOSE_PROJECT_NAME` and `FCM_BACKEND_IMAGE`, which only applied to the manual cutover. It
+also has `DISCORD_EVENTS_CHANNEL_ID`, and `autoDeploy=true`, so a push to `dev` deploys the
+checked-in `deploy/dev/docker-compose.yml`. That file's runtime-control volume, drain
+timeout and grace period match the manual override. The old customized Compose's
+`HUD_PUSH_*`/`HUD_IDENTITY_SECRET` entries are no longer read by the backend. Dokploy adds the
+`dev-relay-direct` domain labels and `dokploy-network` from its domain record.
+
 On 2026-10-06 the blue-name QA candidate was deployed from committed Dev
 `d5cf21a9` under `/home/devotek/fcm-dev-deploy/qa-1.4.3-nameplates-d5cf21a9/`.
 Source archive SHA-256:
@@ -799,3 +844,31 @@ broke the dev deploy once already:
 A failed compose deploy in Dokploy does **not** roll the site back or take it down — it just leaves
 the old container up. Check `composeStatus` (or `/etc/dokploy/logs/<compose>/`) rather than trusting
 that the site responding means the deploy worked.
+
+## Durable backend runtime control
+
+The checked-in Dev Compose definition mounts the dedicated project-local named volume
+`runtime_dev_control` at `/app/runtime-control`. `FCM_RUNTIME_CONTROL_DIR` names that path,
+`FCM_DRAIN_TIMEOUT_MS=120000` bounds the drain, and `stop_grace_period: 180s` leaves time
+for a normal signal shutdown. The backend restricts the control directory to mode 0700 and
+its socket/journal files to 0600. Keep this volume across backend replacement: removing it
+would erase restart fences and accepted-effect evidence. It is separate from downloads and
+all Dev stores and never shares a production volume.
+
+Reconcile this mount/environment/grace contract into the actual hosted custom Dokploy
+Compose before deploying the runtime-enabled image. Applying that reconciliation is a
+separate deployment step; this source definition does not change the running stack. Keep
+existing stores, connector, private network and their volumes intact. A forced Docker kill
+is not a successful drain; inspect the retained checkpoint and actual container state.
+See [runtime maintenance](../backend/runtime-maintenance.md).
+
+Other checked-in container definitions still need review before they can run this new
+runtime image: root `docker-compose.yml` and `deploy/laptop-cutover/docker-compose.yml` do not yet mount
+persistent control state or set its shutdown grace. The local development override runs
+`tsx` directly and retains its default `/app/.fcm-runtime` under the existing source bind;
+it still lacks an explicit drain/grace contract and its pre-start development schema push
+is not guarded by the production entrypoint. Laptop deployment remains disabled. Do not use those definitions
+for this promotion without reconciling the same control-state contract. The pinned
+`deploy/return-mothership/docker-compose.yml` already defines its protected control bind,
+explicit drain timeout and shutdown grace. No historical deployment script is activated
+by this documentation change.

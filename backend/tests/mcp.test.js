@@ -16,6 +16,7 @@ jest.mock('../src/config/database', () => ({
 }));
 
 jest.mock('../src/config/redis', () => ({
+  client: {},
   getRedisClient: jest.fn().mockResolvedValue({
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
@@ -335,6 +336,7 @@ describe('MCP API endpoints', () => {
     const res = await request(app)
       .post('/api/me/mcp-tokens')
       .set('Cookie', 'connect.sid=fakesid') // session cookie presence (requireDashboardAuth mock path)
+      .set('Origin', 'https://falloutchatmod.com')
       .send({ env: 'prod', label: 'should be forced to dev' });
 
     // The create call should have used env='dev', regardless of the request body
@@ -346,5 +348,13 @@ describe('MCP API endpoints', () => {
     // key assertion is that env='prod' is never forwarded. We verify via the
     // service-level test that mintToken is always called with 'dev'.
     expect([200, 201, 401]).toContain(res.status);
+  });
+
+  it('rejects cross-origin cookie writes before reaching token issuance', async () => {
+    const res = await request(app).post('/api/me/mcp-tokens')
+      .set('Cookie', 'connect.sid=fakesid').set('Origin', 'https://attacker.example')
+      .send({ label: 'cross-origin request' });
+    expect(res.status).toBe(403);
+    expect(prismaDefault.mcpApiKey.create).not.toHaveBeenCalled();
   });
 });

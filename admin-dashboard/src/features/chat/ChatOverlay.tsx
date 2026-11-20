@@ -522,6 +522,17 @@ export function resolveMediaUrl(url: string): string {
   return url;
 }
 
+/**
+ * Website ban form for a target. The ban flow needs evidence uploads, so it
+ * stays on the website. The packaged overlay renders from a local file, where
+ * a relative "/moderation/..." link resolves to file:// and opens nothing; the
+ * relay HTTP base is the website origin (same as avatars and media).
+ */
+export function banFormUrl(userId: string, username: string): string {
+  const query = new URLSearchParams({ userId, username }).toString();
+  return resolveMediaUrl(`/moderation/bans/new?${query}`);
+}
+
 /** Computes the result of inserting `@displayName ` into `current` at [selStart, selEnd].
  *  Adds a space before the mention when the preceding character is not already a space.
  *  The returned string is capped at `maxLen` characters. */
@@ -11122,9 +11133,7 @@ export default function ChatOverlay() {
                       setMuteModalFor({ userId: ctxMenu.msg.userId!, username: ctxMenu.msg.username });
                     }},
                     { label: `Ban ${ctxMenu.msg.username}…`, action: () => {
-                      const u = encodeURIComponent(ctxMenu.msg.userId!);
-                      const n = encodeURIComponent(ctxMenu.msg.username);
-                      window.open(`/moderation/bans/new?userId=${u}&username=${n}`, '_blank');
+                      openUrl(banFormUrl(ctxMenu.msg.userId!, ctxMenu.msg.username));
                     }},
                     { label: 'Delete message', action: () => {
                       setModModal({ action: 'delete', target: ctxMenu.msg });
@@ -11334,10 +11343,7 @@ export default function ChatOverlay() {
         if (isMod) {
           items.push({ label: `Mute ${target.username}…`, run: async () => { setMuteModalFor({ userId: target.userId, username: target.username }); } });
           items.push({ label: `Kick ${target.username} (5 min)…`, run: async () => { setKickModalFor({ userId: target.userId, username: target.username }); } });
-          items.push({ label: `Ban ${target.username}…`, run: async () => {
-            const u = encodeURIComponent(target.userId); const n = encodeURIComponent(target.username);
-            window.open(`/moderation/bans/new?userId=${u}&username=${n}`, '_blank');
-          } });
+          items.push({ label: `Ban ${target.username}…`, run: async () => { openUrl(banFormUrl(target.userId, target.username)); } });
         }
         // Admin-only: view user profile with alias history.
         if (isAdmin) {

@@ -38,6 +38,22 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).not.toContainText('COOLDOWN FAIL');
   });
 
+  test(`automod-blocked sends never stay on screen and the feed keeps updating (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=automod-block`);
+    await expect(page.locator('#log')).toContainText(/AUTOMOD (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`AUTOMOD PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('AUTOMOD FAIL');
+  });
+
+  test(`a silent relay forces a reconnect and flags unconfirmed sends (${provider})`, async ({ page }) => {
+    // Waits out the 15 s echo window, then a full reconnect and resend.
+    test.setTimeout(75_000);
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=silent-relay`);
+    await expect(page.locator('#log')).toContainText(/SILENT-RELAY (PASS|FAIL)/, { timeout: 65_000 });
+    await expect(page.locator('#log')).toContainText(`SILENT-RELAY PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('SILENT-RELAY FAIL');
+  });
+
   test(`giveaway command and announcement stay in the selected channel (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=giveaway`);
     await expect(page.locator('#log')).toContainText(/GIVEAWAY (PASS|FAIL)/, { timeout: 25_000 });
@@ -65,6 +81,13 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).toContainText(`QUOTED-ECHO PASS ${provider}`);
     await expect(page.locator('#log')).not.toContainText('QUOTED-ECHO FAIL');
   });
+
+  test(`feed keeps unchanged rows on echo and trim (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=feed-reuse`);
+    await expect(page.locator('#log')).toContainText(/FEED-REUSE (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`FEED-REUSE PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('FEED-REUSE FAIL');
+  });
 }
 
 for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry', 'owned-input-hotkey', 'owned-input-controller-open', 'owned-input-map']) {
@@ -79,6 +102,8 @@ for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-
 for (const scenario of ['xscal-session-input', 'xscal-session-fallback', 'xscal-shared-config']) {
   test(`xScal session lifecycle and compatibility: ${scenario}`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=xscal&scenario=${scenario}`);
+    // Separate asynchronous player startup from the native-input scenario.
+    await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(`XSCAL-SESSION-INPUT PASS ${scenario}`);
     await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
@@ -224,7 +249,7 @@ test('packages independent tab ranges, file-key precedence, ZFE synchronization,
   expect(widgetSource).toContain('activateSelectedLinkFromOpenInput()');
   expect(widgetSource).not.toContain('_feedContentLayer.removeChild(kept.view)');
   expect(widgetSource).toContain('layer.addChildAt(rows[i].view, i)');
-  expect(widgetSource).toContain('_renderedVisualContext != feedVisualContext()');
+  expect(widgetSource).toContain('return _renderedVisualContext == feedVisualContext();');
   expect(widgetSource).toContain('removeEventListener(TimerEvent.TIMER_COMPLETE, _sliceTimerHandler)');
   expect(configSource).toContain('stored.openKey = environment.openKey');
   expect(configSource).toContain('stored.activateLinkKey = environment.activateLinkKey');
@@ -267,6 +292,8 @@ for (const provider of ['xscal', 'zfe']) {
 
   test(`preserves background bridge membership through ${provider} fast travel`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=bridge-fast-travel`);
+    // Start bridge assertions only after the player has finished loading.
+    await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
     await expect(page.locator('#log')).toContainText(`HARNESS bridge constructed provider=${provider}`);
     await expect(page.locator('#log')).toContainText(/BRIDGE-ROSTER (PASS|FAIL)/, { timeout: 25_000 });
     const log = await page.locator('#log').textContent();

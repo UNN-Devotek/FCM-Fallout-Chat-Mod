@@ -1,5 +1,55 @@
 # Jobs and Queues
 
+Administrator WebSocket chat persists `source: "web"` with the generated canonical
+UUID and original timestamp. Both the post-push patch and the manual idempotent
+migration admit it alongside every previously supported source. This does not
+turn the live-only REST admin publication into a queued history write.
+
+`src/recovery/retainedMessagePlan.ts` is a private pure classifier for protected
+legacy job snapshots. It performs no queue, SQL, network or filesystem operation
+and has no public route or ordinary producer. All results explicitly carry
+`executionAuthorized: false`. A candidate preserves the original job ID, exact
+payload bytes/digest, options, Redis hash/state and original canonical UUID/time;
+it is only an input to a separately reviewed private recovery permit (Task2B).
+Even independently proved merge mappings do not authorize replay or change the
+original evidence. No candidate rebroadcasts chat or sends Discord messages.
+
+Classification requires independent author/merge, channel, governance, complete
+canonical-row and external-link evidence. Missing authors, unknown links or
+partial reads block; absence of a deletion audit is not governance clearance.
+The only classifications are `candidate`, `blocked` and `already-preserved`.
+Moderation, retention and deletion tombstones remain terminal `blocked` results
+with their reason and evidence reference. An existing exact canonical row is
+`already-preserved`; a conflicting payload or original timestamp blocks rather
+than inventing another UUID/time. Keep original protected jobs and
+evidence-linked dispositions after any future authorized resolution. Operator
+reports must contain only job/evidence identifiers, digests and fixed reasons,
+never the protected payload or Redis hash contents.
+
+UUID letter case does not create a distinct author, merge mapping, channel, parent,
+canonical row or external link. The classifier uses a local lowercase UUID comparison
+and digest projection matching PostgreSQL values; canonical-row evidence supplies that
+semantic digest. Original payload bytes/digest, UUID spelling, timestamp and job evidence
+remain unchanged, including when a case alias reveals a conflicting canonical row.
+
+Required backend CI supplies Bull's discrete `REDIS_HOST`/`REDIS_PORT` alongside the same
+synthetic `REDIS_URL`. The real queue fixture checks that their endpoints match before
+opening a store connection or creating a queue.
+
+The recovery acceptance fixture gives real Bull clients and workers one owned random
+namespace. It records accepted jobs before waiting for local worker events, tests the
+same-namespace competing-worker failure mode, and removes only its owned jobs, keys and
+handles on success or failure. Its copied PostgreSQL tables use private schema-owned
+sequences for `admin_users.id`, `moderation_settings.id` and `word_filter.id`; catalog and
+before/after checks cover setup, real inserts, reset, close and failed setup without
+resetting or advancing public sequences.
+
+The supplied retained-set inventory contains 24 failed jobs. All remain protected:
+13 existing-author jobs are candidates for independent review, not automatic
+repair; 11 missing-author jobs remain blocked pending independent provenance or
+an explicit user disposition. This source change does not inspect, replay,
+delete, recreate authors for, or claim recovery of those production jobs.
+
 ---
 
 ## Failure tracking + escalation (`makeJobTracker`)
@@ -12,6 +62,11 @@ The wrapper counts **consecutive** failures: each failing run logs `logger.warn`
 `logger.error` so log-watching alerting (e.g. Uptime Kuma log monitors) fires. The counter
 resets to `0` on the first successful run (and logs a one-line recovery `info`). This makes a
 silently-stuck recurring job visible instead of drowning forever at warn level.
+
+Real failures also enter the private runtime failure journal. Scheduler recovery resets the
+consecutive-failure counter but does not silently erase that drain evidence. Producer timers
+and cron jobs stop during maintenance while accepted work finishes; see
+[runtime maintenance](runtime-maintenance.md) for the complete inventory and operator disposition.
 
 Two rules make the tracker actually work, and both are enforced:
 
@@ -120,6 +175,20 @@ Calls `runWikiIngestion()` from `services/wikiIngestionService.ts`. The service:
 
 Can also be triggered on-demand via `POST /api/admin/wiki/ingest` (owner/admin only, 1h min re-trigger interval for full; no rate-limit for incremental).
 
+Full/targeted admin runs return HTTP 202 while the accepted run remains tracked. A later
+unexpected rejection enters the private runtime journal with its operation ID; logging and
+returning a completed HTTP response cannot make that failed run pass drain. The exact
+competing lock-held skip remains an expected path. CAMP admin sync and acknowledged migration
+image backfill also retain unexpected failure evidence; see [runtime maintenance](runtime-maintenance.md).
+
+Callback-based migration restores have the same accepted-work boundary: SQL
+restore waits for the child's verified close, and storage restore awaits complete
+entries and every PUT. Client disconnect is not completion. Incomplete or
+unconfirmed restore effects enter the durable failure journal and block drain.
+Image backfill workers advance past per-row skips/failures rather than retiring after their
+first already-present or rejected image. A real failed image remains journaled while later
+rows continue, so a completed run accounts for its entire selected input.
+
 The cron callback returns a `makeJobTracker('[wikiIngest]')` promise, so genuine failures are tracked and escalate warn → error after repeated consecutive runs, and the tick is awaited so overlap is detected. A **lock-held** skip (a concurrent admin trigger holds the Redis ingest lock — surfaced as the exported `WIKI_INGEST_LOCK_HELD_MESSAGE` error) is an expected non-error path: it is logged at info and **not** counted as a failure, so a normal concurrent run never falsely escalates.
 
 ### 5b. Wiki Incremental Sync Schedule (setInterval)
@@ -208,7 +277,7 @@ the synchronous in-game RPC is not held open by worker completion.
 - Redis connection: `env.REDIS_HOST` / `env.REDIS_PORT` / `env.REDIS_PASSWORD`
 - `attempts: 3` with exponential backoff starting at 1 second
 - `removeOnComplete: 100` (keeps last 100 completed jobs for debugging)
-- `removeOnFail: 50`
+- `removeOnFail: false` (also enforced on producer overrides and consumed legacy jobs)
 
 **Worker:** calls `persistMessage(job.data)` from `services/messageService.ts`. The persist uses `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` so retries are safe.
 
@@ -219,6 +288,12 @@ the eventual database write, reducing in-game send latency. Background and simul
 explicitly use the queue directly may also enqueue asynchronously.
 
 Failed jobs are logged at error level with `jobId`.
+
+The queue records stable acceptance timestamps and private canonical receipt proofs. A frozen
+destination does not start its worker; the source's existing worker continues accepted work
+after producer freeze. Draining includes waiting/active/delayed/paused/failed/stalled state and
+verifies initial committed rows, rather than inferring persistence from zero runnable jobs.
+Failures are retained for explicit disposition; see [runtime maintenance](runtime-maintenance.md).
 
 ---
 
@@ -236,3 +311,12 @@ Failed jobs are logged at error level with `jobId`.
 | Role re-verification | setInterval | Every 5 min | Re-verify Discord roles, revoke stale sessions |
 | Supporter reconcile | setInterval | Startup + every 15 min | Re-derive supporter entitlements from live paid-tier/admin cosmetics roles (bulk fetch, not per-user); login, overlay/dashboard reads, Discord `/cosmetics` interactions, and HUD sends also use a Redis-coordinated once-per-minute-per-user role refresh |
 | message-persist | Bull (Redis) | Event-driven | Persist chat messages to Postgres |
+
+Party reaping continues across individual failed rows while retaining required deletion,
+audit and presentation stages per party. Wiki ingestion distinguishes upstream fetch/image-cache
+fallbacks from attempted entry/alias/image/location/error-row mutations; failed mutations block
+a clean drain without stopping other entities. CAMP Atomic Shop price persistence is required
+after an authoritative price match. Startup relay SQL backfill and Redis seed/high-water writes
+also retain unconfirmed stages and observed sequence values; an expected `SET NX` no-op and
+ordinary optional cursor-allocation fallback remain resolved. A seed retry retains a known
+high-water value instead of substituting zero. See [runtime maintenance](runtime-maintenance.md).

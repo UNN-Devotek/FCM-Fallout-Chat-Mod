@@ -17,10 +17,12 @@
  * (findFirst + create), so the guard exercises real production code.
  */
 
+const { Readable, Writable } = require('node:stream');
+const evidenceBytes = Buffer.from('fixture evidence');
+let mockStream;
 const mockBan = { bannedById: 'actor-user-uuid' };
 const mockEvidence = { objectKey: 'ban-evidence/test.png', mime: 'image/png' };
-const mockStream = { pipe: jest.fn() };
-const mockDownload = { stream: mockStream, mime: 'image/png', sizeBytes: 1024 };
+const mockDownload = { mime: 'image/png', sizeBytes: evidenceBytes.length };
 
 jest.mock('../src/config/prisma', () => ({
   __esModule: true,
@@ -99,11 +101,14 @@ function makeListReq({ role, adminUserId = 'discord-actor' } = {}) {
 }
 
 function makeRes() {
-  return {
+  const chunks = [];
+  const response = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+  return Object.assign(response, {
+    chunks,
     setHeader: jest.fn(),
     status: jest.fn().mockReturnThis(),
     json: jest.fn(),
-  };
+  });
 }
 
 function errStatus(next) {
@@ -120,16 +125,19 @@ beforeEach(() => {
   // actorUserId(): existing discord-only user row resolves to ACTOR_USER_ID.
   prisma.user.findFirst.mockResolvedValue({ id: ACTOR_USER_ID });
   prisma.user.create.mockResolvedValue({ id: ACTOR_USER_ID });
+  mockStream = Readable.from([evidenceBytes]);
+  mockDownload.stream = mockStream;
   downloadEvidence.mockResolvedValue(mockDownload);
 });
 
 describe('streamBanEvidenceHandler — per-ban authorization', () => {
-  it('moderator who issued the ban streams the evidence (pipe called)', async () => {
+  it('moderator who issued the ban streams the exact evidence bytes', async () => {
     const next = jest.fn();
-    await streamBanEvidenceHandler(makeStreamReq({ role: 'moderator' }), makeRes(), next);
+    const res = makeRes();
+    await streamBanEvidenceHandler(makeStreamReq({ role: 'moderator' }), res, next);
     expect(next).not.toHaveBeenCalled();
     expect(downloadEvidence).toHaveBeenCalledTimes(1);
-    expect(mockStream.pipe).toHaveBeenCalledTimes(1);
+    expect(Buffer.concat(res.chunks)).toEqual(evidenceBytes);
   });
 
   it('moderator who did NOT issue the ban gets 404 and the object is NOT streamed', async () => {
@@ -138,7 +146,7 @@ describe('streamBanEvidenceHandler — per-ban authorization', () => {
     await streamBanEvidenceHandler(makeStreamReq({ role: 'moderator' }), makeRes(), next);
     expect(errStatus(next)).toBe(404);
     expect(downloadEvidence).not.toHaveBeenCalled();
-    expect(mockStream.pipe).not.toHaveBeenCalled();
+    expect(mockStream.readableFlowing).toBeNull();
   });
 
   it('supporter who did NOT issue the ban gets 404 and the object is NOT streamed', async () => {
@@ -147,7 +155,7 @@ describe('streamBanEvidenceHandler — per-ban authorization', () => {
     await streamBanEvidenceHandler(makeStreamReq({ role: 'supporter' }), makeRes(), next);
     expect(errStatus(next)).toBe(404);
     expect(downloadEvidence).not.toHaveBeenCalled();
-    expect(mockStream.pipe).not.toHaveBeenCalled();
+    expect(mockStream.readableFlowing).toBeNull();
   });
 
   it('developer who did NOT issue the ban gets 404 and the object is NOT streamed', async () => {
@@ -156,25 +164,27 @@ describe('streamBanEvidenceHandler — per-ban authorization', () => {
     await streamBanEvidenceHandler(makeStreamReq({ role: 'developer' }), makeRes(), next);
     expect(errStatus(next)).toBe(404);
     expect(downloadEvidence).not.toHaveBeenCalled();
-    expect(mockStream.pipe).not.toHaveBeenCalled();
+    expect(mockStream.readableFlowing).toBeNull();
   });
 
-  it('admin streams evidence for a ban issued by someone else (pipe called)', async () => {
+  it('admin streams evidence for a ban issued by someone else with exact bytes', async () => {
     prisma.ban.findUnique.mockResolvedValue({ bannedById: OTHER_USER_ID });
     const next = jest.fn();
-    await streamBanEvidenceHandler(makeStreamReq({ role: 'admin' }), makeRes(), next);
+    const res = makeRes();
+    await streamBanEvidenceHandler(makeStreamReq({ role: 'admin' }), res, next);
     expect(next).not.toHaveBeenCalled();
-    expect(mockStream.pipe).toHaveBeenCalledTimes(1);
+    expect(Buffer.concat(res.chunks)).toEqual(evidenceBytes);
     // Privileged path must not perform a per-ban ownership lookup.
     expect(prisma.ban.findUnique).not.toHaveBeenCalled();
   });
 
-  it('owner streams evidence for a ban issued by someone else (pipe called)', async () => {
+  it('owner streams evidence for a ban issued by someone else with exact bytes', async () => {
     prisma.ban.findUnique.mockResolvedValue({ bannedById: OTHER_USER_ID });
     const next = jest.fn();
-    await streamBanEvidenceHandler(makeStreamReq({ role: 'owner' }), makeRes(), next);
+    const res = makeRes();
+    await streamBanEvidenceHandler(makeStreamReq({ role: 'owner' }), res, next);
     expect(next).not.toHaveBeenCalled();
-    expect(mockStream.pipe).toHaveBeenCalledTimes(1);
+    expect(Buffer.concat(res.chunks)).toEqual(evidenceBytes);
     expect(prisma.ban.findUnique).not.toHaveBeenCalled();
   });
 

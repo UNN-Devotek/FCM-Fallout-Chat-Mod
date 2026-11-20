@@ -14,6 +14,8 @@ const supporterTierEnabledConfigured = rawSupporterTierEnabled === 'true'
 export interface Environment {
   NODE_ENV: string;
   PORT: number;
+  FCM_RUNTIME_CONTROL_DIR: string;
+  FCM_DRAIN_TIMEOUT_MS: number;
   DB_HOST: string;
   DB_PORT: number;
   DB_USER: string;
@@ -167,6 +169,8 @@ export interface Environment {
 const env: Environment = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   PORT: parseInt(process.env.PORT || '7076', 10),
+  FCM_RUNTIME_CONTROL_DIR: process.env.FCM_RUNTIME_CONTROL_DIR?.trim() || '',
+  FCM_DRAIN_TIMEOUT_MS: Number(process.env.FCM_DRAIN_TIMEOUT_MS || '120000'),
 
   // Database
   DB_HOST: process.env.DB_HOST || 'localhost',
@@ -311,6 +315,9 @@ const env: Environment = {
   STEAM_OPENID_RETURN_URI: process.env.STEAM_OPENID_RETURN_URI || '',
   HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
+
+if (!Number.isSafeInteger(env.FCM_DRAIN_TIMEOUT_MS) || env.FCM_DRAIN_TIMEOUT_MS < 100
+  || env.FCM_DRAIN_TIMEOUT_MS > 1_800_000) throw new Error('Invalid FCM_DRAIN_TIMEOUT_MS');
 
 /**
  * Pure predicate: collect the reasons the production startup guard would refuse to

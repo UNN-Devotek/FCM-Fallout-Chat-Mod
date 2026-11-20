@@ -1,3 +1,4 @@
+import { runRequiredBundle, runRequiredMutation } from '../../lib/requiredEffects';
 import { createHash } from 'node:crypto';
 
 export interface HudSendCarrier { id: string; room: string }
@@ -30,8 +31,9 @@ export function hudSendReceiptIdentity(deviceId: string, accountId: string, requ
   };
 }
 export async function claimHudSend(store: ReceiptStore, identity: { key: string; fingerprint: string }): Promise<ReceiptClaim> {
+  return runRequiredBundle('session', 'hudSendReceipt:b6e1db6990c5', async () => {
   const { key, fingerprint } = identity;
-  const inserted = await store.set(key, JSON.stringify({ fingerprint, createdAt: Date.now() }), { NX: true, EX: HUD_SEND_RECEIPT_SECONDS });
+  const inserted = await runRequiredMutation('session', '6b15693cccc2b19eddb9d00b', { stage: 'primary-write-unconfirmed' }, () => store.set(key, JSON.stringify({ fingerprint, createdAt: Date.now() }), { NX: true, EX: HUD_SEND_RECEIPT_SECONDS }), undefined, undefined, reply => reply === null);
   if (inserted === 'OK') return { kind: 'claimed', key, fingerprint };
   const existing: unknown = JSON.parse(await store.get(key) ?? 'null');
   if (!existing || typeof existing !== 'object' || !('fingerprint' in existing) || existing.fingerprint !== fingerprint) return { kind: 'conflict' };
@@ -39,6 +41,8 @@ export async function claimHudSend(store: ReceiptStore, identity: { key: string;
     return { kind: 'replay', response: existing.response as Record<string, unknown> };
   }
   return { kind: 'createdAt' in existing && typeof existing.createdAt === 'number' && Date.now() - existing.createdAt > 120_000 ? 'uncertain' : 'pending' };
+
+  });
 }
 export function hudSendResponse(response: Record<string, unknown>, id: string): Record<string, unknown> {
   const carrier = typeof response.targetUserId === 'string' && response.targetUserId.startsWith('FCMHUD/1;')

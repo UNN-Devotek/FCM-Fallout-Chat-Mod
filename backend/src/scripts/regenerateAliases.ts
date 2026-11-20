@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * regenerateAliases — rebuild auto-generated wiki_aliases from current entry
  * names using generateAliases(). DB-only (no Fandom calls). Preserves any
@@ -16,9 +17,9 @@ import { generateAliases } from '../services/wikiIngestionService';
   let i = 0;
   for (const e of entries) {
     const aliases = generateAliases(e.name);
-    await prisma.wikiAlias.deleteMany({ where: { wikiEntryId: e.id, source: 'auto' } });
+    await runRequiredMutation('producer', '287821db70efad865242245e', { stage: 'primary-write-unconfirmed' }, () => prisma.wikiAlias.deleteMany({ where: { wikiEntryId: e.id, source: 'auto' } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (aliases.length) {
-      await prisma.wikiAlias.createMany({
+      await (<PreparedArgs extends Parameters<typeof prisma.wikiAlias.createMany>[0]>(preparedArgs: PreparedArgs) => runRequiredMutation('producer', '202a5b43c1dfcbe8e5ccb74a', { stage: 'primary-write-unconfirmed' }, () => prisma.wikiAlias.createMany(preparedArgs), isPrismaAtomicRefusal, undefined, isRowCountNoChange))({
         data: aliases.map(a => ({ wikiEntryId: e.id, alias: a, source: 'auto' })),
         skipDuplicates: true,
       });

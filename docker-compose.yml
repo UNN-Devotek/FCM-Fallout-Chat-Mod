@@ -61,6 +61,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +78,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       PORT: 7676
+      FCM_RUNTIME_CONTROL_DIR: /app/runtime-control
+      FCM_DRAIN_TIMEOUT_MS: 120000
       DATABASE_URL: postgresql://${DB_USER:-fo76_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-fo76_chat}
       TRUST_PROXY: "true"
       ALLOWED_ORIGINS: https://falloutchatmod.com
@@ -95,6 +98,7 @@ services:
     # over dokploy-network. Public edge = Cloudflare; origin is not directly served.
     volumes:
       - releases_downloads:/app/downloads
+      - runtime_control:/app/runtime-control
     security_opt: ["no-new-privileges:true"]
     # Hardening: drop all Linux capabilities. NOTE: the rootfs is intentionally
     # NOT read-only and the container runs as root — the app overwrites
@@ -139,6 +143,7 @@ volumes:
   redis_data:
   minio_data:
   releases_downloads:
+  runtime_control:
 
 networks:
   dokploy-network:

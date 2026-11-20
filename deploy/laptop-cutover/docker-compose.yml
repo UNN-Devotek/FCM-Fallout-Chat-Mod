@@ -56,6 +56,7 @@ services:
   backend:
     image: ${FCM_BACKEND_IMAGE:?set a pinned production-equivalent backend image}
     restart: unless-stopped
+    stop_grace_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +84,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       PORT: 7676
+      FCM_RUNTIME_CONTROL_DIR: /app/runtime-control
+      FCM_DRAIN_TIMEOUT_MS: 120000
       TRUST_PROXY: "true"
     ports:
       - "127.0.0.1:${ORIGIN_PORT:?set a unique localhost origin port}:7676"
@@ -94,6 +97,7 @@ services:
           - ${TUNNEL_ORIGIN_ALIAS:-backend}
     volumes:
       - releases_downloads:/app/downloads
+      - runtime_control:/app/runtime-control
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     tmpfs: ["/tmp"]
@@ -125,3 +129,4 @@ volumes:
   redis_data:
   minio_data:
   releases_downloads:
+  runtime_control:

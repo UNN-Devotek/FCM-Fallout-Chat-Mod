@@ -47,6 +47,7 @@ import {
   type ResizeEdge,
 } from './shell-core';
 import { createFontPicker } from './font-picker';
+import { afterHideTransition } from './hide-transition';
 import { normalizeFontId, resolveFontFamily, SYSTEM_FONT, MONOSPACE_FONT, type FontId } from '../../admin-dashboard/src/features/chat/overlayFonts';
 import { mountSupporterAppearance } from './supporterAppearance';
 import { observeAmbientMotion } from './ambient-motion';
@@ -364,16 +365,7 @@ let msgObserver: MutationObserver | null = null;
 let collapsedHidden: HTMLElement[] = [];
 // One owned, cancellable completion; a wake must never let an older hide win.
 let collapseCompletion: ReturnType<typeof setTimeout> | null = null;
-let collapsePaintFrame: number | null = null;
-const HIDE_FADE_MS = 240;
-function afterHidePaint(finish: () => void) {
-  // Start the deadline at the first paint opportunity, not the input handler.
-  // A busy Windows compositor can defer that first frame past 240 ms.
-  collapsePaintFrame = requestAnimationFrame(() => {
-    collapsePaintFrame = null;
-    collapseCompletion = setTimeout(finish, HIDE_FADE_MS);
-  });
-}
+let cancelCollapsePaint: (() => void) | null = null;
 // Timestamp of last collapse/expand. The main process animates the window height
 // over ~240ms, emitting resize events that must NOT re-clamp the scale mid-animation
 // (tabs would visibly shrink and snap back). Suppress applyScale during settlement.
@@ -495,8 +487,8 @@ function emitCollapseState(isCollapsed: boolean): void {
 
 function setCollapsed(next: boolean, focusInput = false) {
   if (collapsed === next) return;
-  if (collapsePaintFrame !== null) cancelAnimationFrame(collapsePaintFrame);
-  collapsePaintFrame = null;
+  cancelCollapsePaint?.();
+  cancelCollapsePaint = null;
   if (collapseCompletion !== null) clearTimeout(collapseCompletion);
   collapseCompletion = null;
   lastTransitionMs = Date.now();
@@ -529,8 +521,8 @@ function setCollapsed(next: boolean, focusInput = false) {
     }
     collapsed = true;
     if (fullAutoHide) {
-      afterHidePaint(() => {
-        collapseCompletion = null;
+      cancelCollapsePaint = afterHideTransition(document.body, 'opacity', () => {
+        cancelCollapsePaint = null;
         root?.classList.add('collapsed', 'fcm-full-auto-hidden');
         document.documentElement.classList.add('fcm-full-auto-hidden');
         window.relayBridge.collapse(h, true);
@@ -539,8 +531,8 @@ function setCollapsed(next: boolean, focusInput = false) {
       root?.classList.add('collapsed');
       // Windows can stall rendering during SetWindowPos. Animate the visible
       // clip on the compositor first, then shrink the already-clipped window.
-      afterHidePaint(() => {
-        collapseCompletion = null;
+      cancelCollapsePaint = afterHideTransition(document.body, 'clip-path', () => {
+        cancelCollapsePaint = null;
         window.relayBridge.collapse(h, false);
       });
     }
@@ -609,7 +601,7 @@ function scrollMessagesToBottomDeferred() {
 // jump-to-input. Only runs while collapsed.
 function reassertCollapsed() {
   if (!collapsed) return;
-  if (collapseCompletion !== null || collapsePaintFrame !== null) return;
+  if (collapseCompletion !== null || cancelCollapsePaint !== null) return;
   const fullAutoHide = currentSettings.autoHideMode === 'full';
   const root = document.getElementById('root');
   if (fullAutoHide) {
@@ -2300,8 +2292,8 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     // Cancel any pending debounced message-activity expand to prevent thrash.
     if (msgActivityTimeout) { clearTimeout(msgActivityTimeout); msgActivityTimeout = null; }
     const root = document.getElementById('root');
-    if (collapsePaintFrame !== null) cancelAnimationFrame(collapsePaintFrame);
-    collapsePaintFrame = null;
+    cancelCollapsePaint?.();
+    cancelCollapsePaint = null;
     if (collapseCompletion !== null) clearTimeout(collapseCompletion);
     collapseCompletion = null;
     document.documentElement.classList.remove('fcm-full-auto-fading');

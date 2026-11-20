@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import { randomBytes } from 'crypto';
 import { lookup as dnsLookup } from 'dns/promises';
 import https from 'https';
@@ -39,32 +40,70 @@ export async function fetchClientMetadataJson(url: URL, overrides: Partial<Fetch
   const addresses = resolved.filter(a => a.family === 4 || a.family === 6);
   if (!addresses.length || addresses.some(a => !isPublicNetworkAddress(a.address))) throw new McpClientMetadataError('client metadata host is not public');
   return new Promise((resolve, reject) => {
-    const request = deps.request(url, {
-      headers: { Accept: 'application/json', 'Accept-Encoding': 'identity', 'User-Agent': 'FCM-MCP-OAuth/1.0' },
-      lookup: (_host, options, callback) => {
-        const family = typeof options === 'object' ? options.family : 0;
-        const eligible = family === 4 || family === 6 ? addresses.filter(a => a.family === family) : addresses;
-        if (typeof options === 'object' && options.all) return (callback as Function)(null, eligible);
-        const selected = eligible[0];
-        if (!selected) return (callback as Function)(new Error('No validated address'));
-        return (callback as Function)(null, selected.address, selected.family);
-      },
-    }, response => {
-      const status = response.statusCode ?? 502;
-      if (status >= 300 && status < 400) {
-        response.resume();
-        reject(new McpClientMetadataError('client metadata redirects are not allowed')); return;
-      }
-      if (status !== 200) { response.resume(); reject(new McpClientMetadataError(`client metadata returned HTTP ${status}`)); return; }
-      const contentType = String(response.headers['content-type'] || '').split(';')[0]?.trim().toLowerCase();
-      if (contentType !== 'application/json' && !/^application\/[a-z0-9!#$&^_.+-]+\+json$/i.test(contentType)) { response.resume(); reject(new McpClientMetadataError('client metadata must use a JSON media type')); return; }
-      const chunks: Buffer[] = []; let bytes = 0;
-      response.on('data', chunk => { bytes += chunk.length; if (bytes > MAX_BYTES) response.destroy(new McpClientMetadataError('client metadata is too large')); else chunks.push(chunk); });
-      response.on('error', reject);
-      response.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); } catch { reject(new McpClientMetadataError('client metadata is invalid JSON')); } });
-    });
-    request.setTimeout(TIMEOUT_MS, () => request.destroy(new McpClientMetadataError('client metadata fetch timed out')));
-    request.on('error', reject); request.end();
+    let request: ReturnType<typeof https.request> | undefined;
+    let response: import('http').IncomingMessage | undefined;
+    let requestClosed = false, responseEnded = false, responseClosed = false, settled = false;
+    let outcome: { kind: 'value'; value: unknown } | { kind: 'error'; error: unknown } | undefined;
+    const complete = () => {
+      if (settled || !outcome || request && !requestClosed || response && !responseEnded && !responseClosed) return;
+      settled = true;
+      if (outcome.kind === 'error') reject(outcome.error); else resolve(outcome.value);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      if (outcome?.kind !== 'error') outcome = { kind: 'error', error };
+      // A rejected header/result or destroy() request does not complete a read.
+      // Join the real request close and response end/cancellation close first.
+      request?.destroy(error instanceof Error ? error : undefined);
+      response?.destroy(error instanceof Error ? error : undefined);
+      complete();
+    };
+    try {
+      request = deps.request(url, {
+        headers: { Accept: 'application/json', 'Accept-Encoding': 'identity', 'User-Agent': 'FCM-MCP-OAuth/1.0' },
+        lookup: (_host, options, callback) => {
+          const family = typeof options === 'object' ? options.family : 0;
+          const eligible = family === 4 || family === 6 ? addresses.filter(a => a.family === family) : addresses;
+          if (typeof options === 'object' && options.all) return (callback as Function)(null, eligible);
+          const selected = eligible[0];
+          if (!selected) return (callback as Function)(new Error('No validated address'));
+          return (callback as Function)(null, selected.address, selected.family);
+        },
+      }, incoming => {
+        response = incoming;
+        incoming.once('end', () => { responseEnded = true; complete(); });
+        incoming.once('close', () => {
+          responseClosed = true;
+          if (!responseEnded && !outcome) fail(new McpClientMetadataError('client metadata response ended before completion'));
+          complete();
+        });
+        incoming.once('error', fail);
+        incoming.once('aborted', () => fail(new McpClientMetadataError('client metadata response was aborted')));
+        const status = incoming.statusCode ?? 502;
+        if (status >= 300 && status < 400) return fail(new McpClientMetadataError('client metadata redirects are not allowed'));
+        if (status !== 200) return fail(new McpClientMetadataError(`client metadata returned HTTP ${status}`));
+        const contentType = String(incoming.headers['content-type'] || '').split(';')[0]?.trim().toLowerCase();
+        if (contentType !== 'application/json' && !/^application\/[a-z0-9!#$&^_.+-]+\+json$/i.test(contentType)) return fail(new McpClientMetadataError('client metadata must use a JSON media type'));
+        const chunks: Buffer[] = []; let bytes = 0;
+        incoming.on('data', chunk => {
+          bytes += chunk.length;
+          if (bytes > MAX_BYTES) fail(new McpClientMetadataError('client metadata is too large')); else chunks.push(chunk);
+        });
+        incoming.once('end', () => {
+          if (outcome?.kind === 'error') return;
+          try { outcome = { kind: 'value', value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown }; complete(); }
+          catch { fail(new McpClientMetadataError('client metadata is invalid JSON')); }
+        });
+      });
+      request.on('error', fail);
+      request.once('close', () => {
+        requestClosed = true;
+        if (!response && !outcome) fail(new McpClientMetadataError('client metadata request ended before a response'));
+        complete();
+      });
+      request.setTimeout(TIMEOUT_MS, () => fail(new McpClientMetadataError('client metadata fetch timed out')));
+      request.end();
+    } catch (error) { fail(error); }
   });
 }
 
@@ -119,6 +158,7 @@ export function validateClientMetadata(value: unknown, options: { cimd?: boolean
 
 type ClientDb = Pick<typeof prisma.mcpOAuthClient, 'findUnique' | 'upsert'>;
 export async function resolveOAuthClient(clientId: string, options: { fetch?: Partial<FetchDeps>; now?: () => number; db?: ClientDb } = {}) {
+  return runRequiredBundle('oauth', 'mcpClientMetadataService:f8fc32ba82ac', async () => {
   const now = options.now ?? Date.now;
   const db = options.db ?? prisma.mcpOAuthClient;
   const stored = await db.findUnique({ where: { clientId } });
@@ -131,17 +171,22 @@ export async function resolveOAuthClient(clientId: string, options: { fetch?: Pa
   const metadata = cached && cached.expiresAt > now() ? cached.metadata : validateClientMetadata(await fetchClientMetadataJson(url, options.fetch), { cimd: true });
   if (!metadata.client_id || metadata.client_id !== clientId) throw new McpClientMetadataError('CIMD client_id must be present and exactly match its document URL');
   cimdCache.set(clientId, { metadata, expiresAt: now() + CACHE_MS });
-  return db.upsert({ where: { clientId }, create: { clientId, metadata: metadata as object, redirectUris: metadata.redirect_uris }, update: { metadata: metadata as object, redirectUris: metadata.redirect_uris, disabledAt: null } });
+  return runRequiredMutation('oauth', '31b9f62012cbc25a1cbb29af', { stage: 'primary-write-unconfirmed' }, () => db.upsert({ where: { clientId }, create: { clientId, metadata: metadata as object, redirectUris: metadata.redirect_uris }, update: { metadata: metadata as object, redirectUris: metadata.redirect_uris, disabledAt: null } }), isPrismaAtomicRefusal, undefined, undefined);
+
+  });
 }
 
 export function clearCimdCacheForTests(): void { cimdCache.clear(); }
 
 export async function registerOAuthClient(input: unknown, db: Pick<typeof prisma.mcpOAuthClient, 'create'> = prisma.mcpOAuthClient) {
+  return runRequiredBundle('oauth', 'mcpClientMetadataService:67e52f2b937c', async () => {
   if (input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'client_id')) {
     throw new McpClientMetadataError('client_id is assigned by the authorization server');
   }
   const metadata = validateClientMetadata(input);
   const clientId = `fcm_client_${randomBytes(24).toString('base64url')}`;
-  await db.create({ data: { clientId, metadata: metadata as object, redirectUris: metadata.redirect_uris } });
+  await runRequiredMutation('oauth', '6f4b9bb869e95ec019ce21ff', { stage: 'primary-write-unconfirmed' }, () => db.create({ data: { clientId, metadata: metadata as object, redirectUris: metadata.redirect_uris } }), isPrismaAtomicRefusal, undefined, undefined);
   return { ...metadata, client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000) };
+
+  });
 }

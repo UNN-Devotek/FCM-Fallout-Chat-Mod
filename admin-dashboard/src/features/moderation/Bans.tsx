@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { userDisplayName, type DisplayNameFields } from '../../utils/userDisplayName';
 
 interface Ban {
   id: string;
@@ -17,11 +18,7 @@ interface Ban {
   evidence: Array<{ id: string; type: 'text' | 'image'; mime: string | null }>;
 }
 
-function displayName(u: { username: string; discordDisplayName: string | null; discordUsername: string | null } | null): string {
-  if (!u) return '—';
-  if (u.username && u.username !== 'Wanderer' && !u.username.startsWith('pending-') && !u.username.startsWith('admin-discord-')) return u.username;
-  return u.discordDisplayName || u.discordUsername || u.username || '—';
-}
+const displayName = (u: DisplayNameFields | null): string => userDisplayName(u);
 
 // discordAvatar is the raw Discord avatar HASH — build the CDN URL from it + discordId.
 function avatarUrl(u: { discordId: string | null; discordAvatar: string | null }, size = 32): string | null {

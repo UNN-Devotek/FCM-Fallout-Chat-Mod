@@ -10,6 +10,7 @@
  * requests, but it is Express-request-scoped and therefore unusable from a Discord
  * interaction or a background job — this is the transport-agnostic form.
  */
+import { isPlaceholderUsername } from '../utils/userDisplayName';
 import prisma from '../config/prisma';
 
 export interface LookedUpUser {
@@ -19,6 +20,9 @@ export interface LookedUpUser {
   discordId: string | null;
   discordUsername: string | null;
   discordDisplayName: string | null;
+  steamDisplayName: string | null;
+  fo76AccountName: string | null;
+  fo76CharacterName: string | null;
   isBanned: boolean;
   isMuted: boolean;
   /**
@@ -31,6 +35,8 @@ export interface LookedUpUser {
   hasRealFo76Name: boolean;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const SELECT = {
   id: true,
   username: true,
@@ -38,18 +44,16 @@ const SELECT = {
   discordId: true,
   discordUsername: true,
   discordDisplayName: true,
+  steamDisplayName: true,
+  fo76AccountName: true,
+  fo76CharacterName: true,
   isBanned: true,
   isMuted: true,
 } as const;
 
 /** Pure predicate — exported for unit tests and reuse by callers holding a raw name. */
 export function isRealFo76Name(username: string | null | undefined): boolean {
-  if (!username) return false;
-  if (username === 'Wanderer') return false;
-  if (username.startsWith('pending-')) return false;
-  if (username.startsWith('discord:')) return false;
-  if (/^Overlay\d+$/.test(username)) return false;
-  return true;
+  return !isPlaceholderUsername(username);
 }
 
 function decorate(row: Omit<LookedUpUser, 'hasRealFo76Name'> | null): LookedUpUser | null {
@@ -66,7 +70,9 @@ export async function getUserByDiscordId(discordId: string): Promise<LookedUpUse
 
 /** Look up by internal FCM user id, returning the same shape. */
 export async function getUserById(userId: string): Promise<LookedUpUser | null> {
-  if (!userId) return null;
+  // Callers may pass free text (e.g. a Discord option the moderator typed rather
+  // than picked); a non-UUID would make Postgres reject the uuid comparison.
+  if (!userId || !UUID_RE.test(userId)) return null;
   const row = await prisma.user.findUnique({ where: { id: userId }, select: SELECT });
   return decorate(row);
 }

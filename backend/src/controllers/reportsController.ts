@@ -1,3 +1,4 @@
+import { bindRequiredTransactionClient, isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 import { Request, Response, NextFunction } from 'express';
 import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
@@ -12,6 +13,7 @@ const VALID_REPORT_STATUSES = ['open', 'resolved', 'dismissed', 'escalated'];
  * POST /api/reports -- authenticated game client
  */
 async function submitReport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'reportsController:96675e480bcb', async () => {
   const { targetUserId, messageId, reason, notes } = req.body;
   try {
     // Compare case-insensitively: targetUserId is Joi .uuid()-validated but NOT
@@ -21,7 +23,8 @@ async function submitReport(req: Request, res: Response, next: NextFunction): Pr
       return next(createError(400, 'You cannot report yourself'));
     }
     // Use raw transaction for the message lock (FOR SHARE) -- Prisma doesn't support row-level locks
-    const report = await prisma.$transaction(async (tx) => {
+    const report = await runRequiredTransaction('moderation', 'c0a1eb9f4c66e24cfdd13503', { stage: 'transaction-completion-unconfirmed' }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
       if (messageId) {
         // FOR SHARE locks the row, preventing concurrent soft-deletes from racing
         const msgCheck = await tx.$queryRaw<any[]>`
@@ -32,7 +35,7 @@ async function submitReport(req: Request, res: Response, next: NextFunction): Pr
           throw err;
         }
       }
-      return await tx.report.create({
+      return await runRequiredMutation('moderation', 'ca6ffd581770367bbc814678', { stage: 'primary-write-unconfirmed' }, () => tx.report.create({
         data: {
           reporterUserId: req.user.id,
           targetUserId,
@@ -41,8 +44,8 @@ async function submitReport(req: Request, res: Response, next: NextFunction): Pr
           notes: notes || null,
         },
         select: { id: true, createdAt: true },
-      });
-    });
+      }), isPrismaAtomicRefusal, tx, undefined);
+    }), { confirmedRollback: isPrismaAtomicRefusal });
 
     if ((global as any).broadcastReportAlert) {
       (global as any).broadcastReportAlert({ id: report.id, createdAt: report.createdAt, reason });
@@ -76,6 +79,8 @@ async function submitReport(req: Request, res: Response, next: NextFunction): Pr
     if (err.status === 404) return next(createError(404, err.message));
     next(err);
   }
+
+  });
 }
 
 /**
@@ -173,16 +178,17 @@ async function getReport(req: Request, res: Response, next: NextFunction): Promi
  * PATCH /api/reports/:id -- moderator+
  */
 async function resolveReport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'reportsController:9f1b227fe79e', async () => {
   if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid report ID format'));
   const { status } = req.body;
   try {
-    const result = await dbQuery(
+    const result = await runRequiredMutation('moderation', 'aa1197e50b874d91e2dcc5ff', { stage: 'primary-write-unconfirmed' }, () => dbQuery(
       `UPDATE reports
        SET status = $1, resolved_by = $2,
            resolved_at = CASE WHEN $1 IN ('resolved', 'dismissed') THEN NOW() ELSE resolved_at END
        WHERE id = $3 RETURNING *`,
       [status, req.adminUser?.id || null, paramStr(req, 'id')]
-    );
+    ), undefined, undefined, undefined);
     if (result.rows.length === 0) return next(createError(404, 'Report not found'));
     // Notify all admin observers that a report status changed
     if ((global as any).broadcastReportAlert) {
@@ -192,6 +198,8 @@ async function resolveReport(req: Request, res: Response, next: NextFunction): P
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 export { submitReport, listReports, getReport, resolveReport };

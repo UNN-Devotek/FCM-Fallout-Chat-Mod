@@ -1,8 +1,13 @@
 # Overlay 1.4.3 / HUD 2.10.151 release
 
-Status: preparation in progress; not published. The owner approved the exact
+Status: website and GitHub release published 2026-10-23; read back 2026-11-03.
+The owner approved the exact
 16-line [public notes](next-release-notes.txt) and confirmed overlay **1.4.3**,
 HUD **2.10.151** and Server Bridge **0.2.19** on 2026-10-23.
+
+The workflow and gates below describe that release. For the subsequent caret and
+private-world recovery candidate, use the
+[2026-11-03 readiness assessment](hud-bridge-release-readiness-20261103.md).
 
 ## Distribution
 

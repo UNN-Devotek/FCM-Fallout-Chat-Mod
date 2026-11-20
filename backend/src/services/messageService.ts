@@ -1,3 +1,4 @@
+import { runRequiredMutation } from '../lib/requiredEffects';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 
@@ -23,11 +24,12 @@ interface PersistMessageData {
  * Persist a message record to PostgreSQL.
  * Called from the Bull queue worker (non-blocking on the WS hot path).
  */
-async function persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata, relaySeq }: PersistMessageData): Promise<void> {
+async function persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata, relaySeq }: PersistMessageData,
+  options: { retryable?: boolean } = {}): Promise<void> {
   try {
     // Use raw query for ON CONFLICT on composite PK (id, created_at)
     // Prisma doesn't support upsert on composite keys cleanly
-    await prisma.$executeRaw`
+    const execute = () => prisma.$executeRaw`
       INSERT INTO messages (id, content, user_id, channel_id, parent_channel_id, source, metadata, relay_seq, created_at)
       VALUES (
         ${id}::uuid,
@@ -41,6 +43,11 @@ async function persistMessage({ id, content, userId, channelId, parentChannelId,
         ${createdAt ? new Date(createdAt as string) : new Date()}
       )
       ON CONFLICT (id, created_at) DO NOTHING`;
+    // The accepted queue owns retries and canonical-row verification. Direct
+    // fallback writes own their unresolved disposition before releasing work.
+    if (options.retryable) await execute();
+    else await runRequiredMutation('publication', 'ab93b52f97e6cdceaa067639',
+      { canonicalId: id, channelId, userId, stage: 'direct-message-persist-unconfirmed' }, execute);
   } catch (err) {
     logger.error({ err, messageId: id }, 'Failed to persist message');
     throw err;

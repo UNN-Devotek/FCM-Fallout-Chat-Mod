@@ -173,7 +173,7 @@ the game. The pure `shouldExpandOnGameLaunch` predicate covers this transition. 
 portable mode honors subsequent user-enabled idle-collapse requests just like the
 installed overlay; game presence must not force an immediate wake after each hide.
 
-**Collapse height + the CSS-zoom gotcha.** The collapsed window height is computed by `headerStripHeight()` (`shell.ts`) = shell-bar height + the two tab rows, clamped to a plausible band (24–160 visual px) so a bad mid-reflow measurement can never reveal the message body/input. The strip is measured with `getBoundingClientRect()` on elements inside the CSS-`zoom`ed `#root`. **Whether that rect already includes the zoom depends on the Chromium build** — Chromium ≤127 (Electron ≤31) returned UNSCALED CSS-px; Chromium 138 (Electron 39, the current pin) returns zoom-SCALED px. `rectsAreZoomScaled()` detects this once (an offscreen `zoom:2` probe), and the pure `resolveCollapsedHeight()` (in `shell-core.ts`, unit-tested both ways) applies the zoom factor **only** when rects are unscaled. The earlier code multiplied unconditionally, which after the Electron 31→39 bump **double-applied** the zoom and left the window tall enough to reveal the text input at Scale > 1 — the "collapses to the input box instead of the tabs" bug.
+**Collapse height + the CSS-zoom gotcha.** The collapsed window height is computed by `headerStripHeight()` (`shell.ts`) = shell-bar height + the two tab rows, clamped to a plausible band (24–160 visual px) so a bad mid-reflow measurement can never reveal the message body/input. The strip is measured with `getBoundingClientRect()` on elements inside the CSS-`zoom`ed `#root`. **Whether that rect already includes the zoom depends on the Chromium build** — Chromium ≤127 (Electron ≤31) returned UNSCALED CSS-px; Chromium 138 (Electron 39) returns zoom-SCALED px. `rectsAreZoomScaled()` detects this once (an offscreen `zoom:2` probe), and the pure `resolveCollapsedHeight()` (in `shell-core.ts`, unit-tested both ways) applies the zoom factor **only** when rects are unscaled. The earlier code multiplied unconditionally, which after the Electron 31→39 bump **double-applied** the zoom and left the window tall enough to reveal the text input at Scale > 1 — the "collapses to the input box instead of the tabs" bug.
 
 **State variables** (`main.js:596`):
 
@@ -210,10 +210,15 @@ over 240 ms before shrinking the native window; this includes scanline pseudo-el
 Sub-tab collapse fades content without `display:none` and animates a compositor
 clip to the header before resizing the already-clipped native window. Repeated
 native resize calls can stall Windows painting; they do not drive the visible fade.
-The hide deadline starts at the first animation frame, not the input handler, so
-a delayed first paint cannot consume the fade duration before anything is drawn.
+The renderer observes the actual body `clip-path` or `opacity` transition through
+`getAnimations()` and waits for its completion before requesting native collapse.
+A fixed timer after the first animation frame can expire before a delayed CSS
+transition starts, allowing native resize to interrupt the visible animation.
+Only the relevant body transition is awaited; decorative animations cannot block
+collapse, and an absent transition completes at the next paint opportunity.
 Native min/max hints permit intermediate frames and are pinned only after completion.
-A wake cancels pending hide completion; expansion restores the saved height.
+A wake or native force-expand cancels the pending completion, so a stale transition
+cannot shrink the window again; expansion restores the saved height.
 Passive expansion preserves scroll intent; explicit Insert/focus-to-chat still requests
 the newest message. Wheel, scrollbar/touch and list navigation keys establish reading
 intent; browser layout/resize scroll events do not. Event-driven observers re-pin a
@@ -221,7 +226,9 @@ bottom-following feed after layout or asset loading, never a reader browsing his
 
 Regression coverage: `collapse-animation.test.js`, `observeScrollIntent.test.ts`,
 shared chat lifecycle/PM suites, and `npm run test:interaction`. The interaction
-run records intermediate opacity/native-height samples, cancellation, reading
+run pauses a real hide transition in each mode beyond the former timer deadline,
+verifies that native sizing waits until it resumes and finishes, and records
+intermediate opacity/native-height samples, cancellation, reading
 position, ten small/large saved-size switches while following latest messages,
 three switches while reading history, sending two messages large then shrinking
 without Insert, reconnects and draft retention, and tears

@@ -127,6 +127,7 @@ services:
         # use the explicit target flag so the hosted Dev buttons are included.
         VITE_DEV_PERSONAS: "true"
     restart: unless-stopped
+    stop_grace_period: 180s
     depends_on:
       postgres-dev:
         condition: service_healthy
@@ -141,6 +142,9 @@ services:
       # mount these routes.
       ENABLE_DEV_LOGIN: "true"
       PORT: 7676
+      # Dedicated durable control state survives backend replacement.
+      FCM_RUNTIME_CONTROL_DIR: /app/runtime-control
+      FCM_DRAIN_TIMEOUT_MS: 120000
 
       # --- Data stores (all internal on fcm-dev-network) ---
       DB_HOST: postgres-dev
@@ -179,6 +183,9 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
+      # Scheduled-event mirroring requires it; a missing value is recorded as a
+      # required-effect failure every five minutes and fences the next boot.
+      DISCORD_EVENTS_CHANNEL_ID: ${DISCORD_EVENTS_CHANNEL_ID:?set DISCORD_EVENTS_CHANNEL_ID (Dev events channel)}
       OVERLAY_UPDATE_NOTIFICATION_ROLE_ID: ${OVERLAY_UPDATE_NOTIFICATION_ROLE_ID:-}
       HUD_MOD_UPDATE_NOTIFICATION_ROLE_ID: ${HUD_MOD_UPDATE_NOTIFICATION_ROLE_ID:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
@@ -258,6 +265,7 @@ services:
 
     volumes:
       - releases_dev_downloads:/app/downloads
+      - runtime_dev_control:/app/runtime-control
     security_opt: ["no-new-privileges:true"]
     cap_drop:
       - ALL
@@ -307,6 +315,7 @@ volumes:
   redis_dev_data:
   minio_dev_data:
   releases_dev_downloads:
+  runtime_dev_control:
 
 # Private, project-local network. NOT external, NOT dokploy-network. Dev
 # containers therefore have no route to prod containers (membership is not

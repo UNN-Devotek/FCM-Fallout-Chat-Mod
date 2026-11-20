@@ -1,4 +1,9 @@
+import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
+import { createRuntimeDiscordClient, loginRuntimeDiscordClient } from '../runtime/discordClient';
 import { checkChatSlowmode, chatSlowmodeMessage } from './chatSlowmodeService';
+import { runtime, producerInterval } from '../runtime';
+import { discordRelayDigest } from '../runtime/discordRelayJournal';
+import { safeDiagnostic } from '../runtime/failureEvidence';
 import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type MessageCreateOptions, type Typing } from 'discord.js';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
@@ -63,7 +68,14 @@ let mentionableRolesPromise: Promise<Array<{ id: string; name: string }>> | null
 
 // Outbound rate-limit queue -- drains at 4 msg/sec (250ms interval)
 const outboundQueue: Array<() => Promise<void>> = [];
+const outboundInFlight = new Set<symbol>();
 let drainTimer: ReturnType<typeof setInterval> | null = null;
+
+runtime.registerParticipant('discord-outbound', {
+  inspect: async () => ({ pending: outboundQueue.length + outboundInFlight.size,
+    detail: { queued: outboundQueue.length, inFlight: outboundInFlight.size } }),
+  close: async () => { if (drainTimer) clearInterval(drainTimer); drainTimer = null; },
+});
 
 function startDrain(): void {
   if (drainTimer) return;
@@ -74,10 +86,15 @@ function startDrain(): void {
       drainTimer = null;
       return;
     }
+    const operation = Symbol('discord-send');
+    outboundInFlight.add(operation);
     try {
-      await item();
+      // This consumer finishes accepted operations after producer freeze.
+      await runtime.run('discord-outbound:operation', item, true);
     } catch (err) {
-      logger.error({ err }, 'Failed to send queued Discord message');
+      logger.error(safeDiagnostic(err), 'Failed to send queued Discord message');
+    } finally {
+      outboundInFlight.delete(operation);
     }
   }, 250);
 }
@@ -526,8 +543,9 @@ type DiscordRelayLink = {
 };
 
 async function saveDiscordMessageLink(link: DiscordRelayLink): Promise<void> {
+  return runRequiredBundle('domain', 'discordService:50168c7db227', async () => {
   try {
-    await prisma.discordMessageLink.upsert({
+    await runRequiredMutation('domain', 'd23dc979c7abbe1378f168d7', { stage: 'primary-write-unconfirmed' }, () => prisma.discordMessageLink.upsert({
       where: { messageId: link.messageId },
       update: {
         discordMessageId: link.discordMessageId,
@@ -536,26 +554,47 @@ async function saveDiscordMessageLink(link: DiscordRelayLink): Promise<void> {
         isBotMessage: link.isBotMessage,
       },
       create: link,
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
   } catch (err) {
-    logger.warn({ err, messageId: link.messageId, discordMessageId: link.discordMessageId }, 'Failed to persist Discord relay message link');
+    runtime.recordFailure('discord:relay-link', err, link);
+    logger.warn({ ...safeDiagnostic(err), messageId: link.messageId, discordMessageId: link.discordMessageId }, 'Failed to persist Discord relay message link');
+    throw err;
   }
+
+  });
 }
 
 function queueDiscordSend(
   discordChannel: TextChannel,
   message: string | MessageCreateOptions,
   link?: Omit<DiscordRelayLink, 'discordMessageId'>,
+  relayOperationId?: string,
 ): Promise<void> {
+  runtime.assertAdmission();
   return new Promise((resolve, reject) => {
     outboundQueue.push(async () => {
+      let sentId: string | undefined;
       try {
+        if (relayOperationId) runtime.discordRelays.attempt(relayOperationId);
         const sent = await discordChannel.send(message) as Message;
+        sentId = sent.id;
+        if (relayOperationId) runtime.discordRelays.returned(relayOperationId, sent.id);
         if (link) {
           await saveDiscordMessageLink({ ...link, discordMessageId: sent.id });
+          if (relayOperationId) {
+            const verified = await prisma.discordMessageLink.findUnique({ where: { messageId: link.messageId } });
+            if (!verified || verified.discordMessageId !== sent.id || verified.discordChannelId !== link.discordChannelId
+              || verified.discordPrefix !== link.discordPrefix || verified.isBotMessage !== true) {
+              throw new Error('Discord relay link completion could not be verified');
+            }
+          }
         }
+        if (relayOperationId) runtime.discordRelays.complete(relayOperationId, sent.id);
         resolve();
       } catch (err) {
+        runtime.recordFailure('discord:queued-send', err, { messageId: link?.messageId,
+          discordChannelId: discordChannel.id, discordMessageId: sentId,
+          stage: sentId ? 'send-succeeded-link-unconfirmed' : 'send-result-unknown' });
         reject(err);
         throw err;
       }
@@ -669,12 +708,13 @@ async function syncDiscordMessageUpdate(rawMessage: Message | any): Promise<bool
   }
 
   const editedAt = new Date();
-  const updated = await prisma.$executeRaw`
+  const updated = await runtime.required('discord:inbound-edit', () => prisma.$executeRaw`
     UPDATE messages
     SET content = ${content.trim()}, edited_at = ${editedAt}
     WHERE id = ${link.messageId}::uuid
       AND channel_id = ${existing.channelId}::uuid
-      AND NOT is_deleted`;
+      AND NOT is_deleted`, { canonicalId: link.messageId, discordMessageId: msg.id,
+        discordChannelId: msg.channelId, stage: 'discord-edit-observed-local-update-unconfirmed' });
   if (updated === 0) return false;
 
   broadcastFn?.({
@@ -692,6 +732,7 @@ async function syncDiscordMessageUpdate(rawMessage: Message | any): Promise<bool
 }
 
 async function start(onStatusChange?: (status: string) => void): Promise<void> {
+  if (runtime.isFrozen()) return;
   if (!env.DISCORD_TOKEN) {
     logger.warn('DISCORD_TOKEN not set -- Discord bridge disabled');
     return;
@@ -714,7 +755,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       GatewayIntentBits.GuildScheduledEvents,
   ];
 
-  discordClient = new Client({
+  discordClient = createRuntimeDiscordClient(runtime, {
     intents,
     // Partials let reaction events fire for messages posted before the last
     // restart (uncached) — required for reaction roles to survive a redeploy.
@@ -774,10 +815,11 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // Repair in-flight Events cards when Discord reconnects after backend startup.
     void import('./giveawayService.js').then((service) => service.repairDiscordCards())
       .catch((err) => logger.warn({ err }, 'Giveaway Discord reconnect repair failed'));
-    setInterval(updatePresence, 60_000).unref?.();
+    producerInterval('discord-presence', updatePresence, 60_000).unref?.();
   });
 
   discordClient.on('messageCreate', async (msg) => {
+  return runRequiredBundle('domain', 'discordService:d12dd6fe73bb', async () => {
     // Ignore only OUR bot. Compatible Fallout cards sent by another bot or a
     // webhook still need to cross into FCM as typed card metadata. The outbound
     // FCM bot is also marked with a ZWS watermark for plain-text echo defense.
@@ -1061,13 +1103,13 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
         if (canonicalByDiscordId) {
           // A canonical row already claims this discordId — update its display name
           // and use it directly as the relay user so there's no duplicate.
-          await prisma.user.update({
+          await runRequiredMutation('domain', '66164f872fb9dbefcde808e3', { stage: 'primary-write-unconfirmed', rowId: canonicalByDiscordId.id }, () => prisma.user.update({
             where: { id: canonicalByDiscordId.id },
             data: { discordDisplayName: discordDisplay, discordUsername: msg.author.username },
-          });
+          }), isPrismaAtomicRefusal, undefined, undefined);
           synth = { id: canonicalByDiscordId.id };
         } else {
-          synth = await prisma.user.upsert({
+          synth = await runRequiredMutation('domain', 'e193fd90a5cc48bd5e25e496', { stage: 'primary-write-unconfirmed', discordId: msg.author.id }, () => prisma.user.upsert({
             where: { installToken: `discord:${msg.author.id}` },
             update: { discordDisplayName: discordDisplay, discordUsername: msg.author.username },
             create: {
@@ -1078,7 +1120,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
               discordUsername: msg.author.username,
             },
             select: { id: true },
-          });
+          }), isPrismaAtomicRefusal, undefined, undefined);
         }
         relayUserId = synth.id;
         relayUsername = discordDisplay;
@@ -1208,7 +1250,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       relaySeq,
     }).catch((err: Error) => logger.error({ err }, 'Failed to queue Discord message'));
 
-    await prisma.discordMessageLink.upsert({
+    await runRequiredMutation('domain', '7afb26c3bc9029ea76048202', { stage: 'primary-write-unconfirmed' }, () => prisma.discordMessageLink.upsert({
       where: {
         discordMessageId_discordChannelId: {
           discordMessageId: msg.id,
@@ -1223,9 +1265,14 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
         discordPrefix: '',
         isBotMessage: false,
       },
-    }).catch((err: Error) => logger.warn({ err, discordMessageId: msg.id }, 'Failed to link inbound Discord message'));
+    }), isPrismaAtomicRefusal, undefined, undefined).catch((err: Error) => {
+      runtime.recordFailure('discord:inbound-link', err, { messageId, discordMessageId: msg.id, discordChannelId: msg.channelId });
+      logger.warn({ err, discordMessageId: msg.id }, 'Failed to link inbound Discord message');
+    });
+
 
   });
+});
 
   discordClient.on('messageUpdate', (_oldMessage, newMessage) => {
     syncDiscordMessageUpdate(newMessage).catch((err) => {
@@ -1258,12 +1305,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   // must not gate the entire chat platform's availability.
   const LOGIN_TIMEOUT_MS = 15_000;
   try {
-    await Promise.race([
-      discordClient.login(env.DISCORD_TOKEN),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Discord login timed out after 15s')), LOGIN_TIMEOUT_MS),
-      ),
-    ]);
+    await loginRuntimeDiscordClient(runtime, discordClient, env.DISCORD_TOKEN, LOGIN_TIMEOUT_MS);
   } catch (err) {
     logger.warn({ err }, 'Discord login failed — continuing startup without Discord (bridge will reconnect via shard events)');
     discordStatus = 'error';
@@ -1361,79 +1403,75 @@ async function resolveWikiUrlFromContent(text: string): Promise<{
 
 // ── Outbound relay ────────────────────────────────────────────────────────────
 
-async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string, authorCosmetics?: RelayAuthorCosmetics): Promise<void> {
-  if (!discordClient || discordStatus !== 'connected') return;
+async function relayToDiscord(...args: Parameters<typeof relayAdmittedToDiscord>): Promise<void> {
+  await runtime.required('discord:relay', () => relayAdmittedToDiscord(...args));
+}
 
-  // Drop synthetic relay health-check probes so test traffic never appears in the
-  // public Discord channel. A roundtrip monitor posts a uniquely-tagged
-  // `[TEST-ROUNDTRIP-<epoch>]` body (often under a `TestBot<epoch>` name); these
-  // are not real community messages and must not be mirrored to Discord.
-  if (/^\s*\[TEST-ROUNDTRIP/i.test(content) || /^TestBot\d+$/i.test(username.trim())) {
-    return;
-  }
+async function relayAdmittedToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string, authorCosmetics?: RelayAuthorCosmetics, sourceCreatedAt?: string): Promise<void> {
+  // Only explicitly disabled integration and synthetic health probes are exempt.
+  // A configured bridge that has not connected still owes the ordinary effect.
+  if (!env.DISCORD_TOKEN) return;
+  if (/^\s*\[TEST-ROUNDTRIP/i.test(content) || /^TestBot\d+$/i.test(username.trim())) return;
 
+  let payloadDigest: string | undefined;
+  let operationId: string | undefined;
   try {
-    // Structured cards use native Discord embeds with no user prefix. This
-    // mirrors the visual FCM card rather than emitting a loose URL preview, and
-    // keeps all card types on the same bidirectional transport contract.
-    const cardMessage = discordCardMessage(metadata);
-    const relayContent = content;
+    // Hold the original structured arguments across asynchronous mapping and
+    // mention resolution; a caller cannot mutate the protected input in flight.
+    const input = structuredClone({ channelId, username, content, channelName: channelName ?? null,
+      mentions: mentions ?? null, metadata: metadata ?? null, authorCosmetics: authorCosmetics ?? null });
+    const cardMessage = discordCardMessage(input.metadata);
+    const discordPrefix = cardMessage ? '' : buildDiscordRelayPrefix(input.channelName ?? undefined, input.username, input.authorCosmetics?.badges);
+    const retained = runtime.discordRelays.retain(sourceMessageId ?? '', sourceCreatedAt ?? '', {
+      ...input, discordPrefix,
+    });
+    payloadDigest = retained.payloadDigest;
+    operationId = retained.operationId;
+    // Resolve the sole configured destination before any connection/fetch skip.
+    // Lookup failure is unknown configuration, never an authoritative empty map.
+    const mappings = await loadRelayMappings();
+    const explicit = [...mappings].find(([, inGameChannelId]) => inGameChannelId === channelId);
+    const discordChannelId = explicit ? explicit[0] : env.DISCORD_CHANNEL_ID;
+    if (!discordChannelId) throw new Error('Configured Discord relay has no destination');
+    const configDigest = discordRelayDigest(['ordinary-discord-relay-v1', env.DISCORD_SERVER_ID ?? '',
+      env.DISCORD_CHANNEL_ID ?? '', [...mappings].sort(([a], [b]) => a.localeCompare(b)), discordChannelId]);
+    if (!runtime.discordRelays.expect({ operationId, canonicalId: sourceMessageId ?? '', createdAt: sourceCreatedAt ?? '',
+      channelId, discordChannelId, configDigest, payloadDigest })) return;
+    if (!discordClient || discordStatus !== 'connected') throw new Error('Configured Discord relay is disconnected');
+    const existingLink = await prisma.discordMessageLink.findUnique({ where: { messageId: sourceMessageId } });
+    if (existingLink) {
+      runtime.recordFailure('discord:retained-link', new Error('Existing Discord link requires private verification'), {
+        canonicalId: sourceMessageId, discordMessageId: existingLink.discordMessageId,
+        discordChannelId: existingLink.discordChannelId, stage: 'prior-discord-link-requires-verification',
+      });
+      throw new Error('Existing Discord link requires private verification');
+    }
 
-    // Sanitise: strip raw Discord mention syntax (abuse guard), then convert
-    // legitimate in-app @name tokens into real Discord mentions for linked users.
-    // Watermark is APPENDED (not inserted at index 1) so it never splits a leading
-    // <@id> mention.
-    // Explicit client-supplied {name, discordId} pairs win first; whatever's
-    // left falls through to resolveAppMentions for free-typed @text.
-    const stripped = stripMentions(relayContent);
-    const withExplicit = applyExplicitMentions(stripped, mentions);
+    // Preserve native cards, supporter prefixes, mention guards and watermark.
+    const stripped = stripMentions(input.content);
+    const withExplicit = applyExplicitMentions(stripped, input.mentions ?? undefined);
     const safeContent = markdownifyLinks(await resolveAppMentions(withExplicit));
     const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
-    const discordPrefix = cardMessage ? '' : buildDiscordRelayPrefix(channelName, username, authorCosmetics?.badges);
     const formatted = `${discordPrefix}${watermarked}`;
     const outboundMessage: string | MessageCreateOptions = cardMessage ?? {
       content: formatted,
       allowedMentions: outboundAllowedMentions(safeContent),
     } satisfies MessageCreateOptions;
 
-    const mappings = await loadRelayMappings();
-    let sent = false;
-
-    // Find discord_channel_id for this in-game channel via explicit mapping
-    for (const [discordChannelId, inGameChannelId] of mappings) {
-      if (inGameChannelId === channelId) {
-        const discordChannel = await discordClient.channels.fetch(discordChannelId);
-        if (!discordChannel?.isTextBased()) {
-          logger.warn({ discordChannelId }, 'Discord relay channel is not a text channel -- skipping');
-        } else {
-          await queueDiscordSend(discordChannel as TextChannel, outboundMessage, sourceMessageId ? {
-            messageId: sourceMessageId,
-            discordChannelId,
-            discordPrefix,
-            isBotMessage: true,
-          } : undefined);
-          sent = true;
-        }
-        break;
-      }
+    const discordChannel = await discordClient.channels.fetch(discordChannelId);
+    if (!discordChannel?.isTextBased() || !('send' in discordChannel)) {
+      throw new Error('Configured Discord relay destination is unavailable');
     }
-
-    // Fall back to the default env channel for any channel without an explicit
-    // mapping. Every community channel mirrors to the default Discord channel
-    // (tagged with its [name]) unless an admin has configured a per-channel mapping.
-    if (!sent && env.DISCORD_CHANNEL_ID) {
-      const discordChannel = await discordClient.channels.fetch(env.DISCORD_CHANNEL_ID);
-      if (discordChannel?.isTextBased()) {
-        await queueDiscordSend(discordChannel as TextChannel, outboundMessage, sourceMessageId ? {
-          messageId: sourceMessageId,
-          discordChannelId: env.DISCORD_CHANNEL_ID,
-          discordPrefix,
-          isBotMessage: true,
-        } : undefined);
-      }
-    }
+    await queueDiscordSend(discordChannel as TextChannel, outboundMessage, {
+      messageId: sourceMessageId ?? '', discordChannelId, discordPrefix, isBotMessage: true,
+    }, operationId);
   } catch (err) {
-    logger.error({ err }, 'Failed to relay message to Discord');
+    runtime.recordFailure('discord:relay', err, { channelId, canonicalId: sourceMessageId, createdAt: sourceCreatedAt, operationId,
+      sha256: payloadDigest, stage: 'expected-discord-relay-unconfirmed' });
+    logger.error(safeDiagnostic(err), 'Failed to relay message to Discord');
+    // Ordinary callers intentionally log/catch relay rejection. Keep SDK request
+    // bodies, tokens and arbitrary response URLs out of those outer logs too.
+    throw new Error('Required Discord relay did not complete; private recovery required');
   }
 }
 

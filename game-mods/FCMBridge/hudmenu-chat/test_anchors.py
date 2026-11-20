@@ -883,15 +883,23 @@ if widget_src:
           and '_renderCoalescer.request()' in widget_src
           and 'function buildFeedRowSinglePass' in widget_src
           and 'FcmFeedPlan.needsEmojiPass' in widget_src
-          and 'FcmFeedPlan.prefixReuseCount' in widget_src
+          and 'FcmFeedPlan.headTrimOffset(_renderedRecordKeys, newKeys)' in widget_src
+          and 'FcmFeedPlan.windowReuseCount(_renderedRecordKeys, newKeys, offset)' in widget_src
+          and 'kept:FeedRowView = _feedRows[reuseOffset + i]' in widget_src
+          and 'rows[i].view.y = rows[i].contentY;' in widget_src
           and 'FcmFeedPlan.nextSliceSize' in widget_src
           and 'cachedFeedFormat(' in widget_src
           and 'cachedLineHeight()' in widget_src
           and '_feedContentLayer.removeChild(kept.view)' not in widget_src
           and 'layer.addChildAt(rows[i].view, i)' in widget_src
-          and '_renderedVisualContext != feedVisualContext()' in widget_src
+          and 'return _renderedVisualContext == feedVisualContext();' in widget_src
           and 'removeEventListener(TimerEvent.TIMER_COMPLETE, _sliceTimerHandler)' in widget_src,
           "FCMChatWidget coalesces burst renders and reuses feed rows")
+    check('_cfg.xscalPollMs : _cfg.pollMs' in widget_src
+          and 'addEventListener(Event.ENTER_FRAME, onPerfFrame)' in widget_src
+          and 'removeEventListener(Event.ENTER_FRAME, onPerfFrame)' in widget_src
+          and '_perf.notePoll(' in widget_src and '_perf.noteRenderTurn(' in widget_src,
+          "FCMChatWidget polls xScal on its own interval and logs a timing summary")
     event_parser = widget_src[widget_src.index('function parseAndRenderEvents('):widget_src.index('function markSeenEvent(')]
     replay_guard = event_parser.find('!markSeenEvent(channel, evId, messageId)')
     echo_match = event_parser.find('if (reconcileOwnEcho(')

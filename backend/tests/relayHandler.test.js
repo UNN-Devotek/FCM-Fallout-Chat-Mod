@@ -2136,6 +2136,76 @@ describe('relay WebSocket ops', () => {
     expect(redisMock.publish).toHaveBeenCalledWith('relay:control', expect.stringContaining(linkedId));
   });
 
+  async function registerSubscriber(name) {
+    const { ws: wsReg, msgs: msgsReg } = await connectWs(srv.port);
+    const regRes = await waitForMsg(wsReg, msgsReg, () => send(wsReg, { op: 'register', displayName: name }));
+    wsReg.close();
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: null, steamId: null, isBanned: false, isMuted: false };
+    return regRes.token;
+  }
+
+  function openRelay(options) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${srv.port}${RELAY_WS_PATH}`, options);
+      const msgs = [];
+      ws.on('message', (d) => msgs.push(JSON.parse(d.toString())));
+      ws.once('open', () => resolve({ ws, msgs }));
+      ws.once('error', reject);
+    });
+  }
+
+  test('a new subscription for the same identity closes the abandoned one', async () => {
+    // 2026-11-16 prod: abandoned subscriptions held all five per-IP slots for up to 52 minutes.
+    const token = await registerSubscriber('SupersedePlayer');
+    const first = await openRelay();
+    await waitForMsg(first.ws, first.msgs, () => send(first.ws, { op: 'subscribe', token, cursor: 0 }));
+    const firstClosed = new Promise((resolve) => first.ws.once('close', (code) => resolve(code)));
+    const second = await openRelay();
+    const subscribed = await waitForMsg(second.ws, second.msgs, () => send(second.ws, { op: 'subscribe', token, cursor: 0 }));
+    expect(subscribed).toMatchObject({ success: true, op: 'subscribed' });
+    expect(await firstClosed).toBe(4000);
+    expect(second.ws.readyState).toBe(WebSocket.OPEN);
+    second.ws.close();
+  });
+
+  test('subscriptions of different identities do not replace each other', async () => {
+    const tokenA = await registerSubscriber('IdentityA');
+    const tokenB = await registerSubscriber('IdentityB');
+    const a = await openRelay();
+    await waitForMsg(a.ws, a.msgs, () => send(a.ws, { op: 'subscribe', token: tokenA, cursor: 0 }));
+    const b = await openRelay();
+    await waitForMsg(b.ws, b.msgs, () => send(b.ws, { op: 'subscribe', token: tokenB, cursor: 0 }));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(a.ws.readyState).toBe(WebSocket.OPEN);
+    expect(b.ws.readyState).toBe(WebSocket.OPEN);
+    a.ws.close(); b.ws.close();
+  });
+
+  test('a subscription that stops answering pings is reaped; one that never answered is kept', async () => {
+    const saved = { ping: process.env.RELAY_PING_INTERVAL_MS, missed: process.env.RELAY_MISSED_PONGS };
+    process.env.RELAY_PING_INTERVAL_MS = '40';
+    process.env.RELAY_MISSED_PONGS = '3';
+    try {
+      const vanishedToken = await registerSubscriber('VanishedClient');
+      const silentToken = await registerSubscriber('NeverPongClient');
+      // Answers the first ping, then goes silent like a crashed client behind a proxy.
+      const vanished = await openRelay({ autoPong: false });
+      vanished.ws.once('ping', () => vanished.ws.pong());
+      // A native stack that never answers pings must not be disconnected by this rule.
+      const silent = await openRelay({ autoPong: false });
+      const vanishedClosed = new Promise((resolve) => vanished.ws.once('close', () => resolve(true)));
+      await waitForMsg(vanished.ws, vanished.msgs, () => send(vanished.ws, { op: 'subscribe', token: vanishedToken, cursor: 0 }));
+      await waitForMsg(silent.ws, silent.msgs, () => send(silent.ws, { op: 'subscribe', token: silentToken, cursor: 0 }));
+      await expect(Promise.race([vanishedClosed, new Promise((r) => setTimeout(() => r(false), 2000))])).resolves.toBe(true);
+      expect(silent.ws.readyState).toBe(WebSocket.OPEN);
+      silent.ws.close();
+    } finally {
+      if (saved.ping === undefined) delete process.env.RELAY_PING_INTERVAL_MS; else process.env.RELAY_PING_INTERVAL_MS = saved.ping;
+      if (saved.missed === undefined) delete process.env.RELAY_MISSED_PONGS; else process.env.RELAY_MISSED_PONGS = saved.missed;
+    }
+  });
+
   test('duplicate subscribe on one connection is rejected', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>

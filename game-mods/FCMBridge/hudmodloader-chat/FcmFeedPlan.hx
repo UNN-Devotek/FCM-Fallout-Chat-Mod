@@ -31,6 +31,29 @@ class FcmFeedPlan {
     }
 
     /**
+     * Timestamp for a widget-local notice (command feedback, help). The player's
+     * clock is not the relay's clock: a PC that runs even slightly fast would date
+     * the notice after newer relay rows, pinning it under the feed so later chat
+     * (including the announcement the notice refers to) sorts above it and the
+     * feed appears frozen. Anchor to the newest relay-dated row instead; arrival
+     * order breaks the tie, and every later relay row sorts after the notice.
+     */
+    public static function localNoticeTimestamp(latestKnown:String, now:Date):String {
+        if (latestKnown != null && latestKnown.length > 0) return latestKnown;
+        return utcTimestamp(now);
+    }
+
+    /**
+     * First row selected when the player scrolls with nothing selected. Up starts
+     * at the newest row; Down returns -1 (stay pinned to the newest rows) instead
+     * of jumping to the oldest row.
+     */
+    public static function initialRowSelection(direction:Int, rowCount:Int):Int {
+        if (rowCount <= 0 || direction >= 0) return -1;
+        return rowCount - 1;
+    }
+
+    /**
      * Fast prefilter: true only when the body could contain an emoji token.
      * Unicode emoji needs a non-ASCII char; custom Discord markup needs ':' or
      * '<' (e.g. `:name:` or `<:name:123>`). Plain ASCII chat without those
@@ -87,6 +110,34 @@ class FcmFeedPlan {
             count++;
         }
         return count;
+    }
+
+    /**
+     * How many leading rows of the previous snapshot were trimmed away before
+     * the new snapshot starts. The feed ring buffer drops its oldest record
+     * when a new one arrives at the cap, which shifts every row by one; an
+     * index-aligned prefix would then reuse nothing. Returns -1 when the new
+     * first row is not in the previous snapshot (prepend, tab change, reorder).
+     */
+    public static function headTrimOffset(oldKeys:Array<String>, newKeys:Array<String>):Int {
+        if (oldKeys == null || newKeys == null || newKeys.length == 0) return -1;
+        var first:String = newKeys[0];
+        if (first == null || first.length == 0 || StringTools.endsWith(first, "\x1fX")) return -1;
+        for (i in 0...oldKeys.length) {
+            if (oldKeys[i] == first) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Rows of the previous snapshot that the new one can keep: after skipping
+     * `offset` trimmed head rows, the run of keys that still match in order.
+     * A changed row (a send that was acknowledged or echoed) ends the run, so
+     * it and everything after it are rebuilt while the rows before it stay.
+     */
+    public static function windowReuseCount(oldKeys:Array<String>, newKeys:Array<String>, offset:Int):Int {
+        if (oldKeys == null || newKeys == null || offset < 0 || offset >= oldKeys.length) return 0;
+        return prefixReuseCount(oldKeys.slice(offset), newKeys);
     }
 
     /**

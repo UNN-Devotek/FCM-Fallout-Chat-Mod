@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Admin CRUD for the name blacklist.
  *
@@ -41,6 +42,7 @@ export async function listBlacklist(_req: Request, res: Response, next: NextFunc
 }
 
 export async function createBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'nameBlacklistController:42881ee0945a', async () => {
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return next(createError(400, parsed.error.issues[0]?.message ?? 'Invalid body'));
@@ -49,7 +51,7 @@ export async function createBlacklistEntry(req: Request, res: Response, next: Ne
     if (matchType === 'regex') {
       try { new RegExp(pattern, 'i'); } catch { return next(createError(400, 'Invalid regex pattern')); }
     }
-    const entry = await prisma.nameBlacklistEntry.create({
+    const entry = await runRequiredMutation('moderation', '45fc5e132a8ac520c7e7878d', { stage: 'primary-write-unconfirmed' }, () => prisma.nameBlacklistEntry.create({
       data: {
         pattern,
         matchType,
@@ -57,7 +59,7 @@ export async function createBlacklistEntry(req: Request, res: Response, next: Ne
         note: note ?? null,
         createdBy: req.adminUser?.id ?? null,
       },
-    }).catch((err: any) => {
+    }), isPrismaAtomicRefusal, undefined, undefined).catch((err: any) => {
       if (err?.code === 'P2002') {
         next(createError(409, 'Pattern already exists'));
         return null;
@@ -71,9 +73,12 @@ export async function createBlacklistEntry(req: Request, res: Response, next: Ne
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 export async function updateBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'nameBlacklistController:0cf14af774c0', async () => {
   try {
     const { id } = paramsOf(req);
     const parsed = updateSchema.safeParse(req.body);
@@ -81,7 +86,7 @@ export async function updateBlacklistEntry(req: Request, res: Response, next: Ne
     if (parsed.data.matchType === 'regex' && parsed.data.pattern) {
       try { new RegExp(parsed.data.pattern, 'i'); } catch { return next(createError(400, 'Invalid regex pattern')); }
     }
-    const entry = await prisma.nameBlacklistEntry.update({
+    const entry = await runRequiredMutation('moderation', '52df43365ef39765ebdd89e7', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.nameBlacklistEntry.update({
       where: { id },
       data: {
         ...(parsed.data.pattern !== undefined ? { pattern: parsed.data.pattern } : {}),
@@ -89,7 +94,7 @@ export async function updateBlacklistEntry(req: Request, res: Response, next: Ne
         ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
         ...(parsed.data.note !== undefined ? { note: parsed.data.note ?? null } : {}),
       },
-    }).catch((err: any) => {
+    }), isPrismaAtomicRefusal, undefined, undefined).catch((err: any) => {
       if (err?.code === 'P2025') {
         next(createError(404, 'Entry not found'));
         return null;
@@ -107,12 +112,15 @@ export async function updateBlacklistEntry(req: Request, res: Response, next: Ne
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 export async function deleteBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('moderation', 'nameBlacklistController:dc3e5a3a41ef', async () => {
   try {
     const { id } = paramsOf(req);
-    const deleted = await prisma.nameBlacklistEntry.deleteMany({ where: { id } });
+    const deleted = await runRequiredMutation('moderation', '9a305bdbb9ee9efce9a37c77', { stage: 'primary-write-unconfirmed', rowId: id }, () => prisma.nameBlacklistEntry.deleteMany({ where: { id } }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
     if (deleted.count === 0) return next(createError(404, 'Entry not found'));
     await refreshBlacklist();
     logger.info({ id, deletedBy: req.adminUser?.id }, '[nameBlacklist] entry deleted');
@@ -120,4 +128,6 @@ export async function deleteBlacklistEntry(req: Request, res: Response, next: Ne
   } catch (err) {
     next(err);
   }
+
+  });
 }

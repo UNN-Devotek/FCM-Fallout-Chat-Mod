@@ -7,6 +7,8 @@
  * an authenticated identity.
  */
 
+import { beginRuntimeFetch as fetch } from '../runtime/nativeFetch';
+
 export const STEAM_OPENID_ENDPOINT = 'https://steamcommunity.com/openid/login';
 const STEAM_IDENTITY_PREFIX = 'https://steamcommunity.com/openid/id/';
 
@@ -52,7 +54,7 @@ export async function validateSteamAssertion(
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params,
   });
-  if (!response.ok) return false;
   const body = await response.text();
+  if (!response.ok) return false;
   return /^is_valid\s*:\s*true\s*$/im.test(body);
 }

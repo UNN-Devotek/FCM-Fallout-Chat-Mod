@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { pipeline } from 'node:stream/promises';
 import prisma from '../config/prisma';
 import { getEmbedAssetObject } from '../config/storage';
 import { createError } from '../middleware/errorHandler';
@@ -38,6 +39,11 @@ export async function serveEmbedAsset(req: Request, res: Response): Promise<void
   if (!asset.mimeType.startsWith('image/')) res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   if (object.contentLength != null) res.setHeader('Content-Length', String(object.contentLength));
-  object.body.on('error', () => res.destroy());
-  object.body.pipe(res);
+  try {
+    // A disconnected output cancels this read-only body. Await its real stream
+    // teardown so the HTTP work lease survives until the underlying read closes.
+    await pipeline(object.body, res);
+  } catch {
+    if (!res.destroyed) res.destroy();
+  }
 }

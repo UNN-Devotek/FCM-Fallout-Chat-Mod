@@ -16,11 +16,42 @@ class TestFcmOutbox {
         check(FcmOutbox.receipt("FCMHUD/1;m=msg;q=send-1") == "send-1", "receipt");
         check(FcmOutbox.target("send-1", "a:b") == "FCMOUT/1;i=send-1;r=a%3Ab", "target");
         check(!FcmOutbox.retryable("message_blocked"), "terminal denial");
+        check(FcmOutbox.rejectionNotice("message_blocked", 200) == "Message blocked by the chat filter.", "automod notice");
+        check(FcmOutbox.rejectionNotice("message_too_long", 200) == "Message too long (max 200).", "length notice");
+        check(FcmOutbox.rejectionNotice("", 200) == "Message not sent.", "empty code notice");
+        check(FcmOutbox.rejectionNotice("weird_code", 200) == "Message not sent: weird_code", "unknown code notice");
         check(FcmReconnect.pendingAllowed(0, 59999), "pending startup grace");
         check(!FcmReconnect.pendingAllowed(0, 60000), "pending watchdog");
         check(FcmReconnect.validPoll('{"success":true,"events":[]}'), "quiet healthy poll");
         check(!FcmReconnect.validPoll('{"success":true,"events":[broken}'), "malformed response");
         check(!FcmReconnect.validPoll('false'), "invalid native result");
+        // 2026-11-16 field log: renewals kept going out for 60 s after the last relay
+        // confirmation while xScal still reported authenticated.
+        check(FcmReconnect.relaySilent(true, false, 4), "four unanswered renewals mean a silent relay");
+        check(FcmReconnect.relaySilent(true, false, FcmReconnect.SILENT_RENEWALS), "threshold");
+        check(!FcmReconnect.relaySilent(true, false, 0), "no renewal sent (loading) is not silence");
+        check(!FcmReconnect.relaySilent(true, false, 1), "one missed reply is restored by the next renewal");
+        check(!FcmReconnect.relaySilent(true, true, 4), "fresh confirmation is healthy");
+        check(!FcmReconnect.relaySilent(false, false, 4), "no Server session, nothing to judge");
+        check(FcmReconnect.joinSilent(false, FcmReconnect.SILENT_JOINS), "room never confirmed after a minute of requests");
+        check(!FcmReconnect.joinSilent(false, FcmReconnect.SILENT_JOINS - 1), "join still within its retry minute");
+        check(!FcmReconnect.joinSilent(true, 10), "confirmed rooms use the renewal rule");
+        var silent = new FcmOutbox();
+        silent.add("s1", "global", "hello", "account", "", 0);
+        silent.add("s2", "global", "cooling", "account", "", 0);
+        for (i in 0...FcmReconnect.SILENT_RETRIES) { silent.attempted("s1", i); silent.attempted("s2", i); }
+        silent.answered("s2");
+        var stalled = silent.takeUnanswered(FcmReconnect.SILENT_RETRIES);
+        check(stalled.length == 1 && stalled[0] == "s1", "only retries with no relay answer prove silence");
+        check(silent.get("s1") != null && silent.get("s1").attempts == FcmReconnect.SILENT_RETRIES,
+            "stalled send stays queued with its attempts");
+        check(silent.takeUnanswered(FcmReconnect.SILENT_RETRIES).length == 0, "count restarts after a reconnect");
+        check(FcmReconnect.sendUnconfirmed(true, true, false, "", 1000, 16000), "accepted send without echo is unconfirmed");
+        check(!FcmReconnect.sendUnconfirmed(true, true, false, "", 1000, 15999), "echo window still open");
+        check(!FcmReconnect.sendUnconfirmed(true, true, true, "", 1000, 60000), "outbox-tracked sends use their retry path");
+        check(!FcmReconnect.sendUnconfirmed(true, false, false, "", 1000, 60000), "not yet accepted by the provider");
+        check(!FcmReconnect.sendUnconfirmed(false, true, false, "", 1000, 60000), "echoed send is confirmed");
+        check(!FcmReconnect.sendUnconfirmed(true, true, false, "msg-1", 1000, 60000), "relay message id proves delivery");
         var retry = new FcmOutbox();
         retry.add("stable-send", "general", "same payload", "account", "", 0);
         check(!FcmOutbox.canCorrelate(retry.get("stable-send"), "", false), "unsent draft cannot match history");

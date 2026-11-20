@@ -1,5 +1,20 @@
 # Automated HUD-mod test harness plan
 
+## Simulator startup synchronization - 2026-11-03
+
+The native xScal session and background fast-travel smoke cases wait for the
+existing `#status[data-state=ready]` signal before their behavior assertions.
+The player loads asynchronously after page navigation; counting that work against
+an immediate five-second bridge-construction check could reject a working movie.
+The existing 20-second ready wait, behavior deadlines and 30-second per-test limit
+are retained; no retries or skips were added.
+
+A controlled six-second SWF-response delay reproduced the old construction
+failure and passed with readiness synchronization, including the original travel,
+generation, diagnostics and teardown assertions. The temporary delay was removed.
+Full final-source regression results are recorded in the
+[release assessment](../deployment/hud-bridge-release-readiness-20261103.md).
+
 ## Local input caret candidate
 
 The 2.10.152 native xScal candidate consumes optional UTF-16 `caretIndex` metadata
@@ -274,6 +289,33 @@ echoes reconcile in their original channels; the ZFE fixture supplies the separa
 durable private receipt. The scenario excludes hosted snapshots and retains standard
 automatic teardown. Pure Haxe command tests, overlay fixture regressions, and website
 HUD-guide tests run in existing CI jobs; the complete Ruffle suite covers both providers.
+
+The provider-paired `automod-block` scenario sends a message the relay's automod rejects
+(`message_blocked`) through the synchronous xScal send response, the private outbox receipt,
+and the ZFE asynchronous completion. After the next render it requires that the optimistic row,
+its outbox entry and any feed row are gone, that the reason is visible in the prompt, and that
+newer chat still renders. The mock relay's `blockedPhrase` hook drives the synchronous path.
+
+The provider-paired `silent-relay` scenario covers a provider that stays "authenticated" while its
+relay link is dead (2026-11-16 xScal field log). First, a confirmed Server room lapses after
+three unanswered renewals, and the widget must reconnect and close the Server tab. The existing
+`typing-renewal` and `fast-travel` scenarios still require a single missed confirmation to
+recover through the next renewal without a reconnect. On xScal it then
+switches the mock to `silentRelay` and `authCanRetry=false`: sends get only a local ACK with no
+message ID, and roster controls get no confirmation. A real send must stay unflagged inside the
+15 s echo window. It must then be labelled `[unconfirmed]` while the prompt shows the reconnect
+notice, and the transport must reconnect. On both providers, six unanswered room requests with no
+confirmation must reconnect. A retry-capable queued send with three unanswered attempts must also
+reconnect and stay queued. Finally, an accepted send whose echo arrived must never be flagged. Ruffle's clock starts at zero, so the scenario waits until 15 s have elapsed instead of
+backdating the send. Whether a real xScal/ZFE reconnect restores a dead native socket remains
+in-game acceptance.
+
+The provider-paired `feed-reuse` scenario (2.10.154) checks the poll interval (xScal
+`xscalPollMs` 1000 ms, ZFE `pollMs`) and that unchanged feed rows are kept as the same display
+objects at their laid-out positions. An optimistic own send must keep every earlier row, its
+authoritative echo must rebuild only that row, and a ring-buffer trim (`maxMessages` reached) must
+drop the head row and build only the new row. Ruffle cannot measure the game's frame times; the
+widget's once-a-minute `perf` log line and an in-game MangoHud capture cover that.
 
 Native acceptance remains required on ZFE and xScal: select General, send `/t message`,
 `/i message`, and `/e message`, then confirm each destination receives one message

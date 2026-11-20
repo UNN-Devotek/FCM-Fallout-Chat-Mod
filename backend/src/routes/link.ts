@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isPrismaNotFound, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation } from '../lib/requiredEffects';
 import { Router, Request, Response, NextFunction } from 'express';
 import { createError } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
@@ -11,7 +12,7 @@ import {
 } from '../services/linkedIdentityService';
 import { clientIp } from '../utils/clientIp';
 import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import { runtimeRedisStore } from '../runtime/rateLimitStore';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
@@ -24,7 +25,7 @@ export { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity };
 const router = Router();
 
 function makeLinkRedisStore(prefix: string) {
-  return new RedisStore({
+  return runtimeRedisStore({
     prefix,
     sendCommand: async (...args: string[]) => {
       const client = await getRedisClient();
@@ -58,6 +59,7 @@ const redemptionIpLimiter = rateLimit({
  * "X-Auth-Token or provider session" contract. Mirrors requireAuth's ban auto-lift + reject.
  */
 export async function requireLinkAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  return runRequiredBundle('identity', 'link:90ca0230bf8d', async () => {
   try {
     let userId: string | null = null;
 
@@ -113,10 +115,10 @@ export async function requireLinkAuth(req: Request, _res: Response, next: NextFu
 
     // Auto-lift expired temp bans, then reject active bans (mirrors requireAuth).
     if (user.isBanned && user.bannedUntil && new Date(user.bannedUntil) < new Date()) {
-      await prisma.user.update({
+      await runRequiredMutation('identity', '0124228362af8d09be8885df', { stage: 'primary-write-unconfirmed', rowId: user.id }, () => prisma.user.update({
         where: { id: user.id },
         data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null },
-      }).catch(() => {});
+      }), isPrismaAtomicRefusal, undefined, undefined).catch(() => {});
       (user as any).isBanned = false;
     }
     if (user.isBanned) {
@@ -134,6 +136,8 @@ export async function requireLinkAuth(req: Request, _res: Response, next: NextFu
   } catch (err) {
     next(err);
   }
+
+  });
 }
 
 /**
@@ -188,6 +192,7 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
  *   - Writes audit log entry
  */
 router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request, res: Response, next) => {
+  return runRequiredBundle('identity', 'link:d04bddf9d19f', async () => {
   try {
     const { code } = req.body as { code?: string };
     if (!code || typeof code !== 'string') {
@@ -261,7 +266,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
     }
 
     // Write audit log
-    await prisma.auditLog.create({
+    await runRequiredMutation('audit', '36214e83e29522d47231c808', { stage: 'primary-write-unconfirmed', actorId: actorId, targetId: actorId }, () => prisma.auditLog.create({
       data: {
         actorId,
         action: 'hud_link_code_redeemed',
@@ -269,7 +274,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
         targetType: 'user',
         metadata: { relayUserId },
       },
-    });
+    }), undefined, undefined, undefined);
 
     logger.info({ actorId, relayUserId }, 'Link code redeemed — relay identity bound');
     res.json({
@@ -278,6 +283,8 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 /**
@@ -289,6 +296,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
  * When that table is absent this route returns 503.
  */
 router.post('/pairing-token', requireAuth, async (req: Request, res: Response, next) => {
+  return runRequiredBundle('identity', 'link:a429d0ddeb8c', async () => {
   try {
     const userId = req.user!.id;
     const { fo76Name } = req.body as { fo76Name?: string };
@@ -337,17 +345,18 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
       select: { fo76AccountName: true },
     });
     if (currentUser?.fo76AccountName && currentUser.fo76AccountName !== fo76Name.trim()) {
-      await prisma.userAlias.upsert({
-        where: { userId_alias: { userId, alias: currentUser.fo76AccountName } },
+      const previousName = currentUser.fo76AccountName;
+      await runRequiredMutation('identity', 'c54fd13fcfbc7b35a51fe8b8', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.userAlias.upsert({
+        where: { userId_alias: { userId, alias: previousName } },
         update: {},
-        create: { userId, alias: currentUser.fo76AccountName },
-      });
+        create: { userId, alias: previousName },
+      }), isPrismaAtomicRefusal, undefined, undefined);
     }
 
-    await prisma.user.update({
+    await runRequiredMutation('identity', '4f25f569f497c112035357f1', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
       where: { id: userId },
       data: { fo76AccountName: fo76Name.trim() },
-    });
+    }), isPrismaAtomicRefusal, undefined, undefined);
 
     // Attempt to mint a pairing token. HudPairingToken table is owned by relay agent WT1;
     // if it doesn't exist yet, return 503 so the caller knows to retry after WT1 merges.
@@ -363,15 +372,15 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
       const tokenHash = await argon2.hash(rawToken, { type: argon2.argon2id });
 
       // Revoke any existing active token for this user
-      await (prisma as any).hudPairingToken.updateMany({
+      await runRequiredMutation('identity', 'a365396dd1ff2174377974e9', { stage: 'primary-write-unconfirmed', userId: userId }, () => (prisma as any).hudPairingToken.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date() },
-      });
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
       // Create new token
-      await (prisma as any).hudPairingToken.create({
+      await runRequiredMutation('identity', '3789e5214934acbeeb28d165', { stage: 'primary-write-unconfirmed', userId: userId }, () => (prisma as any).hudPairingToken.create({
         data: { userId, tokenHash, tokenPrefix, fo76Name: fo76Name.trim() },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
 
       logger.info({ userId }, 'Pairing token minted');
       res.status(201).json({ data: { token: rawToken, fo76Name: fo76Name.trim() } });
@@ -389,6 +398,8 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 /**
@@ -396,14 +407,15 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
  * Revokes the active pairing token. User must re-mint to reconnect in-game.
  */
 router.delete('/pairing-token', requireAuth, async (req: Request, res: Response, next) => {
+  return runRequiredBundle('identity', 'link:21d51b314bdc', async () => {
   try {
     const userId = req.user!.id;
 
     try {
-      const result = await (prisma as any).hudPairingToken.updateMany({
+      const result = await runRequiredMutation('identity', 'b2e655bbb3d1d337752bb304', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.hudPairingToken.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date() },
-      });
+      }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
       if (result.count === 0) {
         return next(createError(404, 'No active pairing token to revoke.'));
@@ -423,6 +435,8 @@ router.delete('/pairing-token', requireAuth, async (req: Request, res: Response,
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 /**
@@ -432,6 +446,7 @@ router.delete('/pairing-token', requireAuth, async (req: Request, res: Response,
  * account is evicted before the response is returned.
  */
 router.delete('/provider/:provider', requireAuth, async (req: Request, res: Response, next) => {
+  return runRequiredBundle('identity', 'link:9d76bb56f1d7', async () => {
   try {
     const userId = req.user!.id;
     const provider = paramStr(req, 'provider');
@@ -445,7 +460,7 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
 
       // Keep the FCM account and its Discord-keyed entitlements/admin record,
       // but remove the live identity so the next provider login is explicit.
-      await prisma.user.update({
+      await runRequiredMutation('identity', 'e249497fa87d75167e085735', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({
         where: { id: userId },
         data: {
           discordId: null,
@@ -454,21 +469,21 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
           discordAvatar: null,
           discordAuthedAt: null,
         },
-      });
+      }), isPrismaAtomicRefusal, undefined, undefined);
 
       // Session/cache cleanup is best-effort after the authoritative identity
       // update. The relay eviction below ensures the current client is still
       // forced back to the provider login wall if Redis or session-row cleanup
       // is temporarily unavailable.
       try {
-        const redis = await getRedisClient();
-        await redis.del(`discord_link:${user.installToken}`);
-        if (req.sessionToken) await redis.del(`session:${req.sessionToken}`);
+        const redis = await runRequiredLookup('session', 'discord-unlink:session-client', () => getRedisClient());
+        await runRequiredEffect('auth:unlink-cache', { userId, stage: 'unlink-session-cache-delete-unconfirmed' }, () => redis.del(`discord_link:${user.installToken}`));
+        if (req.sessionToken) await runRequiredEffect('auth:unlink-cache', { userId, stage: 'unlink-session-cache-delete-unconfirmed' }, () => redis.del(`session:${req.sessionToken}`));
       } catch (sessionErr) {
         logger.warn({ err: sessionErr, userId }, 'Discord unlink session/cache cleanup failed');
       }
       if (req.sessionToken) {
-        await prisma.session.delete({ where: { token: req.sessionToken } }).catch((sessionErr) => {
+        await runRequiredEffect('auth:unlink-session', { userId, stage: 'unlink-session-row-delete-unconfirmed' }, () => prisma.session.delete({ where: { token: req.sessionToken } }), isPrismaNotFound).catch((sessionErr) => {
           logger.warn({ err: sessionErr, userId }, 'Discord unlink database session cleanup failed');
         });
       }
@@ -479,10 +494,14 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
         const relay = require('../services/relay/relayHandler') as {
           evictRelayUser: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
         };
-        await relay.evictRelayUser(userId, {
+        if (typeof relay.evictRelayUser === 'function') {
+
+          await runRequiredEffect('auth:unlink-relay', { userId, stage: 'unlink-relay-eviction-unconfirmed' }, () => relay.evictRelayUser(userId, {
           code: 'discord_unlinked',
           message: 'Discord account unlinked. Sign in again to continue.',
-        });
+        }));
+
+        }
       } catch (relayErr) {
         // The session has already been invalidated. A relay eviction failure
         // must not turn a successful unlink into a misleading 500 response.
@@ -503,7 +522,7 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
       });
       if (!isValidSteamId(user?.steamId)) return next(createError(404, 'Steam identity not linked.'));
       const otherIdentities = await prisma.linkedIdentity.count({ where: { userId } });
-      await prisma.user.update({ where: { id: userId }, data: { steamId: null, steamDisplayName: null } });
+      await runRequiredMutation('identity', '9fecb7a8aa0282c1267446f7', { stage: 'primary-write-unconfirmed', rowId: userId }, () => prisma.user.update({ where: { id: userId }, data: { steamId: null, steamDisplayName: null } }), isPrismaAtomicRefusal, undefined, undefined);
 
       const loggedOut = !user.discordId && otherIdentities < 1;
       if (loggedOut) {
@@ -511,14 +530,14 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
         // relay subscriptions as Discord unlink so the client cannot continue
         // using a session for an account that no longer has a provider.
         try {
-          const redis = await getRedisClient();
-          await redis.del(`steam_link:${user.installToken}`);
-          if (req.sessionToken) await redis.del(`session:${req.sessionToken}`);
+          const redis = await runRequiredLookup('session', 'steam-unlink:session-client', () => getRedisClient());
+          await runRequiredEffect('auth:unlink-cache', { userId, stage: 'unlink-session-cache-delete-unconfirmed' }, () => redis.del(`steam_link:${user.installToken}`));
+          if (req.sessionToken) await runRequiredEffect('auth:unlink-cache', { userId, stage: 'unlink-session-cache-delete-unconfirmed' }, () => redis.del(`session:${req.sessionToken}`));
         } catch (sessionErr) {
           logger.warn({ err: sessionErr, userId }, 'Steam unlink session/cache cleanup failed');
         }
         if (req.sessionToken) {
-          await prisma.session.delete({ where: { token: req.sessionToken } }).catch((sessionErr) => {
+          await runRequiredEffect('auth:unlink-session', { userId, stage: 'unlink-session-row-delete-unconfirmed' }, () => prisma.session.delete({ where: { token: req.sessionToken } }), isPrismaNotFound).catch((sessionErr) => {
             logger.warn({ err: sessionErr, userId }, 'Steam unlink database session cleanup failed');
           });
         }
@@ -527,10 +546,14 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
           const relay = require('../services/relay/relayHandler') as {
             evictRelayUser: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
           };
-          await relay.evictRelayUser(userId, {
+          if (typeof relay.evictRelayUser === 'function') {
+
+            await runRequiredEffect('auth:unlink-relay', { userId, stage: 'unlink-relay-eviction-unconfirmed' }, () => relay.evictRelayUser(userId, {
             code: 'steam_unlinked',
             message: 'Steam account unlinked. Sign in again to continue.',
-          });
+          }));
+
+          }
         } catch (relayErr) {
           logger.warn({ err: relayErr, userId }, 'Steam unlink relay eviction failed');
         }
@@ -560,6 +583,8 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
   } catch (err) {
     next(err);
   }
+
+  });
 });
 
 export default router;

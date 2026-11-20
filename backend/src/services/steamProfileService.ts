@@ -1,5 +1,6 @@
 import { isValidSteamId } from './steamAuthService';
 import { sanitizeChatName } from '../utils/chatName';
+import { discardRuntimeResponse } from '../runtime/nativeFetch';
 
 /** OpenID proves the ID; only Steam's server response supplies the profile name. */
 export async function fetchSteamDisplayName(
@@ -13,7 +14,7 @@ export async function fetchSteamDisplayName(
     url.searchParams.set('key', apiKey);
     url.searchParams.set('steamids', steamId);
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(5000), redirect: 'error' });
-    if (!response.ok) return null;
+    if (!response.ok) { await discardRuntimeResponse(response); return null; }
     const data = await response.json() as { response?: { players?: { steamid?: unknown; personaname?: unknown }[] } };
     if (!Array.isArray(data?.response?.players)) return null;
     const player = data.response.players.find(p => p?.steamid === steamId);

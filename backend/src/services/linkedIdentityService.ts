@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { isValidSteamId } from './steamAuthService';
@@ -31,7 +32,8 @@ export async function linkProviderIdentity(opts: {
   providerUid: string;
   username?: string;
 }): Promise<void> {
-  await prisma.linkedIdentity.upsert({
+  return runRequiredBundle('identity', 'linkedIdentityService:751b0628f35a', async () => {
+  await runRequiredMutation('identity', 'c1a4b2b7513da040805c9df2', { stage: 'primary-write-unconfirmed', userId: opts.userId }, () => prisma.linkedIdentity.upsert({
     where: { userId_provider: { userId: opts.userId, provider: opts.provider } },
     update: {
       providerUid: opts.providerUid,
@@ -44,8 +46,10 @@ export async function linkProviderIdentity(opts: {
       providerUid: opts.providerUid,
       username: opts.username ?? null,
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
   logger.info({ userId: opts.userId, provider: opts.provider }, 'Provider identity linked');
+
+  });
 }
 
 /** Unlink a provider identity from a user. Refuses if it would leave the user with no providers. */
@@ -53,6 +57,7 @@ export async function unlinkProviderIdentity(
   userId: string,
   provider: string,
 ): Promise<{ ok: true } | { ok: false; reason: 'last_provider' | 'not_found' }> {
+  return runRequiredBundle('identity', 'linkedIdentityService:b2b8036c6232', async () => {
   const hasProvider = await hasLinkedProvider(userId);
   if (!hasProvider) return { ok: false, reason: 'not_found' };
 
@@ -65,12 +70,14 @@ export async function unlinkProviderIdentity(
   const remainingAfterRemoval = (user?.discordId ? 1 : 0) + (isValidSteamId(user?.steamId) ? 1 : 0) + otherIdentities;
   if (remainingAfterRemoval < 1) return { ok: false, reason: 'last_provider' };
 
-  const deleted = await prisma.linkedIdentity.deleteMany({
+  const deleted = await runRequiredMutation('identity', '65a71f825c956eb57c2bccd9', { stage: 'primary-write-unconfirmed', userId: userId }, () => prisma.linkedIdentity.deleteMany({
     where: { userId, provider },
-  });
+  }), isPrismaAtomicRefusal, undefined, isRowCountNoChange);
 
   if (deleted.count === 0) return { ok: false, reason: 'not_found' };
   return { ok: true };
+
+  });
 }
 
 /** Get all linked identities for a user (does not include inline Discord). */

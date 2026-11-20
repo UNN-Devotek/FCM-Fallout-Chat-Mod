@@ -1,9 +1,10 @@
 import rateLimit, { MemoryStore } from 'express-rate-limit';
 import type { Store, Options, IncrementResponse, ClientRateLimitInfo } from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import { runtimeRedisStore, frozenRateLimitStore } from '../runtime/rateLimitStore';
 import { getRedisClient } from '../config/redis';
 import { clientIp } from '../utils/clientIp';
 import logger from '../config/logger';
+import { runtime } from '../runtime';
 
 // ── Dev-mode rate-limit bypass ────────────────────────────────────────────────
 // A dev/test overlay relaunches constantly (each launch re-registers), tripping
@@ -43,8 +44,8 @@ function apiLimitCap(req: any): number {
 
 // Shared Redis store -- ensures rate limit counts are consistent across multiple
 // backend replicas (NFR-SCAL: Multi-instance readiness, Fix #9).
-function makeRedisStore(prefix: string): RedisStore {
-  return new RedisStore({
+function makeRedisStore(prefix: string): Store {
+  return runtimeRedisStore({
     prefix,
     sendCommand: async (...args: string[]) => {
       try {
@@ -95,7 +96,7 @@ function makeRedisStore(prefix: string): RedisStore {
  * reset) is affected.
  */
 class FailoverRedisStore implements Store {
-  private readonly primary: RedisStore;
+  private readonly primary: Store;
   private readonly fallback: MemoryStore;
   private readonly prefixTag: string;
   private usingFallback = false;
@@ -109,8 +110,11 @@ class FailoverRedisStore implements Store {
   init(options: Options): void {
     // Forward init to both so each knows windowMs. RedisStore.init returns a
     // promise; express-rate-limit does not await store.init, so we don't either.
-    void this.primary.init?.(options);
+    void Promise.resolve(this.primary.init?.(options)).catch(err => {
+      logger.warn({ err, prefix: this.prefixTag }, 'Rate limit primary initialization unavailable');
+    });
     this.fallback.init(options);
+    runtime.registerProducer(`rate-limit-memory:${this.prefixTag}`, () => this.fallback.shutdown());
   }
 
   async increment(key: string): Promise<IncrementResponse> {
@@ -167,8 +171,8 @@ class FailoverRedisStore implements Store {
  * Store factory for the security-critical auth + registration limiters — Redis
  * primary with a bounded per-process in-memory fallback on a Redis outage.
  */
-function makeFailoverRedisStore(prefix: string): FailoverRedisStore {
-  return new FailoverRedisStore(prefix);
+function makeFailoverRedisStore(prefix: string): Store {
+  return runtime.isFrozen() ? frozenRateLimitStore() : new FailoverRedisStore(prefix);
 }
 
 /**

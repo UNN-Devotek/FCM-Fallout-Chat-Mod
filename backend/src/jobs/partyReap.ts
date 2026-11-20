@@ -1,3 +1,4 @@
+import { createRequiredAudit, runRequiredEffect } from '../lib/requiredEffects';
 /**
  * Party reap sweep.
  *
@@ -14,6 +15,7 @@
 import { PrismaClient } from '@prisma/client';
 import logger from '../config/logger';
 import { makeJobTracker } from './jobTracker';
+import { cancelProducerTimer, producerInterval, runProducer } from '../runtime';
 
 export const REAP_INTERVAL_MS = 60_000;
 const INVITE_EXPIRY_DAYS = 7;
@@ -72,13 +74,13 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
         if (onlineCount > 0) continue;
 
         // Soft-delete
-        await deps.prisma.party.update({
+        await runRequiredEffect('party:reap', { partyId: ep.id, stage: 'party-soft-delete-unconfirmed' }, () => deps.prisma.party.update({
           where: { id: ep.id },
           data: { isDeleted: true },
-        });
+        }));
 
         // Audit
-        await deps.prisma.auditLog.create({
+        await createRequiredAudit(deps.prisma.auditLog, {
           data: {
             actorId: null,
             action: 'party_reap',
@@ -90,10 +92,10 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
 
         // Broadcast party:deleted to members
         try {
-          await deps.broadcastToPartyMembers(
+          await runRequiredEffect('party:reap-presentation', { partyId: ep.id, stage: 'party-deletion-presentation-unconfirmed' }, () => deps.broadcastToPartyMembers(
             { type: 'party:deleted', payload: { partyId: ep.id } },
             memberIds,
-          );
+          ));
         } catch (err) {
           logger.warn({ err, partyId: ep.id }, '[partyReap] broadcastToPartyMembers failed (non-fatal)');
         }
@@ -121,11 +123,11 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
         const memberCount = await deps.prisma.partyMember.count({ where: { partyId: pp.id } });
         if (memberCount > 0) continue;
 
-        await deps.prisma.party.update({
+        await runRequiredEffect('party:reap', { partyId: pp.id, stage: 'party-soft-delete-unconfirmed' }, () => deps.prisma.party.update({
           where: { id: pp.id },
           data: { isDeleted: true },
-        });
-        await deps.prisma.auditLog.create({
+        }));
+        await createRequiredAudit(deps.prisma.auditLog, {
           data: {
             actorId: null,
             action: 'party_reap',
@@ -149,10 +151,10 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
   try {
     // ── Pass 3: Expire stale pending invites ──────────────────────────────────
     const cutoff = new Date(now.getTime() - INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-    const result = await deps.prisma.partyInvite.updateMany({
+    const result = await runRequiredEffect('party:invite-expire', { stage: 'invite-expiry-write-unconfirmed' }, () => deps.prisma.partyInvite.updateMany({
       where: { status: 'pending', createdAt: { lt: cutoff } },
       data: { status: 'expired' },
-    });
+    }));
     invitesExpired = result.count;
     if (invitesExpired > 0) {
       logger.info({ invitesExpired, cutoff }, '[partyReap] expired stale invites');
@@ -210,11 +212,11 @@ export function startPartyReapJob(deps: PartyReapDeps): () => void {
 
   // Run once at startup to reconcile any parties that should have been reaped.
   // This goes through the same guard so it cannot overlap the first interval tick.
-  runGuardedTick('startup reconcile');
+  void runProducer('party-reap-startup', () => runGuardedTick('startup reconcile'));
 
-  const interval = setInterval(() => runGuardedTick('tick'), REAP_INTERVAL_MS);
+  const interval = producerInterval('party-reap', () => runGuardedTick('tick'), REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.
   if (typeof (interval as any).unref === 'function') (interval as any).unref();
-  return () => clearInterval(interval);
+  return () => cancelProducerTimer(interval);
 }

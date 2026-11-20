@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { runtime, producerInterval } from '../runtime';
 import * as db from '../config/database';
 import { healthCheck as redisHealthCheck } from '../config/redis';
 
@@ -11,7 +12,7 @@ let discordStatus = 'disconnected';
 let messageCount = 0;
 let messagesPerSecond = 0;
 
-setInterval(() => {
+producerInterval('health-sample', () => {
   messagesPerSecond = messageCount;
   messageCount = 0;
 }, 1000);
@@ -58,8 +59,9 @@ async function getHealth(_req: Request, res: Response, next: NextFunction): Prom
       waiting: pool.waitingCount,
     };
 
-    res.json({ data: {
-      status: 'ok',
+    const frozen = runtime.isFrozen();
+    res.status(frozen ? 503 : 200).json({ data: {
+      status: frozen ? 'maintenance' : 'ok',
       uptime: process.uptime(),
       database: dbOk.status === 'fulfilled' && dbOk.value ? 'connected' : 'disconnected',
       redis: redisOk.status === 'fulfilled' && redisOk.value ? 'connected' : 'disconnected',

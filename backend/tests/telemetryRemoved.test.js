@@ -29,6 +29,7 @@ jest.mock('rate-limit-redis', () => ({
 // route test (via server.ts) and the real handleConnection() WS test below.
 const TEST_TOKEN = 'test-session-token';
 jest.mock('../src/config/redis', () => ({
+  client: {},
   getRedisClient: jest.fn().mockResolvedValue({
     get: jest.fn().mockImplementation(async (key) => (key === 'session:test-session-token' ? 'user-1234' : null)),
     set: jest.fn().mockResolvedValue('OK'),

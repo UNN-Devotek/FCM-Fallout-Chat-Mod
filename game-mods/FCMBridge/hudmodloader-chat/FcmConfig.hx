@@ -94,6 +94,11 @@ class FcmConfig {
     // reusing its persistent connection for polls; until then this is the lag knob.)
     public var pollMs:Int       = 5000;
 
+    // xScal event-poll interval (ms). xScal keeps one persistent relay socket and a poll only
+    // reads its local event queue (2-12 ms in the 2026-11-20 field log), so it can poll far
+    // more often than ZFE. pollMs still applies to ZFE. Clamped 1000..60000.
+    public var xscalPollMs:Int  = 1000;
+
     // Auto-hide: hide the panel after this many seconds of no activity; reveal on a new message.
     // 0 disables auto-hide (always visible). Toggled live from the F11 menu.
     public var autoHideSec:Int  = 60;
@@ -753,6 +758,7 @@ class FcmConfig {
                 case "maxmessages":     cfg.maxMessages = parseIntOr(val, cfg.maxMessages);
                 case "maxsendlen":      cfg.maxSendLen = parseIntOr(val, cfg.maxSendLen);
                 case "pollms":          cfg.pollMs = parseIntOr(val, cfg.pollMs);
+                case "xscalpollms":     cfg.xscalPollMs = parseIntOr(val, cfg.xscalPollMs);
                 case "autohideenabled": cfg.autoHideEnabled = parseBool(val, cfg.autoHideEnabled);
                 case "autohidesec":     cfg.autoHideSec = parseIntOr(val, cfg.autoHideSec);
                 case "openkey":
@@ -890,6 +896,7 @@ class FcmConfig {
         maxMessages = clampInt(maxMessages, 10, 500);
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
+        xscalPollMs = clampInt(xscalPollMs, 1000, 60000);
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
         // Manual identity fallback: trim + cap at FcmIdentity.MAX_NAME_LENGTH (64).
         if (displayNameOverride == null) displayNameOverride = "";
@@ -958,6 +965,7 @@ class FcmConfig {
         s.add("maxMessages=" + maxMessages + "\n");
         s.add("maxSendLen=" + maxSendLen + "\n");
         s.add("pollMs=" + pollMs + "\n");
+        s.add("xscalPollMs=" + xscalPollMs + "\n");
         s.add("autoHideEnabled=" + b(autoHideEnabled) + "\n");
         s.add("autoHideSec=" + autoHideSec + "\n");
         s.add("openKey=" + openKey + "\n");

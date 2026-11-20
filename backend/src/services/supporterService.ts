@@ -1,3 +1,4 @@
+import { isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
 /**
  * Supporter entitlement service — the paid cosmetics tier (epic #223).
  *
@@ -23,6 +24,7 @@ import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 import env from '../config/environment';
+import { runtime } from '../runtime';
 import {
   SupporterTier,
   EntitlementStatus,
@@ -130,13 +132,18 @@ async function hasAdminCosmeticsBypass(discordId: string): Promise<boolean> {
 
 /** Drop the cached tier so the next read reflects a just-applied change. */
 export async function bustTierCache(discordId: string): Promise<void> {
+  return runRequiredBundle('authority', 'supporterService:778d28eca481', async () => {
   if (!discordId) return;
   try {
     const redis = await getRedisClient();
-    await redis.del(tierKey(discordId));
+    await runRequiredMutation('authority', '9d86f76174dbfb1fa6209c71', { stage: 'primary-write-unconfirmed' }, () => redis.del(tierKey(discordId)), undefined, undefined, isRowCountNoChange);
   } catch (err) {
+    runtime.recordFailure('supporter:tier-cache', new Error('Supporter tier invalidation was not confirmed'),
+      { discordId, stage: 'tier-cache-delete-unconfirmed' });
     logger.warn({ err, discordId }, '[supporter] failed to bust tier cache (non-fatal)');
   }
+
+  });
 }
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
@@ -219,9 +226,12 @@ export async function getSupporterTierByUserId(userId: string): Promise<Supporte
 type AuditMetadata = Record<string, string | number | boolean | null>;
 
 function audit(action: string, discordId: string, metadata: AuditMetadata): void {
-  prisma.auditLog
-    .create({ data: { action, targetType: 'supporter_entitlement', reason: discordId, metadata } })
-    .catch((err: unknown) => logger.warn({ err, discordId, action }, '[supporter] audit write failed'));
+  void runtime.required('supporter:entitlement-audit', async () => await prisma.auditLog
+    .create({ data: { action, targetType: 'supporter_entitlement', reason: discordId, metadata } }),
+    { discordId, action, stage: 'entitlement-audit-unconfirmed' })
+    .catch((err: unknown) => {
+      logger.warn({ err, discordId, action }, '[supporter] audit write failed');
+    });
 }
 
 /**
@@ -238,6 +248,7 @@ export async function grantEntitlement(opts: {
   /** Internal optimization for frequent authoritative Discord role checks. */
   skipUnchanged?: boolean;
 }): Promise<boolean> {
+  return runRequiredBundle('authority', 'supporterService:b633b4e32eb7', async () => {
   const tier = normalizeTier(opts.tier);
   if (tier === 'none') return lapseEntitlement({ discordId: opts.discordId, reason: 'tier resolved to none' });
 
@@ -258,7 +269,7 @@ export async function grantEntitlement(opts: {
     return false;
   }
 
-  await prisma.supporterEntitlement.upsert({
+  await runRequiredMutation('authority', '612fdbd00600b5eba4756a2e', { stage: 'primary-write-unconfirmed', discordId: opts.discordId }, () => prisma.supporterEntitlement.upsert({
     where: { discordId: opts.discordId },
     create: {
       discordId: opts.discordId,
@@ -278,7 +289,7 @@ export async function grantEntitlement(opts: {
       ...(opts.externalId !== undefined ? { externalId: opts.externalId } : {}),
       ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
     },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   await bustTierCache(opts.discordId);
 
@@ -292,6 +303,8 @@ export async function grantEntitlement(opts: {
     logger.info({ discordId: opts.discordId, tier, source }, '[supporter] entitlement granted');
   }
   return changed;
+
+  });
 }
 
 /**
@@ -304,6 +317,7 @@ export async function lapseEntitlement(opts: {
   /** 'cancelled' marks a deliberate end; default 'lapsed' is recoverable. */
   status?: Extract<EntitlementStatus, 'lapsed' | 'cancelled'>;
 }): Promise<boolean> {
+  return runRequiredBundle('authority', 'supporterService:a859f0f252c5', async () => {
   const nextStatus = opts.status ?? 'lapsed';
   const existing = await prisma.supporterEntitlement.findUnique({
     where: { discordId: opts.discordId },
@@ -312,10 +326,10 @@ export async function lapseEntitlement(opts: {
   if (!existing) return false;
   if (existing.status === nextStatus) return false;
 
-  await prisma.supporterEntitlement.update({
+  await runRequiredMutation('authority', '938445bf327e480fd8fe9cc5', { stage: 'primary-write-unconfirmed', discordId: opts.discordId }, () => prisma.supporterEntitlement.update({
     where: { discordId: opts.discordId },
     data: { status: nextStatus, lastVerifiedAt: new Date() },
-  });
+  }), isPrismaAtomicRefusal, undefined, undefined);
 
   await bustTierCache(opts.discordId);
 
@@ -327,6 +341,8 @@ export async function lapseEntitlement(opts: {
     '[supporter] entitlement privileges suspended (entitlement retained)',
   );
   return true;
+
+  });
 }
 
 export interface DiscordRoleSyncResult {

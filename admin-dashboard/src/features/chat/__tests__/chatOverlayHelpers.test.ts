@@ -5,6 +5,7 @@ import {
   isProdRelayHost,
   resolveAvatarUrl,
   resolveMediaUrl,
+  banFormUrl,
   hexToRgba,
   hexAlpha,
   menuBgColor,
@@ -234,6 +235,25 @@ describe('resolveMediaUrl', () => {
       title: 'x', relayBase: 'https://relay.example.com/',
     };
     expect(resolveMediaUrl('/party-images/9')).toBe('https://relay.example.com/party-images/9');
+  });
+});
+
+// ── banFormUrl ──────────────────────────────────────────────────────────────
+describe('banFormUrl', () => {
+  afterEach(() => {
+    delete (window as unknown as { __FCM_OVERLAY_SHELL__?: unknown }).__FCM_OVERLAY_SHELL__;
+  });
+
+  it('points the packaged overlay at the website ban form, not a file:// path', () => {
+    (window as unknown as { __FCM_OVERLAY_SHELL__?: unknown }).__FCM_OVERLAY_SHELL__ = {
+      title: 'x', relayBase: 'https://falloutchatmod.com',
+    };
+    expect(banFormUrl('86ea1899-fed2-45bf-b3c6-734d125f4d69', 'godagarah & co'))
+      .toBe('https://falloutchatmod.com/moderation/bans/new?userId=86ea1899-fed2-45bf-b3c6-734d125f4d69&username=godagarah+%26+co');
+  });
+
+  it('stays same-origin on the website', () => {
+    expect(banFormUrl('u1', 'Name')).toBe('/moderation/bans/new?userId=u1&username=Name');
   });
 });
 
