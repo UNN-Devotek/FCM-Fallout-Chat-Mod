@@ -468,6 +468,9 @@ jobs:
       - name: Test feed render planning (coalescing, prefix reuse, slice budget)
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-feed-plan.hxml
+      - name: Test HUD timing summary (polls, render turns, frame gaps)
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-perf-window.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml

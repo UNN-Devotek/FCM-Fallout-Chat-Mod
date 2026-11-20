@@ -375,8 +375,10 @@ images or GIF playback are loaded. Delayed row slices check their generation and
 failures; fallback invalidates pending work. Flash/JavaScript tests do not establish GFx behavior.
 
 Burst traffic (poll batches, optimistic echo, ACK reconciliation) coalesces into one deferred
-render per tick; tab switches, resizes, and config changes still render immediately. Tail
-appends reuse the committed snapshot's matching prefix rows and only construct the new suffix.
+render per tick; tab switches, resizes, and config changes still render immediately. Rows are
+matched by key: rows the ring buffer trimmed from the head are skipped, every following row up to
+the first changed one is reused, and only changed or new rows are constructed (2.10.154; earlier
+builds rebuilt the whole feed whenever any committed row changed or the head was trimmed).
 The visible prefix stays attached to the committed layer throughout delayed construction and is
 reparented only at the synchronous commit edge, so cancellation cannot blank the old snapshot.
 Reuse keys include every rendered message/cosmetic/delivery field plus moderation and theme state.
@@ -386,6 +388,11 @@ slice size adapts within 4-12 rows to hold the per-tick UI budget. Only one slic
 live, and its listener is removed on completion, cancellation, failure, or teardown. Pure planning
 helpers live in `FcmFeedPlan.hx`/`FcmRenderCoalescer.hx` with
 `test-feed-plan.hxml` coverage.
+
+xScal polls its local event queue every `xscalPollMs` (default 1000 ms); ZFE keeps `pollMs`
+(5000 ms) because each ZFE poll is a new wss handshake. Once a minute the log records a `perf`
+line from `FcmPerfWindow.hx`: polls and their time, render turns, rows built versus reused, the
+longest frame gap, and frame gaps of 50 ms or more (gaps over 2 s count as pauses).
 
 F11 → FCM → Customize changes position, independent panel dimensions, feed/input text size, input
 height, backgrounds, text colors, opacity, and auto-hide. Input width/alignment follow the panel.
@@ -452,6 +459,7 @@ active artifacts and tails only fresh xScal/ZFE diagnostics; it never owns or st
 | `FcmConfig.hx`, `FcmHudLayout.hx` | INI settings and optional per-device persistence |
 | `FcmRenderGeneration.hx`, `FcmFeedText.hx`, `FcmEmoji*.hx` | Delayed rendering, styled text, bundled emoji |
 | `FcmFeedPlan.hx`, `FcmRenderCoalescer.hx`, `TestFcmFeedPlan.hx` | Pure render planning (coalescing, prefix reuse, slice budget) + tests |
+| `FcmPerfWindow.hx`, `TestFcmPerfWindow.hx` | Once-a-minute timing summary (polls, render turns, frame gaps) + tests |
 | `FCMChat.ini`, `FCMChatWidget.ini`, `hudmodloader.ini` | Package configuration templates and loader line |
 | `build.hxml`, `normalize_swf.py`, `emoji/` | Haxe build, FWS normalization, bundled sprite data/licenses |
 | `package.py`, `test_package.py`, `test-*.hxml` | Target/provider/distribution packaging and checks |
