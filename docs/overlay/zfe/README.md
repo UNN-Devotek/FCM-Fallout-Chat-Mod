@@ -11,7 +11,21 @@ Library v7 for 1.7.27.11 (mod 4298, Main file 25075). The DLL and Steam address 
 match the downloads by SHA-256. The new `xscal.ini` template was merged, keeping the
 Dev relay endpoint and `[xScalPriority] enabled=false`; the new `[ProtoSync]` section keeps
 its upstream default. The 0.4.31 files are backed up in `xscal-backup-0.4.31/` in the
-game folder. The HUD under test is 2.10.153. In-game acceptance on 0.5.38 is pending.
+game folder. The HUD under test is 2.10.154 (installed 2026-11-20). In-game acceptance on
+0.5.38 is pending.
+
+**HUD 2.10.154 responsiveness candidate (2026-11-20):** the 2.10.153 field test delivered HUD
+sends to Discord in 1-2 s, but confirmations and incoming messages took up to 5 s (the `pollMs`
+interval), and each new message rebuilt every feed row (62-81 ms). 2.10.154 polls xScal every
+`xscalPollMs` (1000 ms; ZFE keeps `pollMs`), keeps unchanged rows on acknowledgements, echoes and
+ring-buffer trims, and logs a `perf` summary once a minute so in-game frame cost can be checked.
+Desktop field results: on xScal, overlay-to-HUD delivery averaged 0.95 s (0.53-1.44 s) with
+2.5-3.3 ms polls and 1 ms renders. On official ZFE 0.27.0 (Nexus file 25059) under Proton, ZFE
+connected directly to `wss://dev.falloutchatmod.com/relay` with no loopback TLS proxy (WinHTTP,
+about 120 ms per connection on its own thread), polls cost 2-4 ms on the game thread, and
+delivery follows the 5 s `pollMs`. ZFE stays at 5 s because each ZFE poll is a new relay
+connection. Open issue: the first message after auto-hide restored the panel during a 206 ms
+event handling call (a matching 219 ms game frame in MangoHud); the cause is not yet isolated.
 
 **Current Dev integration candidate 2.10.151 (2026-10-22):** combines the local
 2.10.150 nameplate work with current Dev's adaptive cooldown/retry handling.

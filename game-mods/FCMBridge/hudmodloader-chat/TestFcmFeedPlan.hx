@@ -53,6 +53,32 @@ class TestFcmFeedPlan {
         check("identity-less rows never reuse",
             FcmFeedPlan.prefixReuseCount(identityLess, identityLess) == 1);
 
+        // headTrimOffset / windowReuseCount: ring-buffer trim and changed tail rows.
+        var k0 = FcmFeedPlan.recordKey("global", "m-10", "", "a");
+        var k1 = FcmFeedPlan.recordKey("global", "m-11", "", "b");
+        var k2 = FcmFeedPlan.recordKey("global", "m-12", "", "c");
+        var k3pending = FcmFeedPlan.recordKey("global", "", "txn-5", "me|hi|queued");
+        var k3ready = FcmFeedPlan.recordKey("global", "", "txn-5", "me|hi|ready");
+        var k4 = FcmFeedPlan.recordKey("global", "m-14", "", "d");
+        var before = [k0, k1, k2, k3pending];
+        check("unchanged head has offset 0", FcmFeedPlan.headTrimOffset(before, [k0, k1, k2, k3ready]) == 0);
+        check("acknowledged tail row keeps the rows before it",
+            FcmFeedPlan.windowReuseCount(before, [k0, k1, k2, k3ready], 0) == 3);
+        var trimmed = [k1, k2, k3pending, k4];
+        check("one trimmed head row gives offset 1", FcmFeedPlan.headTrimOffset(before, trimmed) == 1);
+        check("trim plus append keeps every surviving row",
+            FcmFeedPlan.windowReuseCount(before, trimmed, 1) == 3);
+        check("trim plus acknowledged tail keeps the unchanged rows",
+            FcmFeedPlan.windowReuseCount(before, [k2, k3ready, k4], 2) == 1);
+        check("unknown first row gives no offset",
+            FcmFeedPlan.headTrimOffset(before, [FcmFeedPlan.recordKey("global", "m-9", "", "z"), k0]) == -1);
+        check("identity-less first row gives no offset",
+            FcmFeedPlan.headTrimOffset([FcmFeedPlan.recordKey("global", "", "", "x")],
+                [FcmFeedPlan.recordKey("global", "", "", "x")]) == -1);
+        check("empty new snapshot gives no offset", FcmFeedPlan.headTrimOffset(before, []) == -1);
+        check("negative offset reuses nothing", FcmFeedPlan.windowReuseCount(before, trimmed, -1) == 0);
+        check("offset past the end reuses nothing", FcmFeedPlan.windowReuseCount(before, trimmed, 4) == 0);
+
         // nextSliceSize adaptive bounds.
         check("cheap slice grows", FcmFeedPlan.nextSliceSize(6, 2.0) == 7);
         check("expensive slice shrinks", FcmFeedPlan.nextSliceSize(6, 20.0) == 5);

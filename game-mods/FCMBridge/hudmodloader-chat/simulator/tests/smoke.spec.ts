@@ -81,6 +81,13 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).toContainText(`QUOTED-ECHO PASS ${provider}`);
     await expect(page.locator('#log')).not.toContainText('QUOTED-ECHO FAIL');
   });
+
+  test(`feed keeps unchanged rows on echo and trim (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=feed-reuse`);
+    await expect(page.locator('#log')).toContainText(/FEED-REUSE (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`FEED-REUSE PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('FEED-REUSE FAIL');
+  });
 }
 
 for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry', 'owned-input-hotkey', 'owned-input-controller-open', 'owned-input-map']) {
@@ -242,7 +249,7 @@ test('packages independent tab ranges, file-key precedence, ZFE synchronization,
   expect(widgetSource).toContain('activateSelectedLinkFromOpenInput()');
   expect(widgetSource).not.toContain('_feedContentLayer.removeChild(kept.view)');
   expect(widgetSource).toContain('layer.addChildAt(rows[i].view, i)');
-  expect(widgetSource).toContain('_renderedVisualContext != feedVisualContext()');
+  expect(widgetSource).toContain('return _renderedVisualContext == feedVisualContext();');
   expect(widgetSource).toContain('removeEventListener(TimerEvent.TIMER_COMPLETE, _sliceTimerHandler)');
   expect(configSource).toContain('stored.openKey = environment.openKey');
   expect(configSource).toContain('stored.activateLinkKey = environment.activateLinkKey');

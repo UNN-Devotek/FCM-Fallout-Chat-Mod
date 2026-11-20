@@ -97,6 +97,7 @@ class FCMHarness extends Sprite {
             if (scenario == "queue-loss") QueueLossScenario.start(widget, provider);
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
             if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
+            if (scenario == "feed-reuse") FeedReuseScenario.start(widget, provider);
             if (scenario == "channel-send-tab") ChannelSendScenario.start(widget, provider);
             if (scenario == "nameplates") NameplateScenario.start(widget, this, provider);
             if (scenario == "native-nameplates") NativeNameplateScenario.start(widget, this, provider);

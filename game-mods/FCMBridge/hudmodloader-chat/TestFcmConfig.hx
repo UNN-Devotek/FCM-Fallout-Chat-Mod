@@ -166,6 +166,11 @@ class TestFcmConfig {
         eqi("parse pollMs", FcmConfig.parse("[FCMChat]\npollMs=8000\n").pollMs, 8000);
         eqi("clamp pollMs min", FcmConfig.parse("[FCMChat]\npollMs=10\n").pollMs, 1000);
         eqi("clamp pollMs max", FcmConfig.parse("[FCMChat]\npollMs=999999\n").pollMs, 60000);
+        eqi("default xscalPollMs", d.xscalPollMs, 1000);
+        eqi("parse xscalPollMs", FcmConfig.parse("[FCMChat]\nxscalPollMs=2500\n").xscalPollMs, 2500);
+        eqi("clamp xscalPollMs min", FcmConfig.parse("[FCMChat]\nxscalPollMs=10\n").xscalPollMs, 1000);
+        eqi("clamp xscalPollMs max", FcmConfig.parse("[FCMChat]\nxscalPollMs=999999\n").xscalPollMs, 60000);
+        eqi("xscalPollMs independent of pollMs", FcmConfig.parse("[FCMChat]\npollMs=8000\n").xscalPollMs, 1000);
         eqs("default openKey", d.openKey, "INSERT");
         eqs("default xScal input mode", d.xscalInputMode, "native");
         eqs("select xScal host editor", FcmConfig.parse("[FCMChat]\nxscalInputMode=SHARED\n").xscalInputMode, "shared");

@@ -85,7 +85,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.153"; // silent-relay recovery and xScal receipt-proven send retries
+    static inline var VERSION:String  = "2.10.154"; // keep unchanged feed rows on acks/trims, 1 s xScal polling, perf summary
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -635,6 +635,18 @@ class FCMChatWidget extends MovieClip {
         _nameplatePainter = new FcmNameplatePainter(this, _nameplatePresence);
         addEventListener(Event.ADDED_TO_STAGE, onStage);
         addEventListener(Event.REMOVED_FROM_STAGE, onRemovedFromStage);
+        addEventListener(Event.ENTER_FRAME, onPerfFrame);
+    }
+
+    /** Frame-gap sampling for the once-a-minute timing summary (one clock read per frame). */
+    function onPerfFrame(_:Event):Void {
+        if (_disposed) return;
+        try {
+            var now:Float = flash.Lib.getTimer();
+            _perf.noteFrame(now);
+            var summary:Null<String> = _perf.summaryIfDue(now);
+            if (summary != null) zfeLog("info", "perf", summary);
+        } catch (_:Dynamic) {}
     }
 
     // =========================================================================
@@ -681,6 +693,7 @@ class FCMChatWidget extends MovieClip {
         if (_disposed) return;
         zfeLog("info", "lifecycle", "widget shutdown");
         _disposed = true;
+        try { removeEventListener(Event.ENTER_FRAME, onPerfFrame); } catch (_:Dynamic) {}
         _nameplatePresence.reset(); _nameplatePainter.shutdown();
         stopBrowser();
 
@@ -4937,7 +4950,11 @@ class FCMChatWidget extends MovieClip {
     function startPollTimer():Void {
         if (_disposed || _api == null || !_connected) return;
         stopPollTimer();
-        _pollTimer = new Timer(_cfg.pollMs);
+        // xScal polls read a local queue fed by its persistent socket; ZFE polls are a fresh
+        // wss handshake each, so only ZFE keeps the slow pollMs default.
+        var interval:Int = (_api != null && _api.provider == FcmNativeApi.XSCAL) ? _cfg.xscalPollMs : _cfg.pollMs;
+        zfeLog("info", "poll", "event poll interval=" + interval + "ms provider=" + _api.provider);
+        _pollTimer = new Timer(interval);
         _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { runEventPollSafely(); });
         _pollTimer.start();
         var initialCount:Int = runEventPollSafely(); // immediate first poll for history
@@ -5162,7 +5179,9 @@ class FCMChatWidget extends MovieClip {
         if (_disposed) return 0;
         _eventPollPhase = "timer";
         try {
+            var tStart:Float = flash.Lib.getTimer();
             var count:Int = pollEvents();
+            _perf.notePoll(flash.Lib.getTimer() - tStart, count);
             _eventPollPhase = "idle";
             return count;
         } catch (e:Dynamic) {
@@ -6648,6 +6667,7 @@ class FCMChatWidget extends MovieClip {
     // Burst coalescing: rapid ingest/poll/ACK triggers collapse into one deferred
     // render. Tab switches, resizes, and config changes still render immediately.
     var _renderCoalescer:FcmRenderCoalescer = new FcmRenderCoalescer();
+    var _perf:FcmPerfWindow = new FcmPerfWindow();
     var _coalesceTimer:Timer = null;
     // Snapshot identity for incremental append: parallel keys for the committed
     // visible rows (notice row excluded). A matching prefix is reparented as-is.
@@ -6755,14 +6775,19 @@ class FCMChatWidget extends MovieClip {
             + ":" + _cfg.chanColorRaids + ":" + _cfg.chanColorServer;
     }
 
-    function snapshotMatchesCommitted(newKeys:Array<String>, viewportWidth:Float):Bool {
+    /**
+     * Committed rows can be kept only when everything that shapes a row is unchanged.
+     * Which rows survive is decided by key: FcmFeedPlan.headTrimOffset skips rows the
+     * ring buffer trimmed, and windowReuseCount stops at the first changed row. Before
+     * 2.10.154 any changed row (an acknowledged or echoed send is usually the last one)
+     * or any trimmed head row rebuilt the whole feed, a 60-80 ms hitch per message.
+     */
+    function snapshotContextMatches(viewportWidth:Float):Bool {
         if (_feedContentLayer == null || _feedRows.length == 0) return false;
         if (_renderedChanIdx != _chanIdx) return false;
         if (_renderedFontSize != _cfg.fontSize) return false;
         if (_renderedViewportWidth != viewportWidth) return false;
-        if (_renderedVisualContext != feedVisualContext()) return false;
-        if (_renderedRecordKeys.length > newKeys.length) return false;
-        return FcmFeedPlan.prefixReuseCount(_renderedRecordKeys, newKeys) == _renderedRecordKeys.length;
+        return _renderedVisualContext == feedVisualContext();
     }
 
     function obtainStagingLayer():Sprite {
@@ -6864,26 +6889,32 @@ class FCMChatWidget extends MovieClip {
 
     /** Commit one completed snapshot without exposing partially positioned rows. */
     function commitFeedSnapshot(renderToken:Int, layer:Sprite, rows:Array<FeedRowView>, contentHeight:Float,
-            ?recordKeys:Array<String>, viewportWidth:Float = -1, reuseCount:Int = 0):Void {
+            ?recordKeys:Array<String>, viewportWidth:Float = -1, reuseCount:Int = 0,
+            reuseOffset:Int = 0):Void {
         if (!_renderGeneration.mayCommit(renderToken, _renderPending)
                 || _feedLayer == null || layer == null || layer != _pendingFeedContentLayer) return;
         var retired:Sprite = null;
         if (_feedContentLayer != null && _feedContentLayer != layer) {
             retired = _feedContentLayer;
         }
-        // Reparent a proven unchanged prefix only at the atomic commit edge. The
-        // old snapshot therefore remains complete and visible throughout every
-        // delayed suffix slice and is untouched if that render is cancelled.
+        // Reparent proven unchanged rows only at the atomic commit edge. The old
+        // snapshot therefore remains complete and visible throughout every delayed
+        // slice and is untouched if that render is cancelled. Rows shift up by the
+        // height of any trimmed head rows, so they take their new position here too.
         var moved:Int = 0;
         if (reuseCount > 0 && retired != null) {
             try {
                 for (i in 0...reuseCount) {
                     layer.addChildAt(rows[i].view, i);
+                    rows[i].view.y = rows[i].contentY;
                     moved++;
                 }
             } catch (moveError:Dynamic) {
                 for (i in 0...moved) {
-                    try { retired.addChildAt(rows[i].view, i); } catch (_:Dynamic) {}
+                    try {
+                        retired.addChildAt(rows[i].view, reuseOffset + i);
+                        rows[i].view.y = _feedRows[reuseOffset + i].contentY;
+                    } catch (_:Dynamic) {}
                 }
                 throw moveError;
             }
@@ -6965,13 +6996,21 @@ class FCMChatWidget extends MovieClip {
 
         var viewportWidth:Float = _logTf.width;
         var newKeys:Array<String> = visibleRecordKeys(visibleRecords);
-        // Incremental append: a matching committed prefix is reparented as-is so
-        // burst tail-appends only construct the genuinely new suffix rows.
+        // Incremental render: unchanged committed rows are reparented as-is so only
+        // trimmed, changed or new rows are constructed.
         var reuseCount:Int = 0;
-        if (snapshotMatchesCommitted(newKeys, viewportWidth)) {
-            reuseCount = FcmFeedPlan.prefixReuseCount(_renderedRecordKeys, newKeys);
-            if (reuseCount > _feedRows.length) reuseCount = _feedRows.length;
+        var reuseOffset:Int = 0;
+        if (snapshotContextMatches(viewportWidth)) {
+            var offset:Int = FcmFeedPlan.headTrimOffset(_renderedRecordKeys, newKeys);
+            if (offset >= 0) {
+                reuseOffset = offset;
+                reuseCount = FcmFeedPlan.windowReuseCount(_renderedRecordKeys, newKeys, offset);
+                if (reuseOffset + reuseCount > _feedRows.length) {
+                    reuseCount = Std.int(Math.max(0, _feedRows.length - reuseOffset));
+                }
+            }
         }
+        _perf.noteRows(visibleRecords.length - reuseCount, reuseCount);
         var stagingLayer:Sprite = obtainStagingLayer();
         _pendingFeedContentLayer = stagingLayer;
         _feedLayer.addChild(stagingLayer);
@@ -6979,10 +7018,12 @@ class FCMChatWidget extends MovieClip {
         var contentY:Float = 0;
         if (reuseCount > 0 && _feedContentLayer != null) {
             for (i in 0...reuseCount) {
-                var kept:FeedRowView = _feedRows[i];
-                // Do not reparent yet: these rows remain in the visible committed
-                // layer until commitFeedSnapshot performs the synchronous swap.
-                stagingRows.push(kept);
+                var kept:FeedRowView = _feedRows[reuseOffset + i];
+                // Do not reparent or move yet: these rows remain in the visible committed
+                // layer until commitFeedSnapshot performs the synchronous swap. A copy
+                // carries the new position so the committed row keeps its old one.
+                stagingRows.push({ view: kept.view, contentY: contentY, height: kept.height,
+                    textField: kept.textField, bodyOffset: kept.bodyOffset, linkUrl: kept.linkUrl });
                 contentY += kept.height + FEED_ROW_GAP;
             }
         }
@@ -6991,6 +7032,7 @@ class FCMChatWidget extends MovieClip {
         var remaining:Int = visibleRecords.length - reuseCount;
         // Small feeds render synchronously; larger feeds spend a bounded slice per timer turn.
         if (remaining <= _renderSliceSize) {
+            var tSyncStart:Float = flash.Lib.getTimer();
             var customNameColors:Int = 0;
             for (idx in reuseCount...visibleRecords.length) {
                 var rec:ChatRecord = visibleRecords[idx];
@@ -7004,7 +7046,7 @@ class FCMChatWidget extends MovieClip {
                 contentY += rendered.height + FEED_ROW_GAP;
             }
             zfeLog("info", "name-colors", "rows=" + visibleRecords.length + " differentFromTheme=" + customNameColors
-                + " reused=" + reuseCount);
+                + " reused=" + reuseCount + " trimmed=" + reuseOffset);
             if (_bScrolling && _newWhileScrolled > 0) {
                 var notice:FeedRowView = buildFeedNoticeRow(
                     "v " + _newWhileScrolled + " new - wheel down or F11 Scroll to newest", viewportWidth);
@@ -7015,7 +7057,8 @@ class FCMChatWidget extends MovieClip {
                 contentY += notice.height + FEED_ROW_GAP;
             }
             _renderPending = true;
-            commitFeedSnapshot(renderToken, stagingLayer, stagingRows, contentY, newKeys, viewportWidth, reuseCount);
+            commitFeedSnapshot(renderToken, stagingLayer, stagingRows, contentY, newKeys, viewportWidth, reuseCount, reuseOffset);
+            _perf.noteRenderTurn(flash.Lib.getTimer() - tSyncStart);
         } else {
             // Chunked path — bounded rows per timer turn based on the Windows 10 frame-time trace.
             // The slice size adapts to measured construction cost to hold the UI-work budget.
@@ -7062,7 +7105,9 @@ class FCMChatWidget extends MovieClip {
                     _pendingContentY = pendingContentY;
                 }
                 renderedCount = end;
-                _renderSliceSize = FcmFeedPlan.nextSliceSize(_renderSliceSize, flash.Lib.getTimer() - sliceStart);
+                var sliceMs:Float = flash.Lib.getTimer() - sliceStart;
+                _perf.noteRenderTurn(sliceMs);
+                _renderSliceSize = FcmFeedPlan.nextSliceSize(_renderSliceSize, sliceMs);
                 if (renderedCount < pendingRecords.length) {
                     stopSliceTimer();
                     _sliceTimer = new Timer(1, 1);
@@ -7084,7 +7129,7 @@ class FCMChatWidget extends MovieClip {
                     }
                 } else {
                     zfeLog("info", "name-colors", "rows=" + pendingRecords.length + " differentFromTheme=" + customNameColorsChunk
-                        + " reused=" + reuseCount + " slice=" + _renderSliceSize
+                        + " reused=" + reuseCount + " trimmed=" + reuseOffset + " slice=" + _renderSliceSize
                         + " sliced render dt=" + (flash.Lib.getTimer() - tChunkStart) + "ms");
                     var contentY:Float = pendingContentY;
                     if (_bScrolling && _newWhileScrolled > 0) {
@@ -7097,7 +7142,7 @@ class FCMChatWidget extends MovieClip {
                         contentY += notice.height + FEED_ROW_GAP;
                     }
                     stopSliceTimer();
-                    commitFeedSnapshot(renderToken, stagingLayer, stagingRows, contentY, newKeys, viewportWidth, reuseCount);
+                    commitFeedSnapshot(renderToken, stagingLayer, stagingRows, contentY, newKeys, viewportWidth, reuseCount, reuseOffset);
                     var dt:Float = flash.Lib.getTimer() - tChunkStart;
                     if (dt > 80) zfeLog("info", "render", "sliced render complete dt=" + dt + "ms rows=" + pendingRecords.length);
                 }

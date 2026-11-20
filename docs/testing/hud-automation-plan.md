@@ -310,6 +310,13 @@ reconnect and stay queued. Finally, an accepted send whose echo arrived must nev
 backdating the send. Whether a real xScal/ZFE reconnect restores a dead native socket remains
 in-game acceptance.
 
+The provider-paired `feed-reuse` scenario (2.10.154) checks the poll interval (xScal
+`xscalPollMs` 1000 ms, ZFE `pollMs`) and that unchanged feed rows are kept as the same display
+objects at their laid-out positions. An optimistic own send must keep every earlier row, its
+authoritative echo must rebuild only that row, and a ring-buffer trim (`maxMessages` reached) must
+drop the head row and build only the new row. Ruffle cannot measure the game's frame times; the
+widget's once-a-minute `perf` log line and an in-game MangoHud capture cover that.
+
 Native acceptance remains required on ZFE and xScal: select General, send `/t message`,
 `/i message`, and `/e message`, then confirm each destination receives one message
 while General stays selected. Send plain text and confirm General receives it. Enter
