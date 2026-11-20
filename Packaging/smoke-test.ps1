@@ -84,7 +84,9 @@ if ($IsLinux -and -not $UserDataDir) {
     $UserDataDir = $ownedProfile
 }
 if ($UserDataDir) {
-    if ($Artifact -eq "Portable") { throw "Portable smoke uses its adjacent FCMData profile, not UserDataDir" }
+    # Windows portable uses its adjacent FCMData profile. On Linux every artifact is the
+    # AppImage, so the throwaway profile applies to the portable step too.
+    if ($Artifact -eq "Portable" -and -not $IsLinux) { throw "Portable smoke uses its adjacent FCMData profile, not UserDataDir" }
     $UserDataDir = [System.IO.Path]::GetFullPath($UserDataDir)
     $logDir = Join-Path $UserDataDir "logs"
 }
