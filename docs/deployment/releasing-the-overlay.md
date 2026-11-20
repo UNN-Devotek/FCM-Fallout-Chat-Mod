@@ -102,7 +102,10 @@ pwsh -NoProfile -File Packaging/release.ps1 -Version X.Y.Z -SkipBuild -ReleaseNo
 ```
 
 OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows`):
-- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
+- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads that run's profile log; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. On Linux it uses a throwaway profile unless `-UserDataDir` is given, so an installed overlay's profile
+and single-instance lock are never shared. Cleanup signals only the launched process and its descendants
+(Linux PID tree / `taskkill /T`), never anything matched by name, so a running installed overlay and
+`Fallout76` are never touched.
 - **`release.ps1`** uses `ssh`/`scp` (not `ssh.exe`/`scp.exe`) and runs the child gate scripts via `pwsh` on Linux, `powershell.exe` on Windows.
 - **`package-downloads.ps1`** stages ZIPs under `DistDir` (cross-platform; not a Windows temp path).
 
@@ -314,7 +317,9 @@ clearly optional folder with separate ZFE/xScal sections. The Install page prese
 the portable ZIP next to the installer; packaging alone does not publish or install.
 
 The pinned bridge candidate for the 1.4.3 / HUD 2.10.151 release is **0.2.19 PROD**.
-Its ZIP SHA-256 is `c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f`;
+The original pinned ZIP was lost; for 1.4.4 (2026-11-20) it was rebuilt from the exact files the
+1.4.3 downloads shipped under `Optional FCM Bridge/` (same BA2), with fixed entry timestamps.
+Its ZIP SHA-256 is `b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47`;
 the embedded BA2 SHA-256 is `47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`.
 Keep the validated ZIP: the release pin identifies this exact archive.
 

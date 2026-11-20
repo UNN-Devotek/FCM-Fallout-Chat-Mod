@@ -173,7 +173,7 @@ def main() -> None:
         assert marker in package_nexus, f"Nexus package helper is missing: {marker}"
     assert '"-BridgeZip", $BridgeZip' in release
     for script in (package_downloads, package_nexus):
-        assert "c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f" in script
+        assert "b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47" in script
     for script in (package_downloads, package_nexus):
         assert "'0.2.8'" not in script and "0.2.8 candidate" not in script
         assert "'0.2.19'" in script
@@ -181,6 +181,10 @@ def main() -> None:
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
     assert '$env:ELECTRON_RUN_AS_NODE = $null' in smoke
+    # Never kill by name: an installed overlay runs the same binary.
+    assert 'pkill' not in smoke
+    assert 'Get-OwnedProcessTree $proc.Id' in smoke
+    assert '$ownedProfile = Join-Path $tmpRoot ("fcm-smoke-"' in smoke
     for marker in ('[ValidateSet("Default", "Portable", "QA")]', 'Fallout Chat Mod Portable $Version.exe', 'FCMData\\logs'):
         assert marker in smoke, f"portable smoke gate is missing: {marker}"
     for marker in ('if ($Artifact -eq "QA")', 'Fallout Chat Mod QA.exe', 'Fallout Chat Mod QA\\logs'):

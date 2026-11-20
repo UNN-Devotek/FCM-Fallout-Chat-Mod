@@ -11,7 +11,7 @@ $overlayDir = Join-Path $repoRoot 'cross-platform-overlay'
 if (-not $DistDir) { $DistDir = Join-Path $overlayDir 'dist-electron' }
 $installDir = Join-Path $overlayDir 'assets/install'
 $bridgeTemplate = Join-Path $repoRoot 'game-mods/FCMBridge/hudmodloader-bridge/INSTALL.template.txt'
-$expectedBridgeZipSha256 = 'c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f'
+$expectedBridgeZipSha256 = 'b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47'
 $expectedBridgeBa2Sha256 = '47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45'
 
 if (-not (Test-Path -LiteralPath $BridgeZip)) { throw "Bridge ZIP not found: $BridgeZip" }
