@@ -117,6 +117,10 @@ function Import-DotEnv($path) {
 $repoRootForEnv = Split-Path $PSScriptRoot -Parent
 Import-DotEnv (Join-Path $repoRootForEnv ".env")
 Import-DotEnv (Join-Path $repoRootForEnv ".env.local")
+# Parameter defaults are evaluated before the dotenv import above, so resolve the
+# container from the now-loaded environment when it was not passed explicitly.
+if (-not $ContainerName) { $ContainerName = $env:FCM_BACKEND_CONTAINER }
+if (-not $ContainerName) { $ContainerName = [Environment]::GetEnvironmentVariable('FCM_BACKEND_CONTAINER','User') }
 
 # A release target is intentionally selected by a human operator. Do not infer
 # it from which artifacts happened to be built: a HUD package can be rebuilt

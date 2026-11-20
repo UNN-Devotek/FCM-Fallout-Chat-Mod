@@ -71,8 +71,22 @@ if ($IsLinux) {
         $exe = Join-Path $winUnpacked "Fallout Chat Mod.exe"
     }
 }
+# On Linux an installed overlay may be running from ~/.config/Fallout Chat Mod. Sharing that
+# profile would hit its single-instance lock (the test instance exits and focuses the user's
+# overlay) and mix its log lines into this run. Always use a throwaway profile unless the
+# caller supplies one.
+$ownedProfile = $null
+if ($IsLinux -and -not $UserDataDir) {
+    $tmpRoot = $env:TMPDIR
+    if (-not $tmpRoot) { $tmpRoot = "/tmp" }
+    $ownedProfile = Join-Path $tmpRoot ("fcm-smoke-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $ownedProfile -Force | Out-Null
+    $UserDataDir = $ownedProfile
+}
 if ($UserDataDir) {
-    if ($Artifact -eq "Portable") { throw "Portable smoke uses its adjacent FCMData profile, not UserDataDir" }
+    # Windows portable uses its adjacent FCMData profile. On Linux every artifact is the
+    # AppImage, so the throwaway profile applies to the portable step too.
+    if ($Artifact -eq "Portable" -and -not $IsLinux) { throw "Portable smoke uses its adjacent FCMData profile, not UserDataDir" }
     $UserDataDir = [System.IO.Path]::GetFullPath($UserDataDir)
     $logDir = Join-Path $UserDataDir "logs"
 }
@@ -87,6 +101,28 @@ if (-not $exe -or -not (Test-Path $exe)) {
     Write-Error "[smoke] Launchable binary not found: $exe"
     Write-Host "SMOKE TEST: FAIL"
     exit 1
+}
+
+# Every process started by this run: the launched PID and all of its descendants. Cleanup
+# signals exactly these PIDs, so an installed overlay (same binary name) is never touched.
+function Get-OwnedProcessTree([int]$rootPid) {
+    $children = @{}
+    foreach ($row in (& ps -eo "pid=,ppid=" 2>$null)) {
+        $parts = ($row.Trim() -split '\s+')
+        if ($parts.Count -lt 2) { continue }
+        $childPid = [int]$parts[0]; $parentPid = [int]$parts[1]
+        if (-not $children.ContainsKey($parentPid)) { $children[$parentPid] = New-Object System.Collections.Generic.List[int] }
+        $children[$parentPid].Add($childPid)
+    }
+    $tree = New-Object System.Collections.Generic.List[int]
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    $queue.Enqueue($rootPid)
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        $tree.Add($current)
+        if ($children.ContainsKey($current)) { foreach ($child in $children[$current]) { $queue.Enqueue($child) } }
+    }
+    return $tree
 }
 
 # Record cutoff just BEFORE launch so we only inspect this run's lines.
@@ -172,16 +208,17 @@ catch {
     $exitCode = 1
 }
 finally {
-    # ALWAYS kill the test instance. NEVER touch Fallout76 (that is the game): on Linux we
-    # match the overlay binary name "fallout-chat-mod" (hyphenated, lowercase) which never
-    # matches the game ("Fallout76") nor this pwsh process (path has "Fallout Chat Mod").
+    # ALWAYS kill the test instance, and ONLY the test instance. Never match by process
+    # name: an installed overlay runs the same binary, and Fallout76 must never be touched.
     if ($IsLinux) {
-        # Match the process NAME (comm), NOT the full cmdline: pkill -f would also match the
-        # runner if its path contains "fallout-chat", whereas comm matching only hits the
-        # overlay's own process ("fallout-chat-mo", truncated) and never pwsh/bash/Fallout76.
-        Write-Host "[smoke] Killing test overlay (kill $($proc.Id) + pkill fallout-chat)..."
-        if ($proc -and $proc.Id) { try { & kill $proc.Id 2>$null } catch { } }
-        try { & pkill fallout-chat 2>$null } catch { }
+        if ($proc -and $proc.Id) {
+            $owned = Get-OwnedProcessTree $proc.Id
+            Write-Host "[smoke] Killing test overlay process tree $($proc.Id) ($($owned.Count) process(es))..."
+            foreach ($ownedPid in $owned) { try { & kill -TERM $ownedPid 2>$null } catch { } }
+            Start-Sleep -Seconds 3
+            foreach ($ownedPid in $owned) { try { & kill -KILL $ownedPid 2>$null } catch { } }
+        }
+        if ($ownedProfile) { Remove-Item -LiteralPath $ownedProfile -Recurse -Force -ErrorAction SilentlyContinue }
     } elseif ($proc -and $proc.Id) {
         Write-Host "[smoke] Killing test instance PID tree $($proc.Id)..."
         try { & taskkill /PID $proc.Id /T /F 2>$null | Out-Null } catch { }

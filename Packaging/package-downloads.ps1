@@ -86,7 +86,7 @@ if (-not (Test-Path $hudPackage))   { Fail "Missing: $hudPackage" }
 if (-not (Test-Path $portablePackage)) { Fail "Missing: $portablePackage" }
 if (-not (Test-Path $bridgeInstallTemplate)) { Fail "Missing: $bridgeInstallTemplate" }
 if (-not (Test-Path -LiteralPath $BridgeZip)) { Fail "Validated PROD bridge ZIP not found: $BridgeZip" }
-$expectedBridgeZipSha256 = "c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f"
+$expectedBridgeZipSha256 = "b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47"
 $bridgeZipSha256 = (Get-FileHash -LiteralPath $BridgeZip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($bridgeZipSha256 -ne $expectedBridgeZipSha256) {
     Fail "Bridge ZIP is not the reviewed 0.2.19 candidate (expected $expectedBridgeZipSha256, got $bridgeZipSha256)"
