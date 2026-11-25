@@ -2235,11 +2235,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "b212919fa8af61f2341525146e2520b28b8e84677d13f01ad0a583ab6d1e9812",
-      "ownerFingerprint": "952237420a7a502c95c0951bc057daf84161e57b1c836ad89750df5150029c85",
+      "ownerFingerprint": "5c53eb2df0ffaabe8bcbe2210a5db6b280723370d69ba7233d8dc8faf9dbbfe3",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 42,
+      "originalLine": 47,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "actorUserId",
@@ -2442,7 +2442,7 @@
               "file": "backend/src/controllers/moderationController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "655e2b71d8a5a9ffea99865f1564c9dc45d71f39ddbc7f6310b30a28112f5fb9",
+            "fingerprint": "0be86bd892b2e586865c4062a177fb4d9d81cc4832e2a3116319f59cc8e55311",
             "calls": []
           }
         ]
@@ -2458,11 +2458,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "fb348d3b8cda486ed24ceabbe376f2f095e6198c85de7cba196d6ddd120cb5c5",
-      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
+      "ownerFingerprint": "bb3d8f03add80bffb11bd12a8698e8ed2d851be9159b96013b544c1658e63800",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 293,
+      "originalLine": 296,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -2489,11 +2489,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "fb348d3b8cda486ed24ceabbe376f2f095e6198c85de7cba196d6ddd120cb5c5",
-      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
+      "ownerFingerprint": "bb3d8f03add80bffb11bd12a8698e8ed2d851be9159b96013b544c1658e63800",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 331,
+      "originalLine": 334,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -2520,11 +2520,11 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "8780494da354b1484c29382a70889a03c8c5d28524ec4503912dedf9532ccd87",
-      "ownerFingerprint": "994cc1408e82ead5af27bb52807afc102384b4cad3ba15cbb68d0a8d9c380d45",
+      "ownerFingerprint": "bb3d8f03add80bffb11bd12a8698e8ed2d851be9159b96013b544c1658e63800",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 359,
+      "originalLine": 362,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "updateSettings",
@@ -4378,7 +4378,7 @@
               "file": "backend/src/controllers/usersController.ts",
               "owner": "<module>"
             },
-            "fingerprint": "9775109ce6f3116c05fa4ea7f65c8102fc08c268b3780b7af554e2b4923da128",
+            "fingerprint": "d98209bc4e9187573a52c505c1b2175d66a15bfc3b61ff87d2bf0d5b57c958a3",
             "calls": []
           }
         ]
@@ -7451,9 +7451,9 @@
       },
       "family": "multipart-sdk-configuration",
       "operationFingerprint": "2163839acb6da11f7faf9db3a371396dfccee512235e1b607163c6719727688e",
-      "ownerFingerprint": "5030246f27f06f0d198d18639cb4615bdd1951a7e2fed57812ac68948746e891",
+      "ownerFingerprint": "7b6296b35e943a72a133e5202bcd1b48945f1c52481569489b2178e617fd4f01",
       "boundaries": [],
-      "originalLine": 11,
+      "originalLine": 12,
       "sdkReference": "@multer:default",
       "disposition": "optional",
       "reason": "This concrete middleware/configuration uses memoryStorage to read bounded multipart buffers. It performs no filesystem/storage publication. Actual controller S3/SQL accepted writes have separate required rows and HTTP callbacks retain unfinished parsing; source/argument fingerprints reject a change to disk/destination storage.",
@@ -7469,9 +7469,9 @@
       },
       "family": "multipart-memory-storage",
       "operationFingerprint": "14c3843963baab46af73a42d3717d318ac90615f2ec233b4d42202a987a74387",
-      "ownerFingerprint": "5030246f27f06f0d198d18639cb4615bdd1951a7e2fed57812ac68948746e891",
+      "ownerFingerprint": "7b6296b35e943a72a133e5202bcd1b48945f1c52481569489b2178e617fd4f01",
       "boundaries": [],
-      "originalLine": 12,
+      "originalLine": 13,
       "sdkReference": "@multer:default.memoryStorage",
       "disposition": "optional",
       "reason": "This concrete middleware/configuration uses memoryStorage to read bounded multipart buffers. It performs no filesystem/storage publication. Actual controller S3/SQL accepted writes have separate required rows and HTTP callbacks retain unfinished parsing; source/argument fingerprints reject a change to disk/destination storage.",
@@ -7487,9 +7487,9 @@
       },
       "family": "multipart-sdk-middleware-candidate",
       "operationFingerprint": "a01500b4931ac885f0b4a3f8e07308d1c35e47f452451c15958d8013025b684e",
-      "ownerFingerprint": "5030246f27f06f0d198d18639cb4615bdd1951a7e2fed57812ac68948746e891",
+      "ownerFingerprint": "7b6296b35e943a72a133e5202bcd1b48945f1c52481569489b2178e617fd4f01",
       "boundaries": [],
-      "originalLine": 28,
+      "originalLine": 34,
       "sdkReference": "@multer:default().array",
       "disposition": "optional",
       "reason": "This concrete middleware/configuration uses memoryStorage to read bounded multipart buffers. It performs no filesystem/storage publication. Actual controller S3/SQL accepted writes have separate required rows and HTTP callbacks retain unfinished parsing; source/argument fingerprints reject a change to disk/destination storage.",
@@ -21046,6 +21046,56 @@
       }
     },
     {
+      "writerId": "9e79f26e76008763213499c4",
+      "identity": {
+        "file": "backend/src/services/hudAutoEventMute.ts",
+        "owner": "setGlobalHudAutoEventMute",
+        "callee": "tx.moderationSetting.createMany",
+        "occurrence": 1
+      },
+      "family": "prisma-model-mutation",
+      "operationFingerprint": "d35a63c4c3e9d2781c6febe3460a81952596b171676e09c8668ca3e584b852fc",
+      "ownerFingerprint": "abfc7d1ecc0566fdc8b2e10cc1d289259865ec48b5b8d02da078fcc02e6ac054",
+      "boundaries": [
+        "runRequiredMutation",
+        "runRequiredTransaction"
+      ],
+      "originalLine": 20,
+      "sdkReference": "tx.moderationSetting.createMany",
+      "disposition": "required",
+      "reason": "Initialize the server-wide HUD auto-event mute inside its bound moderation transaction. Duplicate initialization is a counted no-change outcome.",
+      "caller": "setGlobalHudAutoEventMute",
+      "transactionClient": "tx",
+      "resultContract": "isRowCountNoChange",
+      "confirmedRefusal": "isPrismaAtomicRefusal",
+      "verification": "backend/tests/moderationActionsService.test.js exercises initialization, duplicate requests and a single audit per changed state."
+    },
+    {
+      "writerId": "f98cfb4525b51521f159924c",
+      "identity": {
+        "file": "backend/src/services/hudAutoEventMute.ts",
+        "owner": "setGlobalHudAutoEventMute",
+        "callee": "tx.moderationSetting.updateMany",
+        "occurrence": 1
+      },
+      "family": "prisma-model-mutation",
+      "operationFingerprint": "83915b68e68d244616b68f91e439a5e26862260eeb08794f833bf616485cb21a",
+      "ownerFingerprint": "abfc7d1ecc0566fdc8b2e10cc1d289259865ec48b5b8d02da078fcc02e6ac054",
+      "boundaries": [
+        "runRequiredMutation",
+        "runRequiredTransaction"
+      ],
+      "originalLine": 24,
+      "sdkReference": "tx.moderationSetting.updateMany",
+      "disposition": "required",
+      "reason": "Change the server-wide HUD auto-event mute and await its required audit inside the same bound moderation transaction.",
+      "caller": "setGlobalHudAutoEventMute",
+      "transactionClient": "tx",
+      "resultContract": "isRowCountNoChange",
+      "confirmedRefusal": "isPrismaAtomicRefusal",
+      "verification": "backend/tests/moderationActionsService.test.js exercises global mute and unmute, audit attribution and staff permissions."
+    },
+    {
       "writerId": "ad48a73e12df73c562b429fa",
       "identity": {
         "file": "backend/src/services/moderationActionsService.ts",
@@ -21115,7 +21165,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21191,7 +21241,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21267,7 +21317,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21343,7 +21393,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21419,7 +21469,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21495,7 +21545,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21571,7 +21621,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21647,7 +21697,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -21723,7 +21773,7 @@
               "file": "backend/src/services/moderationActionsService.ts",
               "owner": "<module>"
             },
-            "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+            "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
             "calls": []
           }
         ]
@@ -22089,6 +22139,31 @@
       },
       "verification": "Existing behavioral regression suites retained; current caller/required owner/provenance bound in the required CI policy. Fresh full spec and quality review remain separate gates.",
       "sdkReference": "@prisma:default.user.updateMany"
+    },
+    {
+      "writerId": "c1d18535665a166859d5da58",
+      "identity": {
+        "file": "backend/src/services/moderationActionsService.ts",
+        "owner": "setHudAutoEventsMuted",
+        "callee": "tx.user.updateMany",
+        "occurrence": 1
+      },
+      "family": "prisma-model-mutation",
+      "operationFingerprint": "8b873cd872b5d140843cae8315e16de9bcc76b5e7347ab49c1e7c0471bd908ae",
+      "ownerFingerprint": "dfc355a288724ffc4d166d335c276dda7727bf64557fdcd2b1892443c22bbef7",
+      "boundaries": [
+        "runRequiredMutation",
+        "runRequiredTransaction"
+      ],
+      "originalLine": 390,
+      "sdkReference": "tx.user.updateMany",
+      "disposition": "required",
+      "reason": "Change one account’s HUD auto-event mute and await its required audit inside the same bound moderation transaction.",
+      "caller": "setHudAutoEventsMuted",
+      "transactionClient": "tx",
+      "resultContract": "isRowCountNoChange",
+      "confirmedRefusal": "isPrismaAtomicRefusal",
+      "verification": "backend/tests/moderationActionsService.test.js exercises both states, protected and missing accounts, no-change and staff permissions."
     },
     {
       "writerId": "cb0c4196c627dd7a4b07424d",
@@ -24418,11 +24493,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "727e98e5f51645fd64a4d546ff1a43e56b1edaa33699c2b7a33d1d3aa692a5a1",
-      "ownerFingerprint": "a3473b1ecae7e0e90013632cd90c927557b2b578e2e4e2726b45d8df17d63b01",
+      "ownerFingerprint": "27d56c59f779cdf42f5eece7487276795c150a8c0e57d4d7a5f2cde7615e4632",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1230,
+      "originalLine": 1238,
       "sdkReference": "@redis:getRedisClient().publish",
       "disposition": "required",
       "reason": "Actual accepted command/audit or coupled session cleanup discovery has its own retained required disposition before its caller catch; completed read/no-row outcomes do not invent committed stages.",
@@ -24438,11 +24513,11 @@
       },
       "family": "redis-sdk-command-candidate",
       "operationFingerprint": "e7f95af699e53a6d1b63c0ee6700e745e494c7879436d848be3b2bbe5a507a8e",
-      "ownerFingerprint": "a3473b1ecae7e0e90013632cd90c927557b2b578e2e4e2726b45d8df17d63b01",
+      "ownerFingerprint": "27d56c59f779cdf42f5eece7487276795c150a8c0e57d4d7a5f2cde7615e4632",
       "boundaries": [
         "runRequiredMutation"
       ],
-      "originalLine": 1303,
+      "originalLine": 1311,
       "disposition": "required",
       "reason": "Explicit current caller-owned admission, awaited lifecycle and unresolved required disposition. Operation/result/refusal predicates, transaction-client binding and intervening catches are bound to the current AST; behavioral probes supplement the guard.",
       "caller": "handleSend",
@@ -24560,7 +24635,7 @@
               "file": "backend/src/services/relay/relayHandler.ts",
               "owner": "<module>"
             },
-            "fingerprint": "f2e0c84d3bd14c3c0cdc45413518f98838e4e69c20ea4615b393b8d3eeb6ec99",
+            "fingerprint": "308a42f681941eb3d83c00f58a2c0e6523e9f9b5c79b3f6f3952cd82a7f13e21",
             "calls": []
           }
         ]
@@ -32202,7 +32277,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "7543f74c0c50dbcc099bc6749bd7922d76ee819b0f129d762c9c9bb90186436f",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32234,7 +32309,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "e0af585720c96b8f921cfcc63eca47f95485a90aa9f5200d4c9646e6a91de16c",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32266,7 +32341,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "74af6b9a36284379fbbc2c61bb9b349aa5b31515acd2461feaa0921fd2d18088",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32298,7 +32373,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "9f5ae512ae88968906d220a1bdce04fd4ea75726690aa60ebb96d687c03b29a1",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32330,7 +32405,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "7eece6f6547e2be79b83ff2b5217484d497610fd3b0fd5f4039689296e2953ae",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32362,7 +32437,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "2ff8940f3bb58293dc8ab0e81ffb7610d9daf9953a8175cad7ae8ac1bd89b18a",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32394,7 +32469,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "59a600f45724742f8bc2a90388b8b014db57f2e8b103600c445e5db0370e5002",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32426,7 +32501,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "baf2b5a195ea01debcc9ba84450f670e1c562393ba24f45b4eceabf3d306f047",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32458,7 +32533,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "10756ae8a47fde0631132b5d574fb3d1a5550380f41cb3de93ef46a7297201fe",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32490,7 +32565,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "1ba751ff4e8e53de8f49c91e417fb25a4b51a22021b563f725c81c2968e39877",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32522,7 +32597,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "be35b94fa75f56a1742eec863e8b5dd8ce79fe811dc57dd246f35855a94a128d",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32554,7 +32629,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "96504f4d21f21590ed600c529df809037efa04d15a9e7ade150396d4aba30418",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32586,7 +32661,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "9cac7521904073379dfa3c277bbd23a8eb72a2d312b928b29728642b7ca9335f",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32618,7 +32693,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "af525a57b85270c08f05bee13340920e4c95c23970b84dc450d4a51e92fd71c4",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32650,7 +32725,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "6d779da27ef5a6f8af6f18419f5812e6419267e2f0b68bab60477e75e52c9c28",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32682,7 +32757,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "612d85740a3524127d35c4e28f0adde746dd70b7912471f9541972cf8579a558",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32714,7 +32789,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "a4770aecaad9389657c9e30f85dedf2674c984ceecb4a958e40267c5d151e44f",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32746,7 +32821,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "629b233beb5e406749de0d3c2d70e711e424b0580069e9694da2d41b8b61f2f2",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32778,7 +32853,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "cb01f3cad4454fca3baaddf76de9935d39f4337d12e6e509e8c3c7f9b2d36d73",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32810,7 +32885,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "3f75c5047dbbc68e61a7ab783fb5392dd556dbc5b78e34a77279f749aae360b6",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32842,7 +32917,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "03234ba72efbc7c22f37724bd585559dcec3f464fdc5a2fbae413c11086bbab7",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32874,7 +32949,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "3f75c5047dbbc68e61a7ab783fb5392dd556dbc5b78e34a77279f749aae360b6",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32906,7 +32981,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "daed269ecb8a2ee16762fa38c3f34eaab149b06b7e3e94610728a0b81d5dbf76",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32938,7 +33013,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "3ac60b1899f89dcd4ca43ed42d2587007a614f8200ca38e18934ace378835a7e",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -32970,7 +33045,7 @@
       },
       "family": "prisma-sdk-mutation",
       "operationFingerprint": "24af6d6982e47b8dc687d285ef2aef58dacf0933e4180b6be52e49b165bdc583",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -33001,8 +33076,8 @@
         "occurrence": 1
       },
       "family": "prisma-sdk-mutation",
-      "operationFingerprint": "d8e64eee661a99ae1cdee6d76dfe4056e87c9cc05ca202bd8ed6b8ae48346264",
-      "ownerFingerprint": "c87c9925e5ae5c73a7b8a81828c51f36644d9b9b1d833528d3feb56abfd4caea",
+      "operationFingerprint": "622de6c4fc703a7e2922862a80eacb1a38b991aaf21a2e60bf85366aa9b8ec8b",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
       "boundaries": [
         "runRequiredMutation"
       ],
@@ -33023,6 +33098,30 @@
       },
       "verification": "Existing behavioral regression suites retained; current caller/required owner/provenance bound in the required CI policy. Fresh full spec and quality review remain separate gates.",
       "sdkReference": "@prisma:Prisma.TransactionClient.user.delete"
+    },
+    {
+      "writerId": "bef90cf67323bd17afe6b6e9",
+      "identity": {
+        "file": "backend/src/utils/mergeUser.ts",
+        "owner": "mergeUserInto",
+        "callee": "tx.user.updateMany",
+        "occurrence": 1
+      },
+      "family": "prisma-sdk-mutation",
+      "operationFingerprint": "a7a121fc589aa4baf089132a1e21c206e13252b136b157220fef6ae3ab95a807",
+      "ownerFingerprint": "1d6f3239a8e2b02ee3a3c3da55c4412cf4f5df0359233ad615c5a89b0cd6c693",
+      "boundaries": [
+        "runRequiredMutation"
+      ],
+      "originalLine": 126,
+      "sdkReference": "@prisma:Prisma.TransactionClient.user.updateMany",
+      "disposition": "required",
+      "reason": "Keep the HUD auto-event restriction when its pairing tokens move to the canonical user, using the owning identity transaction.",
+      "caller": "mergeUserInto",
+      "transactionClient": "tx",
+      "resultContract": "isRowCountNoChange",
+      "confirmedRefusal": "isPrismaAtomicRefusal",
+      "verification": "backend/tests/mergeUser.test.js exercises the repoint, removal of the duplicate account and retention of its HUD auto-event mute."
     },
     {
       "writerId": "a2191ce1ba3ba95d89fae936",
@@ -35745,7 +35844,7 @@
         "file": "backend/src/controllers/moderationActionsController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "276e0592fd163b35ebe06777e71a0ecb5e41e04a46bf06f97a64816e8d5435e2",
+      "fingerprint": "ebfa2b889a6860dc183c3f7932db333a231293acbc93212de149539d6a20d9b4",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -35753,7 +35852,7 @@
         "file": "backend/src/controllers/moderationController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "655e2b71d8a5a9ffea99865f1564c9dc45d71f39ddbc7f6310b30a28112f5fb9",
+      "fingerprint": "0be86bd892b2e586865c4062a177fb4d9d81cc4832e2a3116319f59cc8e55311",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -35817,7 +35916,7 @@
         "file": "backend/src/controllers/usersController.ts",
         "owner": "<module>"
       },
-      "fingerprint": "9775109ce6f3116c05fa4ea7f65c8102fc08c268b3780b7af554e2b4923da128",
+      "fingerprint": "d98209bc4e9187573a52c505c1b2175d66a15bfc3b61ff87d2bf0d5b57c958a3",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -35897,7 +35996,7 @@
         "file": "backend/src/middleware/auth.ts",
         "owner": "<module>"
       },
-      "fingerprint": "a08943363056928076ccc9560176380f19e2d89516ffb34b926f91b6bbf3e9ba",
+      "fingerprint": "46a3ac687fc23f1f7d471071a0ba21683a2e428a92010f0bf6a70a1fc3a5754a",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36358,10 +36457,18 @@
     },
     {
       "identity": {
+        "file": "backend/src/services/hudAutoEventMute.ts",
+        "owner": "<module>"
+      },
+      "fingerprint": "58952c03a2943fcba036279b5514f1fa2e31ce987f0086db71dddd13070566e3",
+      "contract": "Server-wide HUD auto-event mute lookup and required transaction, bound mutation and audit imports."
+    },
+    {
+      "identity": {
         "file": "backend/src/services/moderationActionsService.ts",
         "owner": "<module>"
       },
-      "fingerprint": "2e49bca4f2ea743cd1fbb059ed768932600646227b0e96a774855f063f14e682",
+      "fingerprint": "145967c93fd0ec0d0b6ef678fe7cedf7fa9a884ba5c38b2690df6bc6e11ad4ca",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36465,7 +36572,7 @@
         "file": "backend/src/services/relay/relayHandler.ts",
         "owner": "<module>"
       },
-      "fingerprint": "f2e0c84d3bd14c3c0cdc45413518f98838e4e69c20ea4615b393b8d3eeb6ec99",
+      "fingerprint": "308a42f681941eb3d83c00f58a2c0e6523e9f9b5c79b3f6f3952cd82a7f13e21",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36633,7 +36740,7 @@
         "file": "backend/src/utils/mergeUser.ts",
         "owner": "<module>"
       },
-      "fingerprint": "fd10089e3ab05dca0247c276e9ec625a69b53f30ab3149fc5044f3dcfb116160",
+      "fingerprint": "0f2c823baeed696bc66cb302829f5fd890b8dd83813a6b6fb2b6c0c3c2a58447",
       "contract": "Current whole-module semantic binding of writer imports, aliases, receiver initialization, callback registration/catches, required funnel implementation or CI runner/detector. Comment/line-only changes are ignored; semantic changes require explicit classification review and behavioral evidence."
     },
     {
@@ -36675,7 +36782,7 @@
         "file": "backend/src/routes/moderationActions.ts",
         "owner": "<module>"
       },
-      "fingerprint": "5030246f27f06f0d198d18639cb4615bdd1951a7e2fed57812ac68948746e891",
+      "fingerprint": "7b6296b35e943a72a133e5202bcd1b48945f1c52481569489b2178e617fd4f01",
       "contract": "reviewed-shared-source",
       "reason": "Concrete filesystem/Multer/frozen-read/required callback and CI proof module; every source/owner semantic change forces review."
     },
