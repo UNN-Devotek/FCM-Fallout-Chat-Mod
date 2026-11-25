@@ -173,6 +173,9 @@ jest.mock('../src/config/prisma', () => ({
     chatCommand: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    moderationSetting: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     report: {
       create: jest.fn().mockResolvedValue({ id: 'report-stub', createdAt: new Date('2026-01-01T00:00:00.000Z') }),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -1142,6 +1145,80 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('HUD auto-event mute applies immediately to every token linked to the account', async () => {
+    const { token } = await setupLinkedUser();
+    const secondDevice = await mintToken('SecondDevice');
+    markTokensLinked(secondDevice.userId, FAKE_FCM_USER_ID);
+    const otherPlayer = await mintToken('OtherPlayer');
+    const otherAccountId = 'fcm-other-account';
+    _userMap[otherAccountId] = { id: otherAccountId, hudAutoEventsMuted: false };
+    markTokensLinked(otherPlayer.userId, otherAccountId);
+    const body = 'Public Event: Scorched Earth [Reflective] Participants: 3';
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    const { ws, msgs } = await conn();
+    const announce = (deviceToken) => waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: deviceToken, channel: 'events', targetUserId: '', body }));
+    try {
+      expect(await announce(token)).toMatchObject({ success: true });
+      ingest.mockClear();
+      _userMap[FAKE_FCM_USER_ID].hudAutoEventsMuted = true;
+      for (const deviceToken of [token, secondDevice.token]) {
+        expect(await announce(deviceToken)).toMatchObject({ success: false, error: { code: 'hud_auto_events_muted' } });
+      }
+      expect(ingest).not.toHaveBeenCalled();
+      expect(await announce(otherPlayer.token)).toMatchObject({ success: true });
+      _userMap[FAKE_FCM_USER_ID].hudAutoEventsMuted = false;
+      expect(await announce(token)).toMatchObject({ success: true });
+      expect(ingest).toHaveBeenLastCalledWith(expect.objectContaining({ userId: FAKE_FCM_USER_ID, rawContent: body }));
+    } finally { ws.close(); }
+  });
+
+  test('HUD auto-event mute preserves ordinary chat, including a manually typed event prefix with a receipt', async () => {
+    const { token } = await setupLinkedUser();
+    _userMap[FAKE_FCM_USER_ID].hudAutoEventsMuted = true;
+    const { ws, msgs } = await conn();
+    const manualFrames = [
+      { channel: 'events', body: 'Anyone up for an event?' },
+      { channel: 'global', body: 'Public Event: Scorched Earth' },
+      { channel: 'events', body: 'Public Event: Scorched Earth', targetUserId: 'FCMOUT/1;i=manual-event-text;r=' },
+    ];
+    try {
+      for (const frame of manualFrames) {
+        expect(await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token, ...frame })))
+          .toMatchObject({ success: true });
+      }
+      expect(require('../src/services/ingestMessage').ingestMessage).toHaveBeenCalledTimes(manualFrames.length);
+    } finally { ws.close(); }
+  });
+
+  test('server-wide HUD auto-event mute blocks both accounts and preserves individual mutes when lifted', async () => {
+    const { token } = await setupLinkedUser();
+    const otherPlayer = await mintToken('OtherPlayer');
+    const otherAccountId = 'fcm-other-account';
+    _userMap[otherAccountId] = { id: otherAccountId };
+    markTokensLinked(otherPlayer.userId, otherAccountId);
+    const settings = require('../src/config/prisma').default.moderationSetting;
+    settings.findUnique.mockResolvedValueOnce({ value: 'true' }).mockResolvedValueOnce({ value: 'true' });
+
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    const { ws, msgs } = await conn();
+    const submit = (deviceToken, body = 'Public Event: Scorched Earth') => waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: deviceToken, channel: 'events', targetUserId: '', body }));
+    try {
+      for (const deviceToken of [token, otherPlayer.token]) {
+        expect(await submit(deviceToken)).toMatchObject({ success: false, error: { code: 'hud_auto_events_muted' } });
+      }
+      expect(ingest).not.toHaveBeenCalled();
+      expect(await submit(token, 'Anyone up for an event?')).toMatchObject({ success: true });
+      expect(settings.findUnique).toHaveBeenCalledTimes(2);
+
+      _userMap[FAKE_FCM_USER_ID].hudAutoEventsMuted = true;
+      settings.findUnique.mockResolvedValueOnce({ value: 'false' });
+      expect(await submit(otherPlayer.token)).toMatchObject({ success: true });
+      expect(await submit(token)).toMatchObject({ success: false, error: { code: 'hud_auto_events_muted' } });
+    } finally { ws.close(); }
+  });
+
   test('send with valid linked user and known channel → success', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
@@ -1567,11 +1644,11 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
-  test('HUD event shortcut publishes the resolved announcement to Events with private feedback', async () => {
+  test('manual HUD event shortcut publishes to Events with private feedback while HUD auto-events are muted', async () => {
     const prisma = require('../src/config/prisma').default;
     prisma.chatCommand.findMany.mockResolvedValueOnce([{
       id: 781, trigger: '/sbq', alias: null, description: 'Scorched Earth',
-      response: 'Scorched Earth event on this server.', actionType: 'announce',
+      response: 'Public Event: Scorched Earth', actionType: 'announce',
       targetChannelId: SLUG_TO_UUID.events, allowedChannelId: '00000000-0000-0000-0000-000000000001',
       cooldownSec: 30, enabled: true, requiresArgs: false,
       responseColor: null, relayToDiscord: true,
@@ -1581,7 +1658,7 @@ describe('relay WebSocket ops', () => {
       send(wsReg, { op: 'register', displayName: 'EventSender' }));
     wsReg.close();
     const actorId = '77777777-7777-4777-8777-777777777776';
-    _userMap[actorId] = { id: actorId, discordId: 'disc-event', isBanned: false, isMuted: false };
+    _userMap[actorId] = { id: actorId, discordId: 'disc-event', isBanned: false, isMuted: false, hudAutoEventsMuted: true };
     markTokensLinked(lastRawUserId(), actorId);
     const ingest = require('../src/services/ingestMessage').ingestMessage;
     ingest.mockClear();
@@ -1591,7 +1668,7 @@ describe('relay WebSocket ops', () => {
     expect(result).toMatchObject({ success: true, targetUserId: 'FCMHUD/1;g=Event%20announced%20in%20Events.' });
     expect(ingest).toHaveBeenCalledWith(expect.objectContaining({
       userId: actorId, channelId: SLUG_TO_UUID.events,
-      rawContent: 'Scorched Earth event on this server.', source: 'relay',
+      rawContent: 'Public Event: Scorched Earth', source: 'relay',
       suppressDiscordRelay: false,
     }));
     ingest.mockClear();

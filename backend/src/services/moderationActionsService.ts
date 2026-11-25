@@ -1,4 +1,4 @@
-import { createRequiredAudit, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation } from '../lib/requiredEffects';
+import { bindRequiredTransactionClient, createRequiredAudit, isPrismaAtomicRefusal, isRowCountNoChange, runRequiredBundle, runRequiredLookup, runRequiredEffect, runRequiredMutation, runRequiredTransaction } from '../lib/requiredEffects';
 /**
  * Core moderation actions: kick, mute, unmute, ban, reverseBan.
  *
@@ -380,6 +380,30 @@ export async function unmuteUser(targetId: string, actorId: string, reason: stri
   });
 }
 
+export async function setHudAutoEventsMuted(targetId: string, actorId: string, muted: boolean): Promise<boolean | null> {
+  await ensureNotProtected(targetId);
+
+  return runRequiredTransaction('moderation', 'hud-auto-events-mute:transaction',
+    { stage: 'transaction-completion-unconfirmed', rowId: targetId }, () => prisma.$transaction(async (tx) => {
+      bindRequiredTransactionClient(tx);
+      const { count } = await runRequiredMutation('moderation', 'hud-auto-events-mute:update',
+        { stage: 'primary-write-unconfirmed', rowId: targetId }, () => tx.user.updateMany({
+          where: { id: targetId, hudAutoEventsMuted: !muted },
+          data: { hudAutoEventsMuted: muted },
+        }), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+
+      if (count === 0) {
+        const target = await tx.user.findUnique({ where: { id: targetId }, select: { hudAutoEventsMuted: true } });
+        return target?.hudAutoEventsMuted ?? null;
+      }
+
+      await createRequiredAudit(tx.auditLog, {
+        data: { actorId, action: muted ? 'mute_hud_auto_events' : 'unmute_hud_auto_events', targetType: 'user', targetId },
+      }, {}, tx);
+      return muted;
+    }), { confirmedRollback: isPrismaAtomicRefusal });
+}
+
 export interface NewBanEvidence {
   type: 'text' | 'image';
   textContent?: string;
@@ -648,5 +672,5 @@ function formatDuration(ms: number): string {
   return `${Math.round(ms / 86_400_000)} days`;
 }
 
-export default { kickUser, muteUser, unmuteUser, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
-module.exports = { kickUser, muteUser, unmuteUser, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
+export default { kickUser, muteUser, unmuteUser, setHudAutoEventsMuted, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
+module.exports = { kickUser, muteUser, unmuteUser, setHudAutoEventsMuted, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };

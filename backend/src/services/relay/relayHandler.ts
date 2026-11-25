@@ -54,6 +54,7 @@ import { ingestMessage } from '../ingestMessage';
 import { getCommands, tryHandleCommand } from '../commandService';
 import { hudGiveawayCommand, hudGiveawayFeedback } from './hudGiveawayCommand';
 import { hudEventCommand } from './hudEventCommand';
+import { getGlobalHudAutoEventMute } from '../hudAutoEventMute';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
 import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
@@ -153,6 +154,8 @@ const RELAY_CONTROL_CHANNEL     = 'relay:control';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HISTORY_RESYNC_BIND_WINDOW_MS = 60_000;
+// The HUD's automatic public-event scan uses this prefix and an empty target in Events.
+const HUD_AUTO_EVENT_PREFIX = 'Public Event: ';
 // Share the process identity with websocket/handlers.ts. This lets the Redis
 // fallback skip an event that the direct same-process path already delivered.
 const relayInstanceId = INSTANCE_ID;
@@ -1266,7 +1269,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // identity.userId is relay TEXT — ban state lives on the FCM account (linkedUserId).
   const user = await prisma.user.findUnique({
     where: { id: identity.linkedUserId! },
-    select: { isBanned: true, isMuted: true, kickedUntil: true, discordId: true },
+    select: { isBanned: true, isMuted: true, hudAutoEventsMuted: true, kickedUntil: true, discordId: true },
   });
   if (user?.isBanned) {
     await deliver(errEnvelope('user_banned', 'This account is banned'));
@@ -1433,6 +1436,14 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
 
   if (body.length > 500) {
     await deliver(errEnvelope('message_too_long', 'Message body exceeds 500 characters'));
+    return;
+  }
+
+  // Match the shipped automatic sender. Manual receipt-bearing messages and
+  // manual event shortcuts go through their usual paths.
+  if (slug === 'events' && sessionTarget === '' && body.startsWith(HUD_AUTO_EVENT_PREFIX)
+    && (user?.hudAutoEventsMuted || await getGlobalHudAutoEventMute())) {
+    await deliver(errEnvelope('hud_auto_events_muted', 'Automatic HUD event announcements are muted'));
     return;
   }
 

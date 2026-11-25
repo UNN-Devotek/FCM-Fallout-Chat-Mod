@@ -22,6 +22,7 @@ function transactionStub() {
 describe('mergeUserInto', () => {
   test('repoints retained messages and HUD pairing tokens before deleting the duplicate', async () => {
     const tx = transactionStub();
+    tx.user.delete.mockResolvedValue({ hudAutoEventsMuted: false });
 
     await mergeUserInto('canonical-user', 'duplicate-user', tx);
 
@@ -35,7 +36,21 @@ describe('mergeUserInto', () => {
     });
     expect(tx.hudPairingToken.updateMany.mock.invocationCallOrder[0])
       .toBeLessThan(tx.user.delete.mock.invocationCallOrder[0]);
-    expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: 'duplicate-user' } });
+    expect(tx.user.delete).toHaveBeenCalledWith({
+      where: { id: 'duplicate-user' }, select: { hudAutoEventsMuted: true },
+    });
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  test('keeps a HUD auto-event mute when its linked tokens move to the canonical account', async () => {
+    const tx = transactionStub();
+    tx.user.delete.mockResolvedValue({ hudAutoEventsMuted: true });
+
+    await mergeUserInto('canonical-user', 'duplicate-user', tx);
+
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 'canonical-user', hudAutoEventsMuted: false }, data: { hudAutoEventsMuted: true },
+    });
   });
 
   test('does nothing when both IDs are already canonical', async () => {

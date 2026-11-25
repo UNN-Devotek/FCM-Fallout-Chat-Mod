@@ -152,6 +152,16 @@ persistence fallback. SERVER history/fanout is room-scoped in Redis. ACK is not 
 Discord delivery, and receipt completion is not atomic with every side effect. See
 [retry safety](../hud-send-retries.md).
 
+### Automatic HUD event mute
+
+The installed HUD sends automatic announcements to `events` with an empty `targetUserId` and a
+body starting with `Public Event: `. For those sends the relay checks the linked account's
+`hudAutoEventsMuted` flag and the server-wide `hud_auto_events_muted_globally` setting. Either
+mute causes a `hud_auto_events_muted` response before the post is queued, broadcast, or forwarded
+to Discord. Manual HUD event commands and sends carrying an `FCMOUT/1` receipt use their usual
+paths. On older HUD setups where manual sends have no receipt, manually typing that same prefix
+in Events also matches the mute.
+
 ## Operations
 
 | Operation | Purpose |
