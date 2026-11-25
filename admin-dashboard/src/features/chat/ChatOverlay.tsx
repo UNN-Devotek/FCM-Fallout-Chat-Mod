@@ -13,8 +13,9 @@ import { createPortal } from 'react-dom';
 // missing-asset failure.
 import notifySoundUrl from './assets/notify.wav';
 import { useOutletContext, Link } from 'react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { accountHudMutePath, GLOBAL_HUD_MUTE_PATH } from '../../services/hudAutoEventMute';
 import type { AuthUser } from '../../contexts/AuthContext';
 import EmojiPicker, {
   extractEmojiTokens,
@@ -3982,6 +3983,44 @@ export default function ChatOverlay() {
     setActionToast({ kind, text });
     actionToastTimer.current = setTimeout(() => setActionToast(null), 3500);
   }, []);
+  const hudMuteTarget = ctxMenu?.msg;
+  const hudMuteTargetId = hudMuteTarget?.userId;
+  const hudMuteTargetPath = !isPublicMode && isMod && hudMuteTargetId && hudMuteTargetId !== user?.id
+    && hudMuteTarget?.source !== 'system' && hudMuteTarget?.source !== 'bot'
+    && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(hudMuteTargetId)
+    ? accountHudMutePath(hudMuteTargetId) : '';
+  const canChangeGlobalHudMute = !!ctxMenu && !isPublicMode && isAdmin;
+  const accountHudMute = useQuery({
+    queryKey: [hudMuteTargetPath],
+    enabled: !!hudMuteTargetPath,
+    queryFn: async () => (await api.get<{ hudAutoEventsMuted: boolean }>(hudMuteTargetPath)).hudAutoEventsMuted,
+    retry: false,
+  });
+  const globalHudMute = useQuery({
+    queryKey: [GLOBAL_HUD_MUTE_PATH],
+    enabled: canChangeGlobalHudMute,
+    queryFn: () => api.get<{ muted: boolean }>(GLOBAL_HUD_MUTE_PATH),
+    select: data => data.muted,
+    retry: false,
+  });
+  const updateHudMute = useMutation({
+    mutationFn: ({ path, muted }: { path: string; muted: boolean; scope: string }) => api.put(path, { muted }),
+    onSuccess: (_, { muted, scope }) => showActionToast('ok', `HUD auto-events ${muted ? 'muted' : 'unmuted'} for ${scope}.`),
+    onError: error => showActionToast('err', error.message),
+    onSettled: (_, __, { path }) => {
+      if (path !== GLOBAL_HUD_MUTE_PATH) void queryClient.invalidateQueries({ queryKey: ['users'] });
+      return queryClient.invalidateQueries({ queryKey: [path] });
+    },
+  });
+
+  function hudMuteMenuItem(path: string, state: typeof accountHudMute, scope: string) {
+    return {
+      label: state.isError ? `HUD auto-events for ${scope} unavailable`
+        : `${state.data ? 'Unmute' : 'Mute'} HUD auto-events for ${scope}`,
+      disabled: typeof state.data !== 'boolean' || state.isFetching || state.isError || updateHudMute.isPending,
+      action: () => updateHudMute.mutate({ path, muted: !state.data, scope }),
+    };
+  }
   const [partiesAvailable, setPartiesAvailable] = useState<boolean | null>(null); // null = unknown
   // Image upload state (party chat only — shows "Uploading…" in the input area)
   const [imageUploading, setImageUploading] = useState(false);
@@ -6659,7 +6698,7 @@ export default function ChatOverlay() {
     // If the menu is taller than the viewport, cap it and scroll internally.
     el.style.maxHeight = `${window.innerHeight - GAP * 2}px`;
     el.style.overflowY = 'auto';
-  }, [ctxMenu]);
+  }, [ctxMenu, accountHudMute.data, accountHudMute.isError, globalHudMute.data, globalHudMute.isError]);
 
   // "Invite to Party" flyout — a SEPARATE popover anchored to the parent context
   // menu's right edge (flipping to its left edge / clamping vertically when there
@@ -11140,6 +11179,8 @@ export default function ChatOverlay() {
                     }},
                   ]
                 : []),
+              ...(hudMuteTargetPath ? [hudMuteMenuItem(hudMuteTargetPath, accountHudMute, ctxMenu.msg.username)] : []),
+              ...(canChangeGlobalHudMute ? [hudMuteMenuItem(GLOBAL_HUD_MUTE_PATH, globalHudMute, 'everyone')] : []),
               // Admin-only: view user profile with alias history.
               ...(!isPublicMode && isAdmin && ctxMenu.msg.userId && ctxMenu.msg.userId !== 'system'
                   && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system'
@@ -11158,12 +11199,14 @@ export default function ChatOverlay() {
                   && parties.some(p => p.isMember && (p.role === 'owner' || p.role === 'comod'))
                 ? [{ label: 'Invite to Party ▸', keepOpen: true, action: () => setCtxMenuInviteSubmenu(s => !s) }]
                 : []),
-            ].map((item: { label: string; action: () => void; keepOpen?: boolean }) => (
+            ].map((item: { label: string; action: () => void; keepOpen?: boolean; disabled?: boolean }) => (
               <div
                 key={item.label}
                 ref={item.keepOpen ? ctxMenuInviteItemRef : undefined}
+                aria-disabled={item.disabled}
                 onMouseDown={e => {
                   e.stopPropagation();
+                  if (item.disabled) return;
                   item.action();
                   // Items that open the invite flyout keep the context menu open.
                   if (!item.keepOpen) { setCtxMenu(null); setCtxMenuInviteSubmenu(false); }
@@ -11175,7 +11218,8 @@ export default function ChatOverlay() {
                 }}
                 style={{
                   padding: '5px 10px',
-                  cursor: 'pointer',
+                  cursor: item.disabled ? 'default' : 'pointer',
+                  opacity: item.disabled ? 0.5 : 1,
                   color: primaryColor,
                   letterSpacing: '0.04em',
                 }}

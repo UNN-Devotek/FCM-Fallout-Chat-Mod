@@ -13,6 +13,7 @@ import { runtime } from '../runtime';
 import { computeDiscriminator } from '../utils/discriminator';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { SHORT_ALPHA_BLACKLIST, LOOKS_LIKE_PROVIDER, LOOKS_LIKE_CAMELCASE_METHOD } from '../utils/nameBlacklist';
+import { DISPLAY_NAME_SELECT, resolveFo76Name, resolveUserDisplayName } from '../utils/userDisplayName';
 import { setSpamImmunity, findProhibitedPhrase } from '../services/autoModService';
 import { buildAvatarUrl } from '../services/avatarService';
 import { refreshClientIdentity, resolveDisplayName } from '../websocket/handlers';
@@ -30,49 +31,32 @@ function validateUuid(id: string): boolean { return UUID_RE.test(id); }
 
 /**
  * GET /api/users -- moderator+
- * Supports ?search= (username or steamId prefix) and pagination (?limit=&offset=)
+ * Supports name and Steam ID prefixes, exact user or install UUIDs, and pagination.
  */
 async function listUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
   const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
-  const rawSearch = (req.query.search as string) || '';
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
   try {
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-    let users;
-    if (uuidPattern.test(rawSearch)) {
-      // UUID search -- exact match on install_token
-      users = await prisma.user.findMany({
-        where: { installToken: rawSearch },
-        select: {
-          id: true, username: true, steamId: true,
-          discordId: true, discordUsername: true, discordAvatar: true,
-          isBanned: true, isMuted: true, muteExpiresAt: true, banReason: true, createdAt: true,
-        },
-        take: limit,
-        skip: offset,
-      });
-    } else {
-      // Name/steamId prefix search
-      users = await prisma.user.findMany({
-        where: rawSearch ? {
-          OR: [
-            { username: { startsWith: rawSearch, mode: 'insensitive' } },
-            { steamId: { startsWith: rawSearch, mode: 'insensitive' } },
-          ],
-        } : undefined,
-        select: {
-          id: true, username: true, steamId: true,
-          discordId: true, discordUsername: true, discordAvatar: true,
-          isBanned: true, isMuted: true, muteExpiresAt: true, banReason: true, createdAt: true,
-        },
-        orderBy: { createdAt: 'desc' },
-        take: limit,
-        skip: offset,
-      });
+    let where: Prisma.UserWhereInput | undefined;
+    if (validateUuid(search)) {
+      where = { OR: [{ id: search }, { installToken: search }] };
+    } else if (search) {
+      const startsWith = { startsWith: search, mode: 'insensitive' } as const;
+      where = { OR: [...Object.keys(DISPLAY_NAME_SELECT), 'steamId'].map(field => ({ [field]: startsWith })) };
     }
-    res.json({ data: users });
+    const users = await prisma.user.findMany({
+      where,
+      select: {
+        id: true, ...DISPLAY_NAME_SELECT, steamId: true, discordId: true, discordAvatar: true,
+        isBanned: true, isMuted: true, hudAutoEventsMuted: true, muteExpiresAt: true, banReason: true, createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
+    res.json({ data: users.map(user => ({ ...user, displayName: resolveUserDisplayName(user), fo76Name: resolveFo76Name(user) })) });
   } catch (err) {
     next(err);
   }
@@ -681,7 +665,7 @@ async function getUser(req: Request, res: Response, next: NextFunction): Promise
       select: {
         id: true, username: true, steamId: true,
         discordId: true, discordUsername: true, discordAvatar: true,
-        isBanned: true, isMuted: true, muteExpiresAt: true, banReason: true, createdAt: true,
+        isBanned: true, isMuted: true, hudAutoEventsMuted: true, muteExpiresAt: true, banReason: true, createdAt: true,
       },
     });
 

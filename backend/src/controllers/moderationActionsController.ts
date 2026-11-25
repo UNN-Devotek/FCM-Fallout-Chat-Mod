@@ -9,12 +9,14 @@ import { Request, Response, NextFunction } from 'express';
 import { pipeline } from 'node:stream/promises';
 import prisma from '../config/prisma';
 import { DISPLAY_NAME_SELECT } from '../utils/userDisplayName';
+import { paramStr } from '../utils/reqParams';
 import { createError } from '../middleware/errorHandler';
 import {
-  kickUser, muteUser, unmuteUser, createBan, reverseBan, ProtectedTargetError,
+  kickUser, muteUser, unmuteUser, setHudAutoEventsMuted, createBan, reverseBan, ProtectedTargetError,
   type NewBanEvidence, REASON_CATEGORIES,
 } from '../services/moderationActionsService';
 import { uploadEvidence, downloadEvidence } from '../services/banEvidenceStorage';
+import { getGlobalHudAutoEventMute, setGlobalHudAutoEventMute } from '../services/hudAutoEventMute';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_MUTE_DAYS = 30;
@@ -27,6 +29,7 @@ function requireString(s: any, label: string, max = 4000): asserts s is string {
   if (s.length > max) throw createError(422, `${label} is too long (max ${max})`);
 }
 /**
+ * A desktop session already has the internal user ID on req.user.
  * The auth middleware attaches req.adminUser.id = Discord ID (snowflake) for
  * OAuth admins, or 'api-key' for service-token auth. Mod actions need the
  * internal users.id UUID (for the bannedById FK). Resolves by discordId and
@@ -34,6 +37,7 @@ function requireString(s: any, label: string, max = 4000): asserts s is string {
  * API-key actor is rejected — these actions need to attribute to a real human.
  */
 async function actorUserId(req: Request): Promise<string> {
+  if (req.sessionToken && typeof req.user?.id === 'string') return req.user.id;
   return runRequiredBundle('moderation', 'moderationActionsController:c6ee73eab82e', async () => {
   const a = (req as any).adminUser as { id: string; username?: string; displayName?: string } | undefined;
   if (!a?.id) throw createError(401, 'no admin session');
@@ -141,6 +145,47 @@ export async function unmuteUserHandler(req: Request, res: Response, next: NextF
     const reason = typeof rawReason === 'string' ? rawReason : '';
     await unmuteUser(req.params.userId, await actorUserId(req), reason.slice(0, 300));
     res.json({ data: { unmuted: true } });
+  } catch (err) { next(err); }
+}
+
+export async function getHudAutoEventMuteHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = paramStr(req, 'userId');
+    requireUuid(userId, 'userId');
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { hudAutoEventsMuted: true } });
+    if (!user) throw createError(404, 'User not found');
+    res.json({ data: user });
+  } catch (err) { next(err); }
+}
+
+export async function setHudAutoEventMuteHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = paramStr(req, 'userId');
+    requireUuid(userId, 'userId');
+    const muted: unknown = req.body?.muted;
+    if (typeof muted !== 'boolean') throw createError(400, 'muted must be a boolean');
+
+    const hudAutoEventsMuted = await setHudAutoEventsMuted(userId, await actorUserId(req), muted);
+    if (hudAutoEventsMuted === null) throw createError(404, 'User not found');
+    res.json({ data: { hudAutoEventsMuted } });
+  } catch (err) {
+    if (!handleProtected(err, next)) next(err);
+  }
+}
+
+export async function getGlobalHudAutoEventMuteHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json({ data: { muted: await getGlobalHudAutoEventMute() } });
+  } catch (err) { next(err); }
+}
+
+export async function setGlobalHudAutoEventMuteHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const muted: unknown = req.body?.muted;
+    if (typeof muted !== 'boolean') throw createError(400, 'muted must be a boolean');
+
+    await setGlobalHudAutoEventMute(await actorUserId(req), muted);
+    res.json({ data: { muted } });
   } catch (err) { next(err); }
 }
 

@@ -73,7 +73,7 @@ Source files:
 
 ## Moderation Actions
 
-Core actions are implemented in `backend/src/services/moderationActionsService.ts`. Each action:
+`backend/src/services/moderationActionsService.ts` implements kicks, chat mutes, and bans. Each action:
 
 1. Validates the target is not protected (`ensureNotProtected`)
 2. Mutates DB state (User flags + history rows in `bans`)
@@ -86,6 +86,20 @@ Core actions are implemented in `backend/src/services/moderationActionsService.t
 **Kick** — 5-minute `kicked_until` cooldown. Sends `user:kicked` WS event before disconnecting with close code 4002.
 
 **Mute** — Minimum 60 seconds, maximum 30 days. Optionally propagates as a Discord timeout (up to 28-day API ceiling). `skipDiscord=true` used by `MUTE_OVERLAY` auto-mod action. Calls `markClientMuted()` to update live WS client state.
+
+**Mute HUD auto-events** — In **Moderation → Users**, find the account by player name or UUID
+and choose **Mute HUD auto-events**. Moderators, admins, and owners can use the control on
+unprotected accounts. The mute takes effect on subsequent sends from every HUD linked to the
+account and stays in force until staff choose **Unmute HUD auto-events**. Players can still chat
+and use event commands under the usual moderation rules. Each change is recorded in the staff
+audit log. See [native relay compatibility](../overlay/zfe/native-chat-relay/fcm-integration.md#automatic-hud-event-mute).
+
+**Mute HUD auto-events for everyone** — Admins and owners can pause automatic announcements
+server-wide from the top of **Moderation → Users**. The setting persists until an admin or owner
+chooses **Unmute HUD auto-events for everyone**. Moderators can see its status. After the global
+mute is lifted, each player's individual mute determines whether their automatic posts can resume.
+The audit log records changes to the server-wide setting. In the desktop overlay, right-click a
+chat message to access the per-player action or, for admins and owners, the server-wide action.
 
 **Ban** — Requires at least one piece of evidence. Applies Discord lockdown: strips all manageable roles (below bot's highest), disconnects from voice, and for permanent bans applies a guild-level Discord ban. Strips roles are saved in `users.saved_discord_roles` for restoration on unban. Permanent bans also revoke the user's device keypair(s) in the `devices` table.
 
@@ -141,6 +155,8 @@ Key moderation REST routes (all require `requireDiscordRole` middleware):
 | POST | `/api/moderation/kick` | Kick a user |
 | POST | `/api/moderation/mute` | Mute a user |
 | POST | `/api/moderation/unmute` | Unmute a user |
+| GET/PUT | `/api/moderation/users/:userId/hud-auto-event-mute` | Read or change an account's automatic HUD event mute |
+| GET/PUT | `/api/moderation/hud-auto-event-mute` | Read or change the server-wide automatic HUD event mute |
 | POST | `/api/moderation/bans` | Create a ban with evidence |
 | POST | `/api/moderation/bans/:id/reverse` | Reverse a ban |
 | GET/PUT | `/api/moderation/voice-settings` | Temp VC config |

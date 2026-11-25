@@ -64,6 +64,10 @@ See [auth.md](./auth.md) for full details.
 
 `POST /api/users` applies `registerIpFloodLimiter` + `registerLimiter` + `authLimiter` in sequence. See `routes/users.ts`.
 
+The staff list and detail responses include `hudAutoEventsMuted`. For `GET /api/users`, `search`
+accepts player name and Steam ID prefixes or an exact user or installation UUID. The list
+includes resolved `displayName` and `fo76Name` fields for linked accounts.
+
 ## Provider links (`/api/link`)
 
 | Method | Path | Auth | Description |
@@ -449,6 +453,20 @@ Documented in [../moderation/](../moderation/). Covers:
   and everything else (positive integers). See
   [../moderation/ai-moderation.md](../moderation/ai-moderation.md).
 - Voice settings, embed builder, reaction-role panels — see [../discord/](../discord/)
+
+`GET /api/moderation/users/:userId/hud-auto-event-mute` returns the account's `hudAutoEventsMuted`
+status. `GET` and `PUT` on this path require a moderator, admin, or owner, authenticated with a
+Discord dashboard session or the desktop overlay's `X-Auth-Token`. Send `{ "muted": true }` to
+mute automatic HUD event announcements and `{ "muted": false }` to restore them. The response
+is `{ "data": { "hudAutoEventsMuted": true } }`
+when muted. A missing user returns 404 and a protected staff target returns 409. Repeating the
+same state adds no audit row.
+
+`GET /api/moderation/hud-auto-event-mute` gives moderators and above the server-wide status as
+`{ "data": { "muted": false } }` by default. `PUT` on the same path requires an admin or owner
+and accepts `{ "muted": true }` or `{ "muted": false }`. Both methods accept the same dashboard
+and desktop session types as the per-account control. The reply has the same
+shape as `GET`. The setting persists in `moderation_settings`, and each change is audited.
 
 ---
 

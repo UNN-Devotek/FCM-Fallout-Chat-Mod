@@ -1,9 +1,10 @@
 import express from 'express';
 import multer from 'multer';
-import { requireDiscordRole } from '../middleware/auth';
+import { requireClientOrDiscordRole, requireDiscordRole } from '../middleware/auth';
 import env from '../config/environment';
 import {
-  kickUserHandler, muteUserHandler, unmuteUserHandler,
+  kickUserHandler, muteUserHandler, unmuteUserHandler, getHudAutoEventMuteHandler, setHudAutoEventMuteHandler,
+  getGlobalHudAutoEventMuteHandler, setGlobalHudAutoEventMuteHandler,
   createBanHandler, listBansHandler, getBanHandler, reverseBanHandler,
   streamBanEvidenceHandler, listEvidenceHandler, lookupUserHandler,
 } from '../controllers/moderationActionsController';
@@ -23,6 +24,11 @@ router.get('/users/lookup', mod, lookupUserHandler);
 router.post('/kicks', mod, kickUserHandler);
 router.post('/mutes', mod, muteUserHandler);
 router.delete('/mutes/:userId', mod, unmuteUserHandler);
+const hudMod = requireClientOrDiscordRole('moderator');
+router.get('/users/:userId/hud-auto-event-mute', hudMod, getHudAutoEventMuteHandler);
+router.put('/users/:userId/hud-auto-event-mute', hudMod, setHudAutoEventMuteHandler);
+router.get('/hud-auto-event-mute', hudMod, getGlobalHudAutoEventMuteHandler);
+router.put('/hud-auto-event-mute', requireClientOrDiscordRole('admin'), setGlobalHudAutoEventMuteHandler);
 
 // Bans
 router.post('/bans', mod, upload.array('evidenceFiles', 5), createBanHandler);

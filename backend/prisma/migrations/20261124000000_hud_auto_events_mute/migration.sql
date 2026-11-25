@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "hud_auto_events_muted" BOOLEAN NOT NULL DEFAULT false;

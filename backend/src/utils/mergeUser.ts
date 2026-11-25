@@ -116,8 +116,18 @@ export async function mergeUserInto(
     }
   }
 
-  // ── Finally delete the placeholder ───────────────────────────────────────
-  await runRequiredMutation('identity', '599a510c2ba262d6af4c4197', { stage: 'primary-write-unconfirmed', rowId: placeholderId }, () => tx.user.delete({ where: { id: placeholderId } }), isPrismaAtomicRefusal, tx, undefined);
+  const placeholder = await runRequiredMutation('identity', '599a510c2ba262d6af4c4197',
+    { stage: 'primary-write-unconfirmed', rowId: placeholderId }, () => tx.user.delete({
+      where: { id: placeholderId }, select: { hudAutoEventsMuted: true },
+    }), isPrismaAtomicRefusal, tx);
+  // Carry the restriction with the repointed HUD tokens in the same transaction.
+  if (placeholder.hudAutoEventsMuted) {
+    await runRequiredMutation('identity', 'merge-user:retain-hud-auto-events-mute',
+      { stage: 'primary-write-unconfirmed', rowId: canonicalId }, () => tx.user.updateMany({
+        where: { id: canonicalId, hudAutoEventsMuted: false },
+        data: { hudAutoEventsMuted: true },
+      }), isPrismaAtomicRefusal, tx, isRowCountNoChange);
+  }
 
   });
 }

@@ -12,6 +12,7 @@ import reactionRoleService from '../services/reactionRoleService';
 import discordEmbedService from '../services/discordEmbedService';
 import { listTextChannels, listAssignableRoles } from '../services/discordContextService';
 import { resolveInternalActorId } from '../utils/resolveActorId';
+import { GLOBAL_HUD_AUTO_EVENT_MUTE_KEY } from '../services/hudAutoEventMute';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUuid(id: string): boolean { return UUID_RE.test(id); }
@@ -228,6 +229,7 @@ async function updateVoiceSettings(req: Request, res: Response, next: NextFuncti
 async function getSettings(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const settings = await prisma.moderationSetting.findMany({
+      where: { key: { not: GLOBAL_HUD_AUTO_EVENT_MUTE_KEY } },
       select: { key: true, value: true, updatedAt: true },
     });
     res.json({ data: settings });
@@ -281,6 +283,7 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
   return runRequiredBundle('moderation', 'moderationController:5fcfc91bf846', async () => {
   const { key, value } = req.body;
   if (!key || value === undefined || value === null) return next(createError(400, 'key and value required'));
+  if (key === GLOBAL_HUD_AUTO_EVENT_MUTE_KEY) return next(createError(422, 'Use the server-wide HUD auto-event mute control'));
 
   // mod_log_channel_id: snowflake string — different validation path
   if (key === 'mod_log_channel_id') {

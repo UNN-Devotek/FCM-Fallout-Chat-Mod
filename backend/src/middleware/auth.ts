@@ -1,11 +1,12 @@
 import { isPrismaAtomicRefusal, runRequiredBundle, runRequiredMutation } from '../lib/requiredEffects';
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, type RequestHandler } from 'express';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import { createError } from './errorHandler';
 import logger from '../config/logger';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { getCachedRole, resolveRole } from '../services/roleVerificationService';
+import { getEffectiveRole } from '../services/userRoleService';
 import env from '../config/environment';
 
 // Extend Express Request to include our custom properties
@@ -240,6 +241,21 @@ function requireDiscordRole(...allowedRoles: string[]) {
   };
 }
 
+export function requireClientOrDiscordRole(minimum: AdminRole): RequestHandler[] {
+  const requireWebRole = requireDiscordRole(minimum);
+  return [
+    (req, res, next) => req.headers['x-auth-token'] === undefined
+      ? requireWebRole(req, res, next)
+      : requireAuth(req, res, next),
+    async (req, _res, next) => {
+      if (req.sessionToken && !roleSatisfiesRequirement(await getEffectiveRole(req.user.id), [minimum])) {
+        return next(createError(403, 'Insufficient Discord role'));
+      }
+      next();
+    },
+  ];
+}
+
 /**
  * Device-signature middleware. Verifies the request is signed by an enrolled
  * install key (ECDSA P-256 / SHA-256 over method+path+bodyhash+ts+nonce).
@@ -355,4 +371,4 @@ export function requireDashboardAuth(req: Request, res: Response, next: NextFunc
 }
 
 export { requireAuth, requireDiscordRole, requireSignedDevice, requireAnyAuthedClient };
-module.exports = { requireAuth, requireDiscordRole, requirePublicDiscordAuth, requireSignedDevice, requireAnyAuthedClient, requireDashboardAuth };
+module.exports = { requireAuth, requireDiscordRole, requireClientOrDiscordRole, requirePublicDiscordAuth, requireSignedDevice, requireAnyAuthedClient, requireDashboardAuth };

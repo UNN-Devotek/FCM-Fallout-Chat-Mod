@@ -5,7 +5,8 @@ import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const get = vi.hoisted(() => vi.fn());
-vi.mock('../../../services/api', () => ({ api: { get, post: vi.fn(), delete: vi.fn() } }));
+const put = vi.hoisted(() => vi.fn());
+vi.mock('../../../services/api', () => ({ api: { get, put, post: vi.fn(), delete: vi.fn() } }));
 vi.mock('../EmojiPicker', () => ({ default: () => null, extractEmojiTokens: () => [] }));
 vi.mock('../GifPicker', () => ({ default: () => null }));
 vi.mock('../components/ChatEmbedCard', () => ({ ChatEmbedCard: () => null }));
@@ -45,6 +46,7 @@ const channels = [{ id: 'fo76', name: 'Fallout 76', parentId: null, children: [
 
 beforeEach(() => {
   sockets.length = 0;
+  put.mockReset();
   resetRememberedChatSelection();
   const storage = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
@@ -88,6 +90,64 @@ function history(socket: TestSocket, id = 'message-1', content = 'Existing chat 
 }
 
 describe('overlay lifecycle and navigation', () => {
+  it.each(['admin', 'moderator', 'user'])('shows the right HUD auto-event mute controls for an overlay %s', async (role) => {
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    const accountPath = `/api/moderation/users/${targetId}/hud-auto-event-mute`;
+    const globalPath = '/api/moderation/hud-auto-event-mute';
+    let accountMuted = false;
+    let globalMuted = true;
+    const getOther = get.getMockImplementation()!;
+    get.mockClear();
+    get.mockImplementation((path: string) => path === accountPath ? Promise.resolve({ hudAutoEventsMuted: accountMuted })
+      : path === globalPath ? Promise.resolve({ muted: globalMuted }) : getOther(path));
+    put.mockImplementation(async (path, { muted }) => {
+      if (path === accountPath) accountMuted = muted;
+      if (path === globalPath) globalMuted = muted;
+    });
+
+    await mount(role);
+    act(() => sockets[0].open());
+    act(() => sockets[0].emit({ type: 'chat:message', payload: {
+      id: 'hud-event', channelId: 'general', userId: targetId, username: 'Bob', source: 'relay', content: 'Event test message',
+    } }));
+    const message = await screen.findByText('Event test message');
+    const openMenu = () => fireEvent.contextMenu(message);
+    openMenu();
+
+    if (role === 'user') {
+      expect(screen.queryByText(/HUD auto-events/)).toBeNull();
+      expect(get).not.toHaveBeenCalledWith(accountPath);
+      expect(get).not.toHaveBeenCalledWith(globalPath);
+      return;
+    }
+    const choose = async (label: string) => {
+      const item = await screen.findByText(label);
+      await waitFor(() => expect(item).toHaveAttribute('aria-disabled', 'false'));
+      fireEvent.mouseDown(item);
+    };
+    await choose('Mute HUD auto-events for Bob');
+    await waitFor(() => expect(put).toHaveBeenCalledWith(accountPath, { muted: true }));
+    expect(await screen.findByText('HUD auto-events muted for Bob.')).toBeInTheDocument();
+    openMenu();
+    await choose('Unmute HUD auto-events for Bob');
+    expect(await screen.findByText('HUD auto-events unmuted for Bob.')).toBeInTheDocument();
+    expect(put).toHaveBeenCalledWith(accountPath, { muted: false });
+
+    openMenu();
+    if (role === 'admin') {
+      await choose('Unmute HUD auto-events for everyone');
+      expect(await screen.findByText('HUD auto-events unmuted for everyone.')).toBeInTheDocument();
+      expect(put).toHaveBeenCalledWith(globalPath, { muted: false });
+      openMenu();
+      await choose('Mute HUD auto-events for everyone');
+      expect(await screen.findByText('HUD auto-events muted for everyone.')).toBeInTheDocument();
+      expect(put).toHaveBeenCalledWith(globalPath, { muted: true });
+    } else {
+      expect(screen.queryByText(/HUD auto-events for everyone/)).toBeNull();
+      expect(get).not.toHaveBeenCalledWith(globalPath);
+    }
+  });
+
   it('removes only confirmed expired room mutes and persists cleanup', async () => {
     await mount('admin');
     act(() => sockets[0].open());
