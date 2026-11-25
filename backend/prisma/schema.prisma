@@ -28,6 +28,7 @@ model User {
   discordAuthedAt    DateTime? @map("discord_authed_at") @db.Timestamptz(6) // last Discord OAuth; gate requires re-auth after 30d
   isBanned           Boolean   @default(false) @map("is_banned")
   isMuted            Boolean   @default(false) @map("is_muted")
+  hudAutoEventsMuted Boolean   @default(false) @map("hud_auto_events_muted")
   muteExpiresAt      DateTime? @map("mute_expires_at") @db.Timestamptz(6)
   banReason          String?   @map("ban_reason")
   // Mod-action audit fields (issued/expiry/category — `is_banned`/`is_muted`

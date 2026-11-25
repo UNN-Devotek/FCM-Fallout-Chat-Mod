@@ -1,4 +1,11 @@
-# FCM Server Bridge 0.2.19 source candidate
+# FCM Server Bridge 0.2.20 source candidate
+
+0.2.20 (2026-11-20) versions the self-alias/evidence-sequence recovery changes
+(including #631) that source previously shipped under the published 0.2.19 label.
+Its export fields need the Overlay 1.4.4 reader. The 0.2.20 PROD ZIP replaced
+0.2.19 in the published 1.4.4 downloads on 2026-11-20, before native acceptance.
+
+## 0.2.19
 
 Fresh 0.2.18 native probes on both providers report `receive:E1014` with zero
 private requests and accepted replies, while roster exports remain active.

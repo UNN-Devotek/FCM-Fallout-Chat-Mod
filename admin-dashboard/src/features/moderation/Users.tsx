@@ -1,24 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext, Link } from 'react-router';
 import { api } from '../../services/api';
+import { accountHudMutePath, GLOBAL_HUD_MUTE_PATH } from '../../services/hudAutoEventMute';
 import type { AuthUser } from '../../contexts/AuthContext';
 
 const ADMIN_ROLES = ['owner', 'admin'];
+const GLOBAL_HUD_MUTE_QUERY = [GLOBAL_HUD_MUTE_PATH] as const;
 
 interface User {
   id: string;
   username: string;
+  displayName: string;
+  fo76Name: string | null;
   steamId: string | null;
   discordId: string | null;
   discordUsername: string | null;
   discordAvatar: string | null;
   isBanned: boolean;
   isMuted: boolean;
+  hudAutoEventsMuted: boolean;
   muteExpiresAt: string | null;
   banReason: string | null;
   createdAt: string;
 }
+
+type UserAction = 'kick' | 'unban' | 'wipe' | { hudAutoEventsMuted: boolean };
 
 const MUTE_DURATIONS = [
   { label: '1 hour', value: 60 },
@@ -57,15 +64,23 @@ export default function Users() {
     queryKey: ['users', debouncedSearch],
     queryFn: () => api.get<User[]>(`/api/users?limit=100${searchParam}`),
   });
+  const { data: globalHudMute, isError: globalHudMuteError } = useQuery({
+    queryKey: GLOBAL_HUD_MUTE_QUERY,
+    queryFn: () => api.get<{ muted: boolean }>(GLOBAL_HUD_MUTE_PATH),
+  });
+  const updateGlobalHudMute = useMutation({
+    mutationFn: (muted: boolean) => api.put(GLOBAL_HUD_MUTE_PATH, { muted }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: GLOBAL_HUD_MUTE_QUERY }),
+  });
 
   const error = queryError ? (queryError as Error).message : null;
   const filtered = users || [];
 
   function refresh() {
-    queryClient.invalidateQueries({ queryKey: ['users'] });
+    return queryClient.invalidateQueries({ queryKey: ['users'] });
   }
 
-  async function doAction(userId: string, action: string) {
+  async function doAction(userId: string, action: UserAction) {
     setActionLoading(true);
     setActionError(null);
     try {
@@ -76,10 +91,12 @@ export default function Users() {
       } else if (action === 'wipe') {
         if (!confirm('This will permanently anonymize this user. Continue?')) return;
         await api.post(`/api/users/${userId}/wipe`);
+      } else {
+        await api.put(accountHudMutePath(userId), { muted: action.hudAutoEventsMuted });
       }
-      refresh();
-    } catch (err: any) {
-      setActionError(err.message);
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'User action failed.');
     } finally {
       setActionLoading(false);
     }
@@ -138,16 +155,37 @@ export default function Users() {
     <div>
       <h1 style={{ fontSize: '18px', marginBottom: '16px' }}>◈ USER MANAGEMENT</h1>
 
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px' }}>
+        <span role="status">
+          {globalHudMuteError ? 'Could not load the server-wide HUD auto-event mute.'
+            : globalHudMute?.muted ? 'HUD auto-events are muted for everyone.'
+            : globalHudMute ? 'Server-wide HUD auto-event mute is off.'
+            : 'Loading server-wide HUD auto-event mute...'}
+        </span>
+        {isAdmin && globalHudMute && !globalHudMuteError && (
+          <button
+            type="button"
+            className={globalHudMute.muted ? undefined : 'warning'}
+            disabled={updateGlobalHudMute.isPending}
+            onClick={() => updateGlobalHudMute.mutate(!globalHudMute.muted)}
+          >
+            {globalHudMute.muted ? 'Unmute HUD auto-events for everyone' : 'Mute HUD auto-events for everyone'}
+          </button>
+        )}
+      </div>
+      {updateGlobalHudMute.error && <div role="alert" className="error-message">{updateGlobalHudMute.error.message}</div>}
+
       <input
         data-testid="user-search"
-        placeholder="Search by name or Installation UUID"
+        aria-label="Search by player name or UUID"
+        placeholder="Search by player name or UUID"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         style={{ marginBottom: '16px', maxWidth: '320px' }}
       />
 
       {error && <div className="error-message">{error}</div>}
-      {actionError && <div className="error-message" style={{ marginBottom: '8px' }}>{actionError}</div>}
+      {actionError && <div className="error-message" role="alert" style={{ marginBottom: '8px' }}>{actionError}</div>}
 
       {loading ? (
         <div className="loading">Loading users...</div>
@@ -185,7 +223,7 @@ export default function Users() {
                         className="username-chip"
                         style={{ color: 'var(--text-primary)', padding: '1px 4px', margin: '-1px -4px' }}
                       >
-                        {user.username && user.username !== 'Wanderer' ? user.username : (user.discordUsername || user.username)}
+                        {user.displayName ?? user.username}
                       </Link>
                       {user.discordUsername && (
                         <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>@{user.discordUsername}</div>
@@ -194,8 +232,8 @@ export default function Users() {
                   </div>
                 </td>
                 <td>
-                  {user.username && user.username !== 'Wanderer' ? (
-                    <span style={{ color: 'var(--phosphor-color)', fontSize: '12px' }}>{user.username}</span>
+                  {user.fo76Name ? (
+                    <span style={{ color: 'var(--phosphor-color)', fontSize: '12px' }}>{user.fo76Name}</span>
                   ) : (
                     <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>—</span>
                   )}
@@ -203,7 +241,8 @@ export default function Users() {
                 <td>
                   {user.isBanned && <span className="badge banned">BANNED</span>}
                   {user.isMuted && !user.isBanned && <span className="badge muted">MUTED</span>}
-                  {!user.isBanned && !user.isMuted && <span className="badge resolved">OK</span>}
+                  {user.hudAutoEventsMuted && <span className="badge muted">HUD AUTO-EVENTS MUTED</span>}
+                  {!user.isBanned && !user.isMuted && !user.hudAutoEventsMuted && <span className="badge resolved">OK</span>}
                 </td>
                 <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   {new Date(user.createdAt).toLocaleDateString()}
@@ -219,6 +258,17 @@ export default function Users() {
                       style={{ padding: '4px 10px', fontSize: '11px', minHeight: '32px' }}
                     >
                       MUTE
+                    </button>
+                    <button
+                      type="button"
+                      className={user.hudAutoEventsMuted ? undefined : 'warning'}
+                      disabled={actionLoading}
+                      onClick={() => doAction(user.id, { hudAutoEventsMuted: !user.hudAutoEventsMuted })}
+                      aria-label={`${user.hudAutoEventsMuted ? 'Unmute' : 'Mute'} HUD auto-events for ${user.displayName ?? user.username}`}
+                      title="Controls automatic HUD event announcements. Players can still chat and run event commands."
+                      style={{ padding: '4px 10px', fontSize: '11px', minHeight: '32px' }}
+                    >
+                      {user.hudAutoEventsMuted ? 'UNMUTE HUD AUTO-EVENTS' : 'MUTE HUD AUTO-EVENTS'}
                     </button>
                     <button
                       data-testid="kick-btn"

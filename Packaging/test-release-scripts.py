@@ -166,21 +166,25 @@ def main() -> None:
     for marker in (
         "Optional FCM Bridge",
         "Data/FCMServerBridge.ba2",
-        "47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45",
+        "5c03e2b65a45a2507051c32bcc2979f817344136e7cb48a16e0d3e9663d3aa2c",
         "Fallout Chat Mod Portable $Version (Windows)",
         "README-PORTABLE-NEXUS.txt",
     ):
         assert marker in package_nexus, f"Nexus package helper is missing: {marker}"
     assert '"-BridgeZip", $BridgeZip' in release
     for script in (package_downloads, package_nexus):
-        assert "c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f" in script
+        assert "c3f9d104de66e5fa8b355317be1bf42b7d7ce34308133c081974c435fa44da33" in script
     for script in (package_downloads, package_nexus):
         assert "'0.2.8'" not in script and "0.2.8 candidate" not in script
-        assert "'0.2.19'" in script
+        assert "'0.2.20'" in script
 
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
     assert '$env:ELECTRON_RUN_AS_NODE = $null' in smoke
+    # Never kill by name: an installed overlay runs the same binary.
+    assert 'pkill' not in smoke
+    assert 'Get-OwnedProcessTree $proc.Id' in smoke
+    assert '$ownedProfile = Join-Path $tmpRoot ("fcm-smoke-"' in smoke
     for marker in ('[ValidateSet("Default", "Portable", "QA")]', 'Fallout Chat Mod Portable $Version.exe', 'FCMData\\logs'):
         assert marker in smoke, f"portable smoke gate is missing: {marker}"
     for marker in ('if ($Artifact -eq "QA")', 'Fallout Chat Mod QA.exe', 'Fallout Chat Mod QA\\logs'):

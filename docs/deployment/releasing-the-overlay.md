@@ -76,7 +76,7 @@ fix(overlay): a range of reliability and quality fixes across chat connections, 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
 ```powershell
-.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
+.\Packaging\release.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.20-prod.zip>" [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
 # -SkipBuild: reuse existing dist-electron artifacts (Linux AppImage must already be present)
 # -DryRun: runs smoke-test + VT gates for real; prints what would run for steps 4-7 without uploading
 # -SkipWindowsNexus: omit the Windows support-review upload; Linux/.deb/HUD still publish
@@ -102,7 +102,10 @@ pwsh -NoProfile -File Packaging/release.ps1 -Version X.Y.Z -SkipBuild -ReleaseNo
 ```
 
 OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows`):
-- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
+- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads that run's profile log; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. On Linux it uses a throwaway profile unless `-UserDataDir` is given, so an installed overlay's profile
+and single-instance lock are never shared. Cleanup signals only the launched process and its descendants
+(Linux PID tree / `taskkill /T`), never anything matched by name, so a running installed overlay and
+`Fallout76` are never touched.
 - **`release.ps1`** uses `ssh`/`scp` (not `ssh.exe`/`scp.exe`) and runs the child gate scripts via `pwsh` on Linux, `powershell.exe` on Windows.
 - **`package-downloads.ps1`** stages ZIPs under `DistDir` (cross-platform; not a Windows temp path).
 
@@ -313,15 +316,18 @@ gates, uploads and size-verifies the EXE and ZIP, then records
 clearly optional folder with separate ZFE/xScal sections. The Install page presents
 the portable ZIP next to the installer; packaging alone does not publish or install.
 
-The pinned bridge candidate for the 1.4.3 / HUD 2.10.151 release is **0.2.19 PROD**.
-Its ZIP SHA-256 is `c518314cd2bc439ee87d9262b07489b11b056f9cfebdc5749c7d0608de5c8e1f`;
-the embedded BA2 SHA-256 is `47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`.
+The pinned bridge is **0.2.20 PROD** (2026-11-20). It replaced the 0.2.19 bridge inside the
+already-published 1.4.4 download ZIPs on the owner's instruction, before native acceptance of 0.2.20.
+Its ZIP SHA-256 is `c3f9d104de66e5fa8b355317be1bf42b7d7ce34308133c081974c435fa44da33`;
+the embedded BA2 SHA-256 is `5c03e2b65a45a2507051c32bcc2979f817344136e7cb48a16e0d3e9663d3aa2c`.
+The previous 0.2.19 pin (ZIP `b7e0596700f155becd223f8511ec6cb7d34d0d0fbb9a45a9d9800ae28b578e47`, BA2
+`47da68022ac5d2865d934c637a24e9eb4a4471155aadfdebf43eeaa727134c45`) was a rebuild of the files 1.4.3 shipped.
 Keep the validated ZIP: the release pin identifies this exact archive.
 
 `Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux), and invokes the repeatable HUD package helper:
 
 ```powershell
-.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.19-prod.zip>"
+.\Packaging\package-downloads.ps1 -Version X.Y.Z -BridgeZip "<validated-0.2.20-prod.zip>"
 ```
 
 Produces (in `cross-platform-overlay/dist-electron/`):

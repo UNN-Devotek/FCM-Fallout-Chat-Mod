@@ -20,6 +20,7 @@ Central user record created at first overlay registration.
 | `discord_username` / `discord_display_name` / `discord_avatar` | TEXT | Updated on every Discord OAuth callback |
 | `discord_authed_at` | TIMESTAMPTZ | Last OAuth; gate re-requires auth after 30 days |
 | `is_banned` / `is_muted` | BOOLEAN | Current-state flags; history lives in `bans` / `audit_logs` |
+| `hud_auto_events_muted` | BOOLEAN | Defaults to false. Scoped to automatic HUD announcements and carried forward on account merge. Changes are recorded in `audit_logs`. |
 | `mute_expires_at` | TIMESTAMPTZ | Null = indefinite |
 | `ban_reason` / `ban_category` | TEXT | Denormalized from most recent `bans` row for fast enforcement |
 | `banned_until` | TIMESTAMPTZ | Null on `is_banned=true` = permanent |

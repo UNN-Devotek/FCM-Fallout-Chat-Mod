@@ -126,6 +126,28 @@ describe('POST /api/users', () => {
   });
 });
 
+describe('GET /api/users', () => {
+  test('finds a HUD-linked account by its Fallout 76 name and exposes the automatic event mute', async () => {
+    const row = {
+      id: '22222222-2222-4222-8222-222222222222',
+      username: 'pending-install',
+      steamDisplayName: 'Appalachian',
+      fo76AccountName: 'Wastelander',
+      isMuted: false,
+      hudAutoEventsMuted: true,
+    };
+    prismaStub.user.findMany.mockResolvedValueOnce([row]);
+    const res = await request(app).get('/api/users').query({ search: 'Wasteland' })
+      .set('X-API-Key', require('../src/config/environment').ADMIN_API_KEY).expect(200);
+
+    expect(res.body.data).toEqual([{ ...row, displayName: 'Appalachian', fo76Name: 'Wastelander' }]);
+    expect(prismaStub.user.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { OR: expect.arrayContaining([{ fo76AccountName: { startsWith: 'Wasteland', mode: 'insensitive' } }]) },
+      select: expect.objectContaining({ hudAutoEventsMuted: true, fo76AccountName: true }),
+    }));
+  });
+});
+
 describe('DELETE /api/link/provider/discord', () => {
   beforeEach(() => {
     jest.clearAllMocks();
