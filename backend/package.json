@@ -15,7 +15,7 @@
     "test:mcp-inspector": "npm run build && node scripts/mcp-inspector-smoke.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1163.0",
+    "@aws-sdk/client-s3": "^3.1173.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@prisma/client": "7.10.1",
     "@types/tar-stream": "^3.1.5",
@@ -24,9 +24,9 @@
     "connect-redis": "^10.0.0",
     "cors": "^2.8.5",
     "discord.js": "^14.28.1",
-    "dotenv": "^18.0.9",
+    "dotenv": "^18.0.10",
     "express": "^5.3.0",
-    "express-rate-limit": "^8.7.3",
+    "express-rate-limit": "^8.7.5",
     "express-session": "^1.18.1",
     "file-type": "^22.2.0",
     "helmet": "^8.3.0",
@@ -41,13 +41,13 @@
     "redis": "^6.3.1",
     "tar-stream": "3.2.2",
     "uuid": "^11.1.1",
-    "ws": "^8.22.1",
+    "ws": "^8.23.0",
     "zod": "^4.6.7",
     "@prisma/adapter-pg": "7.10.1",
     "prisma": "7.10.1"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "^2.14.0",
+    "@modelcontextprotocol/inspector": "^2.16.0",
     "@types/connect-redis": "^0.0.23",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -61,7 +61,7 @@
     "@types/ws": "^8.18.2",
     "jest": "^30.5.2",
     "nodemon": "^3.1.9",
-    "supertest": "^7.3.1",
+    "supertest": "^7.3.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
